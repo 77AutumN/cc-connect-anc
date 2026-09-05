@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	ccconnect "github.com/chenhg5/cc-connect"
+	"github.com/chenhg5/cc-connect/actionhost/crmfollowup"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 	"github.com/chenhg5/cc-connect/daemon"
@@ -237,6 +239,13 @@ func main() {
 		runAntigravityPermissionHook()
 		return
 	}
+	// Capture and remove host-only CRM credentials before update checks,
+	// config helpers, run-as probes, or Agent construction can spawn a child.
+	crmActionHost, crmActionProject, err := crmfollowup.NewFromEnv()
+	if err != nil {
+		slog.Error("CRM action host configuration invalid", "error", err)
+		os.Exit(1)
+	}
 
 	checkUpdateAsync()
 	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
@@ -355,6 +364,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	crmActionHostAttached := false
+	var crmToolServer *core.ActionToolServer
+	var crmToolEngine *core.Engine
+	crmToolErrors := make(chan error, 1)
+
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
 	effectiveWorkDirs := make([]string, 0, len(cfg.Projects))
 
@@ -419,6 +433,31 @@ func main() {
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
+		if crmActionHost != nil && proj.Name == crmActionProject {
+			if crmActionHostAttached {
+				slog.Error("CRM action host project must be unique")
+				os.Exit(1)
+			}
+			if err := validateCRMActionHostProject(proj); err != nil {
+				slog.Error("CRM action host project configuration invalid", "project", proj.Name, "error", err)
+				os.Exit(1)
+			}
+			if err := crmActionHost.SetWorkDir(effectiveWorkDir, proj.RunAsUser); err != nil {
+				slog.Error("CRM action host work directory invalid", "project", proj.Name, "error", err)
+				os.Exit(1)
+			}
+			engine.SetActionHost(crmActionHost)
+			if crmActionHost.ToolsEnabled() {
+				crmToolServer, err = core.ListenActionTools("127.0.0.1:18743", engine.ActionToolHandler())
+				if err != nil {
+					slog.Error("CRM tool listener startup failed", "error", err)
+					os.Exit(1)
+				}
+				crmToolEngine = engine
+				go func() { crmToolErrors <- crmToolServer.Serve() }()
+			}
+			crmActionHostAttached = true
+		}
 		// Wire display settings including show_context_indicator and reply_footer
 		// Global [display] config can be overridden by project-level settings
 		_, _, _, _, _, showCtx, showFooter, _ := config.EffectiveDisplay(cfg, &proj)
@@ -964,6 +1003,10 @@ func main() {
 		engines = append(engines, engine)
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
+	if crmActionHost != nil && !crmActionHostAttached {
+		slog.Error("CRM action host project is not configured", "project", crmActionProject)
+		os.Exit(1)
+	}
 
 	// Start cron scheduler
 	cronStore, err := core.NewCronStore(cfg.DataDir)
@@ -1018,6 +1061,11 @@ func main() {
 	var startErrors []error
 	for _, e := range engines {
 		if err := e.Start(); err != nil {
+			if e == crmToolEngine {
+				_ = crmToolServer.Close()
+				slog.Error("CRM engine startup failed; tool listener closed", "error", err)
+				os.Exit(1)
+			}
 			slog.Warn("engine start partially failed (some platforms may be unavailable)", "error", err)
 			startErrors = append(startErrors, err)
 		}
@@ -1317,14 +1365,23 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	var restartReq *core.RestartRequest
+	toolListenerFailed := false
 	select {
 	case <-sigCh:
+	case err := <-crmToolErrors:
+		toolListenerFailed = true
+		slog.Error("CRM tool listener stopped; shutting down", "error", err)
 	case req := <-core.RestartCh:
 		restartReq = &req
 		slog.Info("restart requested via /restart command", "session", req.SessionKey, "platform", req.Platform)
 	}
 
 	slog.Info("shutting down...")
+	if crmToolServer != nil {
+		if err := crmToolServer.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("CRM tool listener shutdown failed", "error", err)
+		}
+	}
 	if mgmtSrv != nil {
 		mgmtSrv.Stop()
 	}
@@ -1353,6 +1410,9 @@ func main() {
 		logCloser.Close()
 	}
 	instanceLock.Release()
+	if toolListenerFailed {
+		os.Exit(1)
+	}
 
 	if restartReq != nil {
 		if err := core.SaveRestartNotify(cfg.DataDir, *restartReq); err != nil {
@@ -1372,13 +1432,48 @@ func main() {
 			}
 		}
 		slog.Info("restarting...", "path", execPath, "args", os.Args)
-		if err := restartProcess(execPath); err != nil {
+		restartEnv := os.Environ()
+		if crmActionHost != nil {
+			restartEnv = crmActionHost.RestartEnv(restartEnv)
+		}
+		if err := restartProcess(execPath, restartEnv); err != nil {
 			slog.Error("restart: failed", "error", err)
 			os.Exit(1)
 		}
 	}
 
 	slog.Info("bye")
+}
+
+func validateCRMActionHostProject(proj config.ProjectConfig) error {
+	if strings.TrimSpace(proj.RunAsUser) == "" {
+		return errors.New("run_as_user is required")
+	}
+	if strings.ToLower(strings.TrimSpace(proj.Agent.Type)) != "claudecode" {
+		return errors.New("agent type must be claudecode")
+	}
+	if strings.TrimSpace(proj.Mode) != "" {
+		return errors.New("multi-workspace mode is not supported")
+	}
+	if len(proj.Platforms) != 1 {
+		return errors.New("exactly one platform is required")
+	}
+	platform := proj.Platforms[0]
+	if strings.ToLower(strings.TrimSpace(platform.Type)) != "feishu" {
+		return errors.New("the only platform must be feishu")
+	}
+	for key, want := range map[string]bool{
+		"enable_feishu_card":       true,
+		"share_session_in_channel": false,
+		"thread_isolation":         false,
+	} {
+		value, exists := platform.Options[key]
+		actual, isBool := value.(bool)
+		if !exists || !isBool || actual != want {
+			return fmt.Errorf("platform option %s must be explicitly set to %t", key, want)
+		}
+	}
+	return nil
 }
 
 func runTopLevelCommand(args []string) bool {

@@ -2412,3 +2412,76 @@ func TestCUJ_H4_FeishuTopicsKeepWorkspaceBindingsIsolated(t *testing.T) {
 		t.Fatalf("topic B changed after topic A unbind: %q", got)
 	}
 }
+
+type cujHostedCardPlatform struct{ hostedCardPlatform }
+
+func (p *cujHostedCardPlatform) RefreshCardMessage(ctx context.Context, messageID, sessionKey string, card *Card) error {
+	if err := p.hostedCardPlatform.RefreshCardMessage(ctx, messageID, sessionKey, card); err != nil {
+		return err
+	}
+	// A card refresh is visible to the user, just like a new text reply.
+	return p.stubPlatformEngine.Reply(ctx, nil, card.RenderText())
+}
+
+// CUJ-ACTION1 · Three consecutive user requests each hand off to the host,
+// show a user-visible approval, and never leak the agent's post-handoff text.
+// This exercises the real ReceiveMessage entrypoint while the adapter/helper
+// boundary remains mocked.
+func TestCUJ_ACTION1_ThreeHostedHandoffsStayVisibleAndQuiet(t *testing.T) {
+	agent := &hostedHandoffAgent{started: make(chan *hostedHandoffSession, 1)}
+	platform := &cujHostedCardPlatform{hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test-platform"}}}
+	host := &actionHostStub{beginResult: ActionHostResult{
+		Kind: "test.action.v1", Status: "pending", ApprovalID: "apr_visible",
+		ChangeID: "chg_Abcdefgh12345678", Card: NewCard().Title("Approval pending", "blue").Build(),
+	}}
+	engine := NewEngine("test-project", agent, []Platform{platform}, "", LangEnglish)
+	engine.SetActionHost(host)
+
+	for i := 1; i <= 3; i++ {
+		engine.ReceiveMessage(platform, &Message{
+			SessionKey: "test:chat:owner", Platform: "test-platform",
+			MessageID: fmt.Sprintf("message-%d", i), ChannelID: "chat", UserID: "owner",
+			Content: fmt.Sprintf("stage request %d", i), ReplyCtx: "reply",
+		})
+		// The legacy permission-marker handoff ends the live agent session.
+		var session *hostedHandoffSession
+		select {
+		case session = <-agent.started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handoff %d agent session did not start", i)
+		}
+		select {
+		case permission := <-session.permissions:
+			if permission.Behavior != "deny" {
+				t.Fatalf("handoff %d permission = %#v", i, permission)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handoff %d did not reach the host", i)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for len(platform.getSent()) < i && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		for {
+			stored := engine.sessions.GetOrCreateActive("test:chat:owner")
+			if stored.TryLock() {
+				stored.Unlock()
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("handoff %d did not finish its turn", i)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	visible := platform.getSent()
+	if len(visible) != 3 {
+		t.Fatalf("user-visible approvals = %d, want 3: %#v", len(visible), visible)
+	}
+	for _, output := range visible {
+		if !strings.Contains(output, "Approval pending") || strings.Contains(output, "AGENT_") {
+			t.Fatalf("unexpected user-visible handoff output: %q", output)
+		}
+	}
+}

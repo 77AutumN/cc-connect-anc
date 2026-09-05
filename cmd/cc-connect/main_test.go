@@ -435,3 +435,53 @@ func TestRunTopLevelCommandUnknown(t *testing.T) {
 		t.Fatal("runTopLevelCommand() handled unknown command")
 	}
 }
+
+func TestValidateCRMActionHostProject(t *testing.T) {
+	valid := config.ProjectConfig{
+		Name:      "crm",
+		RunAsUser: "claude",
+		Agent:     config.AgentConfig{Type: "claudecode"},
+		Platforms: []config.PlatformConfig{{
+			Type: "feishu",
+			Options: map[string]any{
+				"enable_feishu_card":       true,
+				"share_session_in_channel": false,
+				"thread_isolation":         false,
+			},
+		}},
+	}
+	if err := validateCRMActionHostProject(valid); err != nil {
+		t.Fatalf("valid project rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*config.ProjectConfig)
+	}{
+		{"missing run_as_user", func(p *config.ProjectConfig) { p.RunAsUser = "" }},
+		{"wrong agent", func(p *config.ProjectConfig) { p.Agent.Type = "codex" }},
+		{"multi workspace", func(p *config.ProjectConfig) { p.Mode = "multi-workspace" }},
+		{"second platform", func(p *config.ProjectConfig) {
+			p.Platforms = append(p.Platforms, config.PlatformConfig{Type: "telegram"})
+		}},
+		{"wrong platform", func(p *config.ProjectConfig) { p.Platforms[0].Type = "lark" }},
+		{"cards disabled", func(p *config.ProjectConfig) { p.Platforms[0].Options["enable_feishu_card"] = false }},
+		{"shared channel session", func(p *config.ProjectConfig) { p.Platforms[0].Options["share_session_in_channel"] = true }},
+		{"thread isolation", func(p *config.ProjectConfig) { p.Platforms[0].Options["thread_isolation"] = true }},
+		{"implicit share default", func(p *config.ProjectConfig) { delete(p.Platforms[0].Options, "share_session_in_channel") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := valid
+			candidate.Platforms = append([]config.PlatformConfig(nil), valid.Platforms...)
+			candidate.Platforms[0].Options = make(map[string]any, len(valid.Platforms[0].Options))
+			for key, value := range valid.Platforms[0].Options {
+				candidate.Platforms[0].Options[key] = value
+			}
+			tc.mutate(&candidate)
+			if err := validateCRMActionHostProject(candidate); err == nil {
+				t.Fatal("unsafe action-host project was accepted")
+			}
+		})
+	}
+}

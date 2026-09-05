@@ -530,6 +530,196 @@ func TestInteractivePlatform_CardActionUsesCallbackSessionKey(t *testing.T) {
 	}
 }
 
+func TestInteractivePlatform_HostedActionIgnoresForgedCardSessionKey(t *testing.T) {
+	platformAny, err := New(map[string]any{
+		"app_id":                   "cli_xxx",
+		"app_secret":               "secret",
+		"enable_feishu_card":       true,
+		"share_session_in_channel": false,
+		"thread_isolation":         false,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ip := platformAny.(*interactivePlatform)
+	refresher := &hostedRefreshStub{notify: make(chan struct{}, 2)}
+	ip.self = refresher
+
+	got := make(chan core.TrustedCardAction, 1)
+	ip.SetTrustedCardActionHandler(func(action core.TrustedCardAction) core.TrustedCardActionResponse {
+		got <- action
+		return core.TrustedCardActionResponse{Card: core.NewCard().Markdown("accepted").Build()}
+	})
+
+	resp, err := ip.onCardAction(&callback.CardActionTriggerEvent{
+		Event: &callback.CardActionTriggerRequest{
+			Operator: &callback.Operator{OpenID: "ou_real_user"},
+			Action: &callback.CallBackAction{Value: map[string]any{
+				"kind":        "crm.followup.v1",
+				"approval_id": "apr_opaque",
+				"decision":    "approve",
+				"language":    "zh-TW",
+				"session_key": "feishu:forged-chat:forged-user",
+			}},
+			Context: &callback.Context{OpenChatID: "oc_real_chat", OpenMessageID: "om_original_card"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("onCardAction() error = %v", err)
+	}
+	if resp == nil || resp.Card == nil {
+		t.Fatalf("expected immediate card update, got %#v", resp)
+	}
+	calls := refresher.snapshot()
+	if len(calls) != 0 {
+		t.Fatalf("platform mutated the card before the trusted handler returned: %#v", calls)
+	}
+
+	select {
+	case action := <-got:
+		wantSession := "feishu:oc_real_chat:ou_real_user"
+		if action.Principal.UserID != "ou_real_user" || action.Principal.ChatID != "oc_real_chat" ||
+			action.Principal.SessionKey != wantSession || action.Principal.MessageID != "om_original_card" {
+			t.Fatalf("hosted action trusted forged card data: %#v", action.Principal)
+		}
+		if action.Language != core.LangTraditionalChinese {
+			t.Fatalf("hosted action language = %q", action.Language)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hosted action handler was not called")
+	}
+}
+
+type hostedRefreshCall struct {
+	messageID  string
+	sessionKey string
+	title      string
+}
+
+type hostedRefreshStub struct {
+	mu     sync.Mutex
+	notify chan struct{}
+	calls  []hostedRefreshCall
+	err    error
+}
+
+func (p *hostedRefreshStub) Name() string                             { return "feishu" }
+func (p *hostedRefreshStub) Start(core.MessageHandler) error          { return nil }
+func (p *hostedRefreshStub) Reply(context.Context, any, string) error { return nil }
+func (p *hostedRefreshStub) Send(context.Context, any, string) error  { return nil }
+func (p *hostedRefreshStub) Stop() error                              { return nil }
+func (p *hostedRefreshStub) RefreshCardMessage(_ context.Context, messageID, sessionKey string, card *core.Card) error {
+	call := hostedRefreshCall{messageID: messageID, sessionKey: sessionKey}
+	if card != nil && card.Header != nil {
+		call.title = card.Header.Title
+	}
+	p.mu.Lock()
+	p.calls = append(p.calls, call)
+	p.mu.Unlock()
+	select {
+	case p.notify <- struct{}{}:
+	default:
+	}
+	return p.err
+}
+
+func (p *hostedRefreshStub) snapshot() []hostedRefreshCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]hostedRefreshCall(nil), p.calls...)
+}
+
+func TestInteractivePlatform_HostedActionTimeoutRefreshesExactCard(t *testing.T) {
+	platformAny, err := New(map[string]any{
+		"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true,
+		"share_session_in_channel": false, "thread_isolation": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := platformAny.(*interactivePlatform)
+	refresher := &hostedRefreshStub{notify: make(chan struct{}, 2)}
+	ip.self = refresher
+	ip.SetTrustedCardActionHandler(func(core.TrustedCardAction) core.TrustedCardActionResponse {
+		time.Sleep(hostedActionTimeout + 50*time.Millisecond)
+		return core.TrustedCardActionResponse{
+			Card: core.NewCard().Title(core.NewI18n(core.LangEnglish).T(core.MsgHostedActionExecutingTitle), "blue").Build(),
+			Complete: func() core.TrustedCardActionResponse {
+				return core.TrustedCardActionResponse{Card: core.NewCard().Title("verified", "green").Build()}
+			},
+		}
+	})
+	resp, err := ip.onCardAction(&callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
+		Operator: &callback.Operator{OpenID: "ou_real_user"},
+		Action: &callback.CallBackAction{Value: map[string]any{
+			"kind": "test.action.v1", "approval_id": "apr_opaque", "decision": "approve", "language": "en",
+		}},
+		Context: &callback.Context{OpenChatID: "oc_real_chat", OpenMessageID: "om_exact_card"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != core.NewI18n(core.LangEnglish).T(core.MsgHostedActionProcessingToast) {
+		t.Fatalf("timeout response = %#v", resp)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-refresher.notify:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for executing/final exact card refresh")
+		}
+	}
+	calls := refresher.snapshot()
+	if len(calls) != 2 || calls[0].messageID != "om_exact_card" || calls[1].messageID != "om_exact_card" ||
+		calls[0].sessionKey != "feishu:oc_real_chat:ou_real_user" || calls[1].sessionKey != "feishu:oc_real_chat:ou_real_user" ||
+		calls[0].title != core.NewI18n(core.LangEnglish).T(core.MsgHostedActionExecutingTitle) || calls[1].title != "verified" {
+		t.Fatalf("wrong executing/final cards refreshed: %#v", calls)
+	}
+}
+
+func TestInteractivePlatform_HostedActionExecutesClaimedDecisionWhenCardRefreshFails(t *testing.T) {
+	platformAny, err := New(map[string]any{
+		"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := platformAny.(*interactivePlatform)
+	ip.self = &hostedRefreshStub{notify: make(chan struct{}, 1), err: errors.New("patch failed")}
+	var claimed atomic.Bool
+	var completed atomic.Bool
+	ip.SetTrustedCardActionHandler(func(core.TrustedCardAction) core.TrustedCardActionResponse {
+		claimed.Store(true)
+		return core.TrustedCardActionResponse{
+			Card: core.NewCard().Title("executing", "blue").Build(),
+			Complete: func() core.TrustedCardActionResponse {
+				completed.Store(true)
+				return core.TrustedCardActionResponse{Card: core.NewCard().Title("verified", "green").Build()}
+			},
+		}
+	})
+	resp, err := ip.onCardAction(&callback.CardActionTriggerEvent{Event: &callback.CardActionTriggerRequest{
+		Operator: &callback.Operator{OpenID: "ou_real_user"},
+		Action: &callback.CallBackAction{Value: map[string]any{
+			"kind": "test.action.v1", "approval_id": "apr_opaque", "decision": "approve", "language": "en",
+		}},
+		Context: &callback.Context{OpenChatID: "oc_real_chat", OpenMessageID: "om_exact_card"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || resp.Toast == nil || !claimed.Load() {
+		t.Fatalf("refresh failure response=%#v handler_claimed=%v", resp, claimed.Load())
+	}
+	deadline := time.Now().Add(time.Second)
+	for !completed.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !completed.Load() {
+		t.Fatal("durably claimed approval was abandoned after a card refresh failure")
+	}
+}
+
 func TestInteractivePlatform_ModelCardActionReturnsCardUpdate(t *testing.T) {
 	platformAny, err := New(map[string]any{"app_id": "cli_xxx", "app_secret": "secret", "enable_feishu_card": true})
 	if err != nil {

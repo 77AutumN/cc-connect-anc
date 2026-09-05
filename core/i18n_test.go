@@ -1,6 +1,7 @@
 package core
 
 import (
+	"strings"
 	"sync"
 	"testing"
 )
@@ -57,9 +58,24 @@ func TestI18n_AllKeysHaveEnglish(t *testing.T) {
 	}
 }
 
+func TestI18n_HostedActionKeysHaveAllTranslations(t *testing.T) {
+	wantLanguages := []Language{LangEnglish, LangChinese, LangTraditionalChinese, LangJapanese, LangSpanish}
+	for key, langs := range messages {
+		name := string(key)
+		if !strings.HasPrefix(name, "hosted_action_") && !strings.HasPrefix(name, "crm_") {
+			continue
+		}
+		for _, lang := range wantLanguages {
+			if strings.TrimSpace(langs[lang]) == "" {
+				t.Errorf("message key %q missing %s translation", key, lang)
+			}
+		}
+	}
+}
+
 func TestDetectLanguage(t *testing.T) {
 	tests := []struct {
-		text    string
+		text     string
 		wantLang Language
 	}{
 		// Japanese Hiragana

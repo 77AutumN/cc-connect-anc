@@ -132,24 +132,25 @@ type Platform struct {
 	shareSessionInChannel      bool
 	threadIsolation            bool
 	// noReplyToTrigger: when true, send via Create instead of Im.Message.Reply (no quote to the user's message).
-	noReplyToTrigger bool
-	resolveMentions  bool
-	client           *lark.Client
-	replayClient     *lark.Client
-	replayClientMu   sync.Mutex
-	wsClient         *larkws.Client
-	handler          core.MessageHandler
-	cardNavHandler   core.CardNavigationHandler
-	cancel           context.CancelFunc
-	dedup            *core.MessageDedup
-	botOpenID        string
-	peerBots         map[string]string // app_id -> friendly alias, for quoted-reply attribution
-	mentionMap       map[string]string // agent name -> open_id (for outbound @ resolution)
-	userNameCache    sync.Map          // open_id -> display name
-	chatNameCache    sync.Map          // chat_id -> chat name
-	chatMemberCache  sync.Map          // chatID -> *chatMemberEntry
-	recalledMu       sync.Mutex
-	recalledMsgIDs   map[string]time.Time // message_id -> recall time, short TTL race guard
+	noReplyToTrigger         bool
+	resolveMentions          bool
+	client                   *lark.Client
+	replayClient             *lark.Client
+	replayClientMu           sync.Mutex
+	wsClient                 *larkws.Client
+	handler                  core.MessageHandler
+	cardNavHandler           core.CardNavigationHandler
+	trustedCardActionHandler core.TrustedCardActionHandler
+	cancel                   context.CancelFunc
+	dedup                    *core.MessageDedup
+	botOpenID                string
+	peerBots                 map[string]string // app_id -> friendly alias, for quoted-reply attribution
+	mentionMap               map[string]string // agent name -> open_id (for outbound @ resolution)
+	userNameCache            sync.Map          // open_id -> display name
+	chatNameCache            sync.Map          // chat_id -> chat name
+	chatMemberCache          sync.Map          // chatID -> *chatMemberEntry
+	recalledMu               sync.Mutex
+	recalledMsgIDs           map[string]time.Time // message_id -> recall time, short TTL race guard
 	// Webhook mode fields (for Lark international version)
 	server       *http.Server
 	port         string
@@ -266,6 +267,10 @@ type feishuRequestFunc func(client *lark.Client, options ...larkcore.RequestOpti
 
 func (p *Platform) SetCardNavigationHandler(h core.CardNavigationHandler) {
 	p.cardNavHandler = h
+}
+
+func (p *Platform) SetTrustedCardActionHandler(h core.TrustedCardActionHandler) {
+	p.trustedCardActionHandler = h
 }
 
 func New(opts map[string]any) (core.Platform, error) {
@@ -705,6 +710,11 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 		chatID = userID
 	}
 	sessionKey := p.sessionKeyFromCardAction(chatID, userID, event.Event.Action.Value)
+	trustedSessionKey := p.sessionKeyFromTrustedCardAction(chatID, userID)
+
+	if response, handled := p.handleHostedCardAction(event.Event.Action.Value, userID, chatID, messageID, trustedSessionKey); handled {
+		return response, nil
+	}
 
 	// nav: / act: — synchronous card update
 	if strings.HasPrefix(actionVal, "nav:") || strings.HasPrefix(actionVal, "act:") {
@@ -890,6 +900,145 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 	return nil, nil
 }
 
+// handleHostedCardAction keeps business approval callbacks separate from the
+// generic navigation/permission command paths. Callback identity is trusted;
+// card values are routing and presentation data only.
+func (p *Platform) handleHostedCardAction(value map[string]any, userID, chatID, messageID, trustedSessionKey string) (*callback.CardActionTriggerResponse, bool) {
+	kind, _ := value["kind"].(string)
+	if kind == "" || p.trustedCardActionHandler == nil {
+		return nil, false
+	}
+	approvalID, _ := value["approval_id"].(string)
+	decision, _ := value["decision"].(string)
+	lang := trustedActionLanguage(value["language"])
+	action := core.TrustedCardAction{
+		Kind:       kind,
+		ApprovalID: approvalID,
+		Decision:   core.ActionDecision(decision),
+		Language:   lang,
+		Principal: core.ActionPrincipal{
+			Platform:   p.platformName,
+			UserID:     userID,
+			ChatID:     chatID,
+			SessionKey: trustedSessionKey,
+			MessageID:  messageID,
+		},
+	}
+	done := make(chan core.TrustedCardActionResponse, 1)
+	go func() { done <- p.trustedCardActionHandler(action) }()
+	timer := time.NewTimer(hostedActionTimeout)
+	defer timer.Stop()
+	select {
+	case result := <-done:
+		if result.Complete != nil {
+			p.startHostedActionCompletion(result, messageID, trustedSessionKey)
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionProcessingToast)},
+			}, true
+		}
+		return renderHostedActionResponse(result, trustedSessionKey), true
+	case <-timer.C:
+		go p.refreshHostedActionWhenReady(done, messageID, trustedSessionKey)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionProcessingToast)},
+		}, true
+	}
+}
+
+func hostedExecutingCard(lang core.Language) *core.Card {
+	i18n := core.NewI18n(lang)
+	return core.NewCard().
+		Title(i18n.T(core.MsgHostedActionExecutingTitle), "blue").
+		Markdown(i18n.T(core.MsgHostedActionExecutingBody)).
+		Build()
+}
+
+func hostedActionFailureCard(lang core.Language) *core.Card {
+	i18n := core.NewI18n(lang)
+	return core.NewCard().
+		Title(i18n.T(core.MsgHostedActionFailedTitle), "red").
+		Markdown(i18n.T(core.MsgHostedActionFailedBody)).
+		Build()
+}
+
+func (p *Platform) refreshHostedActionCard(ctx context.Context, messageID, sessionKey string, card *core.Card) error {
+	if messageID == "" {
+		return errors.New("hosted action card message id is missing")
+	}
+	refresher, ok := p.self.(core.CardMessageRefresher)
+	if !ok {
+		return errors.New("platform does not support exact card refresh")
+	}
+	return refresher.RefreshCardMessage(ctx, messageID, sessionKey, card)
+}
+
+func renderHostedActionResponse(result core.TrustedCardActionResponse, sessionKey string) *callback.CardActionTriggerResponse {
+	response := &callback.CardActionTriggerResponse{}
+	if result.Card != nil {
+		response.Card = &callback.Card{Type: "raw", Data: renderCardMap(result.Card, sessionKey)}
+	}
+	if result.Toast != "" {
+		toastType := result.ToastType
+		if toastType == "" {
+			toastType = "info"
+		}
+		response.Toast = &callback.Toast{Type: toastType, Content: result.Toast}
+	}
+	return response
+}
+
+func (p *Platform) refreshHostedActionWhenReady(done <-chan core.TrustedCardActionResponse, messageID, sessionKey string) {
+	result := <-done
+	if result.Complete != nil {
+		p.startHostedActionCompletion(result, messageID, sessionKey)
+		return
+	}
+	if result.Card == nil {
+		return
+	}
+	if err := p.refreshHostedActionCard(context.Background(), messageID, sessionKey, result.Card); err != nil {
+		slog.Warn("hosted action card refresh failed", "platform", p.platformName, "error", err)
+	}
+}
+
+// startHostedActionCompletion runs only after the host has authenticated the
+// callback and atomically claimed the approval. The exact card is changed to
+// executing before the durable plan is applied; a presentation failure never
+// rolls back or duplicates the already accepted business decision.
+func (p *Platform) startHostedActionCompletion(result core.TrustedCardActionResponse, messageID, sessionKey string) {
+	if result.Card != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), hostedActionTimeout)
+		if err := p.refreshHostedActionCard(ctx, messageID, sessionKey, result.Card); err != nil {
+			slog.Warn("hosted action executing card refresh failed", "platform", p.platformName, "error", err)
+		}
+		cancel()
+	}
+	go func() {
+		completed := result.Complete()
+		if completed.Card == nil {
+			return
+		}
+		if err := p.refreshHostedActionCard(context.Background(), messageID, sessionKey, completed.Card); err != nil {
+			slog.Warn("hosted action final card refresh failed", "platform", p.platformName, "error", err)
+		}
+	}()
+}
+
+func trustedActionLanguage(value any) core.Language {
+	switch core.Language(fmt.Sprint(value)) {
+	case core.LangChinese:
+		return core.LangChinese
+	case core.LangTraditionalChinese:
+		return core.LangTraditionalChinese
+	case core.LangJapanese:
+		return core.LangJapanese
+	case core.LangSpanish:
+		return core.LangSpanish
+	default:
+		return core.LangEnglish
+	}
+}
+
 func (p *Platform) addReaction(messageID string) string {
 	return p.addReactionWithEmoji(messageID, p.reactionEmoji)
 }
@@ -966,6 +1115,8 @@ func (p *Platform) AddDoneReaction(rctx any) {
 const recalledMessageTTL = 10 * time.Minute
 
 const cardNavTimeout = 2500 * time.Millisecond
+
+const hostedActionTimeout = 2 * time.Second
 
 func (p *Platform) markMessageRecalled(messageID string) {
 	messageID = strings.TrimSpace(messageID)
@@ -3638,6 +3789,13 @@ func (p *Platform) sessionKeyFromCardAction(chatID, userID string, value map[str
 	return fmt.Sprintf("%s:%s:%s", p.tag(), chatID, userID)
 }
 
+func (p *Platform) sessionKeyFromTrustedCardAction(chatID, userID string) string {
+	if p.shareSessionInChannel {
+		return fmt.Sprintf("%s:%s", p.tag(), chatID)
+	}
+	return fmt.Sprintf("%s:%s:%s", p.tag(), chatID, userID)
+}
+
 func (p *Platform) shouldReplyInThread(rc replyContext) bool {
 	if rc.messageID == "" {
 		return false
@@ -3671,11 +3829,21 @@ func (p *Platform) buildReplyMessageReqBody(rc replyContext, msgType, content st
 }
 
 func (p *Platform) replyMessage(ctx context.Context, rc replyContext, msgType, content string) error {
+	_, err := p.replyMessageResult(ctx, rc, msgType, content, false)
+	return err
+}
+
+func (p *Platform) replyMessageWithID(ctx context.Context, rc replyContext, msgType, content string) (string, error) {
+	return p.replyMessageResult(ctx, rc, msgType, content, true)
+}
+
+func (p *Platform) replyMessageResult(ctx context.Context, rc replyContext, msgType, content string, requireMessageID bool) (string, error) {
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(rc.messageID).
 		Body(p.buildReplyMessageReqBody(rc, msgType, content)).
 		Build()
-	return p.withTransientRetry(ctx, "reply", func() error {
+	var messageID string
+	err := p.withTransientRetry(ctx, "reply", func() error {
 		return p.withFreshTenantAccessTokenRetry(ctx, "reply", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
 			resp, err := client.Im.Message.Reply(ctx, req, options...)
 			if err != nil {
@@ -3684,12 +3852,28 @@ func (p *Platform) replyMessage(ctx context.Context, rc replyContext, msgType, c
 			if !resp.Success() {
 				return fmt.Errorf("%s: reply failed code=%d msg=%s", p.tag(), resp.Code, resp.Msg)
 			}
+			if resp.Data != nil && resp.Data.MessageId != nil {
+				messageID = *resp.Data.MessageId
+			}
+			if requireMessageID && messageID == "" {
+				return fmt.Errorf("%s: reply returned no message id", p.tag())
+			}
 			return nil
 		})
 	})
+	return messageID, err
 }
 
 func (p *Platform) createMessage(ctx context.Context, chatID, msgType, content, op string) error {
+	_, err := p.createMessageResult(ctx, chatID, msgType, content, op, false)
+	return err
+}
+
+func (p *Platform) createMessageWithID(ctx context.Context, chatID, msgType, content, op string) (string, error) {
+	return p.createMessageResult(ctx, chatID, msgType, content, op, true)
+}
+
+func (p *Platform) createMessageResult(ctx context.Context, chatID, msgType, content, op string, requireMessageID bool) (string, error) {
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType(larkim.ReceiveIdTypeChatId).
 		Body(larkim.NewCreateMessageReqBodyBuilder().
@@ -3698,7 +3882,8 @@ func (p *Platform) createMessage(ctx context.Context, chatID, msgType, content, 
 			Content(content).
 			Build()).
 		Build()
-	return p.withTransientRetry(ctx, op, func() error {
+	var messageID string
+	err := p.withTransientRetry(ctx, op, func() error {
 		return p.withFreshTenantAccessTokenRetry(ctx, op, func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
 			resp, err := client.Im.Message.Create(ctx, req, options...)
 			if err != nil {
@@ -3707,9 +3892,16 @@ func (p *Platform) createMessage(ctx context.Context, chatID, msgType, content, 
 			if !resp.Success() {
 				return fmt.Errorf("%s: %s failed code=%d msg=%s", p.tag(), op, resp.Code, resp.Msg)
 			}
+			if resp.Data != nil && resp.Data.MessageId != nil {
+				messageID = *resp.Data.MessageId
+			}
+			if requireMessageID && messageID == "" {
+				return fmt.Errorf("%s: %s returned no message id", p.tag(), op)
+			}
 			return nil
 		})
 	})
+	return messageID, err
 }
 
 func (p *Platform) withFreshTenantAccessTokenRetry(ctx context.Context, operation string, fn feishuRequestFunc) error {

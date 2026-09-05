@@ -34,6 +34,23 @@ func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *cor
 	return p.replyMessage(ctx, rc, larkim.MsgTypeInteractive, cardJSON)
 }
 
+// ReplyHostedActionPlaceholder sends a non-actionable approval placeholder and
+// returns the exact Feishu message ID that must be bound before buttons appear.
+func (p *interactivePlatform) ReplyHostedActionPlaceholder(ctx context.Context, rctx any, card *core.Card) (string, error) {
+	rc, ok := rctx.(replyContext)
+	if !ok {
+		return "", fmt.Errorf("%s: invalid reply context type %T", p.tag(), rctx)
+	}
+	cardJSON := renderCard(card, rc.sessionKey)
+	if !p.shouldUseThreadOrReplyAPI(rc) {
+		if rc.chatID == "" {
+			return "", fmt.Errorf("%s: chatID is empty, cannot send hosted action placeholder", p.tag())
+		}
+		return p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send hosted action placeholder")
+	}
+	return p.replyMessageWithID(ctx, rc, larkim.MsgTypeInteractive, cardJSON)
+}
+
 // SendCard sends a structured card as a new message to the chat.
 func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core.Card) error {
 	rc, ok := rctx.(replyContext)
@@ -62,6 +79,16 @@ func (p *interactivePlatform) RefreshCard(ctx context.Context, sessionKey string
 
 	if msgID == "" {
 		return fmt.Errorf("%s: no tracked card messageID for session %q", p.tag(), sessionKey)
+	}
+	return p.RefreshCardMessage(ctx, msgID, sessionKey, card)
+}
+
+// RefreshCardMessage patches the exact card whose callback initiated a hosted
+// action. This avoids the per-session last-message race when two cards are
+// clicked close together.
+func (p *interactivePlatform) RefreshCardMessage(ctx context.Context, msgID, sessionKey string, card *core.Card) error {
+	if msgID == "" {
+		return fmt.Errorf("%s: card messageID is empty", p.tag())
 	}
 
 	cardJSON := renderCard(card, sessionKey)
@@ -131,7 +158,10 @@ func renderCardMap(card *core.Card, sessionKey string) map[string]any {
 				if btnType == "" {
 					btnType = "default"
 				}
-				valMap := map[string]string{"action": btn.Value}
+				valMap := make(map[string]string, len(btn.Extra)+2)
+				if btn.Value != "" {
+					valMap["action"] = btn.Value
+				}
 				if sessionKey != "" {
 					valMap["session_key"] = sessionKey
 				}

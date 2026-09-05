@@ -378,31 +378,31 @@ const (
 	MsgCronIDLabel               MsgKey = "cron_id_label"
 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
 
-	MsgTimerNotAvailable  MsgKey = "timer_not_available"
-	MsgTimerUsage         MsgKey = "timer_usage"
-	MsgTimerAddUsage      MsgKey = "timer_add_usage"
-	MsgTimerAdded         MsgKey = "timer_added"
-	MsgTimerAddedExec     MsgKey = "timer_added_exec"
-	MsgTimerAddExecUsage  MsgKey = "timer_addexec_usage"
-	MsgTimerEmpty         MsgKey = "timer_empty"
-	MsgTimerListTitle     MsgKey = "timer_list_title"
-	MsgTimerListFooter    MsgKey = "timer_list_footer"
-	MsgTimerDelUsage      MsgKey = "timer_del_usage"
-	MsgTimerMuteUsage     MsgKey = "timer_mute_usage"
-	MsgTimerDeleted       MsgKey = "timer_deleted"
-	MsgTimerNotFound      MsgKey = "timer_not_found"
-	MsgTimerMuted         MsgKey = "timer_muted"
-	MsgTimerUnmuted       MsgKey = "timer_unmuted"
-	MsgTimerCardHint      MsgKey = "timer_card_hint"
-	MsgTimerBtnMute       MsgKey = "timer_btn_mute"
-	MsgTimerBtnUnmute     MsgKey = "timer_btn_unmute"
-	MsgTimerBtnDelete     MsgKey = "timer_btn_delete"
-	MsgTimerIDLabel       MsgKey = "timer_id_label"
-	MsgTimerScheduledLabel MsgKey = "timer_scheduled_label"
-	MsgTimerFailedSuffix  MsgKey = "timer_failed_suffix"
-	MsgCommandsTagAgent          MsgKey = "commands_tag_agent"
-	MsgCommandsTagShell          MsgKey = "commands_tag_shell"
-	MsgUpgradeTimeoutSuffix      MsgKey = "upgrade_timeout_suffix"
+	MsgTimerNotAvailable    MsgKey = "timer_not_available"
+	MsgTimerUsage           MsgKey = "timer_usage"
+	MsgTimerAddUsage        MsgKey = "timer_add_usage"
+	MsgTimerAdded           MsgKey = "timer_added"
+	MsgTimerAddedExec       MsgKey = "timer_added_exec"
+	MsgTimerAddExecUsage    MsgKey = "timer_addexec_usage"
+	MsgTimerEmpty           MsgKey = "timer_empty"
+	MsgTimerListTitle       MsgKey = "timer_list_title"
+	MsgTimerListFooter      MsgKey = "timer_list_footer"
+	MsgTimerDelUsage        MsgKey = "timer_del_usage"
+	MsgTimerMuteUsage       MsgKey = "timer_mute_usage"
+	MsgTimerDeleted         MsgKey = "timer_deleted"
+	MsgTimerNotFound        MsgKey = "timer_not_found"
+	MsgTimerMuted           MsgKey = "timer_muted"
+	MsgTimerUnmuted         MsgKey = "timer_unmuted"
+	MsgTimerCardHint        MsgKey = "timer_card_hint"
+	MsgTimerBtnMute         MsgKey = "timer_btn_mute"
+	MsgTimerBtnUnmute       MsgKey = "timer_btn_unmute"
+	MsgTimerBtnDelete       MsgKey = "timer_btn_delete"
+	MsgTimerIDLabel         MsgKey = "timer_id_label"
+	MsgTimerScheduledLabel  MsgKey = "timer_scheduled_label"
+	MsgTimerFailedSuffix    MsgKey = "timer_failed_suffix"
+	MsgCommandsTagAgent     MsgKey = "commands_tag_agent"
+	MsgCommandsTagShell     MsgKey = "commands_tag_shell"
+	MsgUpgradeTimeoutSuffix MsgKey = "upgrade_timeout_suffix"
 
 	MsgCronScheduleLabel MsgKey = "cron_schedule_label"
 	MsgCronNextRunLabel  MsgKey = "cron_next_run_label"
@@ -646,6 +646,88 @@ const (
 	MsgWsInitInvalidTarget      MsgKey = "ws_init_invalid_target"
 	MsgWsInitLocalPathsDisabled MsgKey = "ws_init_local_paths_disabled"
 	MsgBackgroundAutoDenied     MsgKey = "background_auto_denied"
+
+	// Hosted action infrastructure and the CRM follow-up adapter.
+	MsgHostedActionBeginFailedTitle       MsgKey = "hosted_action_begin_failed_title"
+	MsgHostedActionBeginFailedBody        MsgKey = "hosted_action_begin_failed_body"
+	MsgHostedActionPreparingTitle         MsgKey = "hosted_action_preparing_title"
+	MsgHostedActionPreparingBody          MsgKey = "hosted_action_preparing_body"
+	MsgHostedActionInvalidToast           MsgKey = "hosted_action_invalid_toast"
+	MsgHostedActionInvalidDecisionToast   MsgKey = "hosted_action_invalid_decision_toast"
+	MsgHostedActionPrincipalMismatchToast MsgKey = "hosted_action_principal_mismatch_toast"
+	MsgHostedActionFailedTitle            MsgKey = "hosted_action_failed_title"
+	MsgHostedActionFailedBody             MsgKey = "hosted_action_failed_body"
+	MsgHostedActionExecutingTitle         MsgKey = "hosted_action_executing_title"
+	MsgHostedActionExecutingBody          MsgKey = "hosted_action_executing_body"
+	MsgHostedActionHandoffHistory         MsgKey = "hosted_action_handoff_history"
+	MsgHostedActionProcessingToast        MsgKey = "hosted_action_processing_toast"
+	MsgCRMApprovalFailedTitle             MsgKey = "crm_approval_failed_title"
+	MsgCRMApprovalFailedBody              MsgKey = "crm_approval_failed_body"
+	MsgCRMNeedsTimeTitle                  MsgKey = "crm_needs_time_title"
+	MsgCRMNeedsTimeBody                   MsgKey = "crm_needs_time_body"
+	MsgCRMNeedsSelectionTitle             MsgKey = "crm_needs_selection_title"
+	MsgCRMNeedsSelectionBody              MsgKey = "crm_needs_selection_body"
+	MsgCRMCandidateHeadingFmt             MsgKey = "crm_candidate_heading_fmt"
+	MsgCRMNotFoundTitle                   MsgKey = "crm_not_found_title"
+	MsgCRMNotFoundBodyFmt                 MsgKey = "crm_not_found_body_fmt"
+	MsgCRMBlockedTitle                    MsgKey = "crm_blocked_title"
+	MsgCRMBlockedBody                     MsgKey = "crm_blocked_body"
+	MsgCRMApprovalTitle                   MsgKey = "crm_approval_title"
+	MsgCRMApproveButton                   MsgKey = "crm_approve_button"
+	MsgCRMModifyButton                    MsgKey = "crm_modify_button"
+	MsgCRMCancelButton                    MsgKey = "crm_cancel_button"
+	MsgCRMReceiptFollowupHeading          MsgKey = "crm_receipt_followup_heading"
+	MsgCRMReceiptCustomerHeading          MsgKey = "crm_receipt_customer_heading"
+	MsgCRMOpenCustomer                    MsgKey = "crm_open_customer"
+	MsgCRMFieldVerificationHeading        MsgKey = "crm_field_verification_heading"
+	MsgCRMOperationNoteFmt                MsgKey = "crm_operation_note_fmt"
+	MsgCRMReceiptVerifiedTitle            MsgKey = "crm_receipt_verified_title"
+	MsgCRMReceiptPartialTitle             MsgKey = "crm_receipt_partial_title"
+	MsgCRMReceiptUnknownTitle             MsgKey = "crm_receipt_unknown_title"
+	MsgCRMReceiptCancelledTitle           MsgKey = "crm_receipt_cancelled_title"
+	MsgCRMReceiptSupersededTitle          MsgKey = "crm_receipt_superseded_title"
+	MsgCRMReceiptExpiredTitle             MsgKey = "crm_receipt_expired_title"
+	MsgCRMReceiptVerifiedBody             MsgKey = "crm_receipt_verified_body"
+	MsgCRMReceiptNewerBody                MsgKey = "crm_receipt_newer_body"
+	MsgCRMReceiptReplayBody               MsgKey = "crm_receipt_replay_body"
+	MsgCRMReceiptPartialBody              MsgKey = "crm_receipt_partial_body"
+	MsgCRMReceiptPartialDriftBody         MsgKey = "crm_receipt_partial_drift_body"
+	MsgCRMReceiptFollowupUnknownBody      MsgKey = "crm_receipt_followup_unknown_body"
+	MsgCRMReceiptCustomerUnknownBody      MsgKey = "crm_receipt_customer_unknown_body"
+	MsgCRMReceiptReviewBody               MsgKey = "crm_receipt_review_body"
+	MsgCRMReceiptCancelledBody            MsgKey = "crm_receipt_cancelled_body"
+	MsgCRMReceiptSupersededBody           MsgKey = "crm_receipt_superseded_body"
+	MsgCRMReceiptExpiredBody              MsgKey = "crm_receipt_expired_body"
+	MsgCRMReceiptReplanBody               MsgKey = "crm_receipt_replan_body"
+	MsgCRMReceiptBlockedBody              MsgKey = "crm_receipt_blocked_body"
+	MsgCRMReceiptPrewriteBody             MsgKey = "crm_receipt_prewrite_body"
+	MsgCRMUnset                           MsgKey = "crm_unset"
+	MsgCRMOwnerUnavailable                MsgKey = "crm_owner_unavailable"
+	MsgCRMNameSeparator                   MsgKey = "crm_name_separator"
+	MsgCRMBeijingTimeFmt                  MsgKey = "crm_beijing_time_fmt"
+	MsgCRMNotReadBack                     MsgKey = "crm_not_read_back"
+	MsgCRMPreviewActorFmt                 MsgKey = "crm_preview_actor_fmt"
+	MsgCRMPreviewTargetHeading            MsgKey = "crm_preview_target_heading"
+	MsgCRMPreviewNewFollowupHeading       MsgKey = "crm_preview_new_followup_heading"
+	MsgCRMPreviewExistingFollowupHeading  MsgKey = "crm_preview_existing_followup_heading"
+	MsgCRMPreviewChangesHeading           MsgKey = "crm_preview_changes_heading"
+	MsgCRMPreviewExpiryBlockFmt           MsgKey = "crm_preview_expiry_block_fmt"
+	MsgCRMPreviewRepairExpiryBlockFmt     MsgKey = "crm_preview_repair_expiry_block_fmt"
+	MsgCRMNoFields                        MsgKey = "crm_no_fields"
+	MsgCRMFieldCustomerNumber             MsgKey = "crm_field_customer_number"
+	MsgCRMFieldName                       MsgKey = "crm_field_name"
+	MsgCRMFieldContact                    MsgKey = "crm_field_contact"
+	MsgCRMFieldPhone                      MsgKey = "crm_field_phone"
+	MsgCRMFieldEmail                      MsgKey = "crm_field_email"
+	MsgCRMFieldStage                      MsgKey = "crm_field_stage"
+	MsgCRMFieldOwner                      MsgKey = "crm_field_owner"
+	MsgCRMFieldLastFollowupAt             MsgKey = "crm_field_last_followup_at"
+	MsgCRMFieldLastFollowupContent        MsgKey = "crm_field_last_followup_content"
+	MsgCRMFieldNextAction                 MsgKey = "crm_field_next_action"
+	MsgCRMFieldNextFollowupAt             MsgKey = "crm_field_next_followup_at"
+	MsgCRMFieldOccurredAt                 MsgKey = "crm_field_occurred_at"
+	MsgCRMFieldChannel                    MsgKey = "crm_field_channel"
+	MsgCRMFieldContent                    MsgKey = "crm_field_content"
 )
 
 var messages = map[MsgKey]map[Language]string{
@@ -4192,6 +4274,236 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "`/workspace init` ではローカルディレクトリ対象が無効です。git URL を使うか、このプロジェクトで `workspace_init_allow_local_paths = true` を有効にしてください。",
 		LangSpanish:            "Los destinos de directorio local están deshabilitados para `/workspace init`. Use una URL de git o habilite `workspace_init_allow_local_paths = true` para este proyecto.",
 	},
+	MsgHostedActionBeginFailedTitle: {
+		LangEnglish: "❌ Could not start approval", LangChinese: "❌ 无法发起审批", LangTraditionalChinese: "❌ 無法發起審批", LangJapanese: "❌ 承認を開始できません", LangSpanish: "❌ No se pudo iniciar la aprobación",
+	},
+	MsgHostedActionBeginFailedBody: {
+		LangEnglish:            "The host could not bind the staged plan. No external write occurred. Ask an administrator to inspect the service logs, then stage it again.",
+		LangChinese:            "宿主未能绑定已暂存方案；外部系统未发生写入。请联系管理员检查服务日志后重新暂存。",
+		LangTraditionalChinese: "宿主未能綁定已暫存方案；外部系統未發生寫入。請聯絡管理員檢查服務日誌後重新暫存。",
+		LangJapanese:           "ホストはステージ済みプランを関連付けられませんでした。外部への書き込みはありません。管理者がサービスログを確認してから、再度ステージしてください。",
+		LangSpanish:            "El host no pudo vincular el plan preparado. No se realizó ninguna escritura externa. Pida a un administrador que revise los registros y vuelva a preparar el plan.",
+	},
+	MsgHostedActionPreparingTitle: {
+		LangEnglish: "⏳ Preparing approval", LangChinese: "⏳ 正在准备审批", LangTraditionalChinese: "⏳ 正在準備審批", LangJapanese: "⏳ 承認を準備中", LangSpanish: "⏳ Preparando la aprobación",
+	},
+	MsgHostedActionPreparingBody: {
+		LangEnglish: "The gateway is binding this card to the exact staged plan. No action is available yet and no external write has occurred.", LangChinese: "网关正在将此卡片绑定到已暂存的原方案。当前尚不可操作，外部系统也未发生写入。", LangTraditionalChinese: "閘道正在將此卡片綁定到已暫存的原方案。目前尚不可操作，外部系統也未發生寫入。", LangJapanese: "ゲートウェイがこのカードをステージ済みの同一プランに関連付けています。まだ操作できず、外部への書き込みもありません。", LangSpanish: "La puerta de enlace está vinculando esta tarjeta al plan preparado exacto. Todavía no se puede actuar y no se ha realizado ninguna escritura externa.",
+	},
+	MsgHostedActionInvalidToast: {
+		LangEnglish: "This approval is invalid or disabled", LangChinese: "该业务审批无效或已停用", LangTraditionalChinese: "該業務審批無效或已停用", LangJapanese: "この承認は無効または停止されています", LangSpanish: "Esta aprobación no es válida o está deshabilitada",
+	},
+	MsgHostedActionInvalidDecisionToast: {
+		LangEnglish: "Invalid approval choice", LangChinese: "无效的审批选项", LangTraditionalChinese: "無效的審批選項", LangJapanese: "無効な承認オプションです", LangSpanish: "Opción de aprobación no válida",
+	},
+	MsgHostedActionPrincipalMismatchToast: {
+		LangEnglish: "Only the original sender can handle this approval in the original conversation", LangChinese: "只有原发送者可在原会话处理此审批", LangTraditionalChinese: "只有原發送者可在原會話處理此審批", LangJapanese: "元の送信者だけが元の会話でこの承認を処理できます", LangSpanish: "Solo el remitente original puede gestionar esta aprobación en la conversación original",
+	},
+	MsgHostedActionFailedTitle: {
+		LangEnglish: "❌ Operation not completed", LangChinese: "❌ 操作未完成", LangTraditionalChinese: "❌ 操作未完成", LangJapanese: "❌ 操作は完了していません", LangSpanish: "❌ Operación no completada",
+	},
+	MsgHostedActionFailedBody: {
+		LangEnglish: "The host operation failed. Do not assume the external system was updated. Ask an administrator to inspect the protected service logs.", LangChinese: "宿主操作失败；不要据此判断外部系统已经写入。请联系管理员检查受保护服务日志。", LangTraditionalChinese: "宿主操作失敗；不要據此判斷外部系統已經寫入。請聯絡管理員檢查受保護服務日誌。", LangJapanese: "ホスト操作に失敗しました。外部システムが更新されたとは判断しないでください。管理者に保護されたサービスログの確認を依頼してください。", LangSpanish: "La operación del host falló. No suponga que el sistema externo se actualizó. Pida a un administrador que revise los registros protegidos.",
+	},
+	MsgHostedActionExecutingTitle: {
+		LangEnglish: "⏳ Executing approved operation", LangChinese: "⏳ 正在执行已批准的操作", LangTraditionalChinese: "⏳ 正在執行已批准的操作", LangJapanese: "⏳ 承認済み操作を実行中", LangSpanish: "⏳ Ejecutando la operación aprobada",
+	},
+	MsgHostedActionExecutingBody: {
+		LangEnglish: "The approval was accepted. The host is applying the exact staged plan and will replace this card with the verified result.", LangChinese: "审批已接受。宿主正在执行已暂存的原方案，完成后会用核验结果替换此卡片。", LangTraditionalChinese: "審批已接受。宿主正在執行已暫存的原方案，完成後會用核驗結果取代此卡片。", LangJapanese: "承認を受け付けました。ホストがステージ済みの同一プランを実行し、完了後に検証結果でこのカードを更新します。", LangSpanish: "La aprobación fue aceptada. El host está aplicando el plan preparado exacto y reemplazará esta tarjeta con el resultado verificado.",
+	},
+	MsgHostedActionHandoffHistory: {
+		LangEnglish: "The action request was handled by the authenticated gateway host; the agent did not execute the business write.", LangChinese: "操作请求已由经过身份验证的网关宿主处理；Agent 未执行业务写入。", LangTraditionalChinese: "操作請求已由經過身分驗證的閘道宿主處理；Agent 未執行業務寫入。", LangJapanese: "操作リクエストは認証済みゲートウェイホストによって処理され、Agent は業務書き込みを実行していません。", LangSpanish: "La solicitud de acción fue gestionada por el host de puerta de enlace autenticado; el agente no ejecutó la escritura de negocio.",
+	},
+	MsgHostedActionProcessingToast: {
+		LangEnglish: "⏳ Processing your decision", LangChinese: "⏳ 正在处理你的决定", LangTraditionalChinese: "⏳ 正在處理你的決定", LangJapanese: "⏳ 選択を処理しています", LangSpanish: "⏳ Procesando su decisión",
+	},
+	MsgCRMApprovalFailedTitle: {
+		LangEnglish: "❌ CRM approval was not created", LangChinese: "❌ CRM 审批未建立", LangTraditionalChinese: "❌ CRM 審批未建立", LangJapanese: "❌ CRM 承認を作成できませんでした", LangSpanish: "❌ No se creó la aprobación de CRM",
+	},
+	MsgCRMApprovalFailedBody: {
+		LangEnglish: "The staged plan could not be bound to the current sender; Feishu was not changed.", LangChinese: "已暂存方案无法绑定到当前发送者；飞书未发生写入。", LangTraditionalChinese: "已暫存方案無法綁定到目前發送者；飛書未發生寫入。", LangJapanese: "ステージ済みプランを現在の送信者に関連付けられませんでした。Feishu は変更されていません。", LangSpanish: "El plan preparado no pudo vincularse al remitente actual; Feishu no se modificó.",
+	},
+	MsgCRMNeedsTimeTitle: {
+		LangEnglish: "Follow-up time needed", LangChinese: "需要补充沟通时间", LangTraditionalChinese: "需要補充溝通時間", LangJapanese: "連絡日時が必要です", LangSpanish: "Falta la hora del seguimiento",
+	},
+	MsgCRMNeedsTimeBody: {
+		LangEnglish: "Please provide the date, time, and time zone of the customer contact. Feishu was not changed and no approval was created.", LangChinese: "请补充本次客户沟通的日期、时间和时区。飞书未发生写入，也未创建审批。", LangTraditionalChinese: "請補充本次客戶溝通的日期、時間和時區。飛書未發生寫入，也未建立審批。", LangJapanese: "顧客対応の日付・時刻・タイムゾーンを指定してください。Feishu への書き込みも承認の作成も行われていません。", LangSpanish: "Indique la fecha, hora y zona horaria del contacto con el cliente. Feishu no se modificó y no se creó ninguna aprobación.",
+	},
+	MsgCRMNeedsSelectionTitle: {
+		LangEnglish: "Choose the customer", LangChinese: "请选择目标客户", LangTraditionalChinese: "請選擇目標客戶", LangJapanese: "顧客を選択してください", LangSpanish: "Elija el cliente",
+	},
+	MsgCRMNeedsSelectionBody: {
+		LangEnglish: "More than one exact name matched. Reply with one customer number from the candidates below. Feishu was not changed and no approval was created.", LangChinese: "有多个客户名称精确匹配。请回复下列候选中的一个客户编号。飞书未发生写入，也未创建审批。", LangTraditionalChinese: "有多個客戶名稱精確匹配。請回覆下列候選中的一個客戶編號。飛書未發生寫入，也未建立審批。", LangJapanese: "同じ顧客名が複数見つかりました。以下の候補から顧客番号を1つ返信してください。Feishu への書き込みも承認の作成も行われていません。", LangSpanish: "Coincidió más de un nombre exacto. Responda con un número de cliente de la lista. Feishu no se modificó y no se creó ninguna aprobación.",
+	},
+	MsgCRMCandidateHeadingFmt: {
+		LangEnglish: "**Candidate %d**", LangChinese: "**候选 %d**", LangTraditionalChinese: "**候選 %d**", LangJapanese: "**候補 %d**", LangSpanish: "**Candidato %d**",
+	},
+	MsgCRMNotFoundTitle: {
+		LangEnglish: "Customer not found", LangChinese: "未找到客户", LangTraditionalChinese: "找不到客戶", LangJapanese: "顧客が見つかりません", LangSpanish: "Cliente no encontrado",
+	},
+	MsgCRMNotFoundBodyFmt: {
+		LangEnglish: "No exact customer number or normalized customer name matched **%s**. Check the name or provide a customer number. Feishu was not changed and no approval was created.", LangChinese: "没有客户编号或规范化客户名称与 **%s** 精确匹配。请核对名称或提供客户编号。飞书未发生写入，也未创建审批。", LangTraditionalChinese: "沒有客戶編號或正規化客戶名稱與 **%s** 精確匹配。請核對名稱或提供客戶編號。飛書未發生寫入，也未建立審批。", LangJapanese: "顧客番号または正規化された顧客名が **%s** と完全一致しませんでした。名前を確認するか顧客番号を指定してください。Feishu への書き込みも承認の作成も行われていません。", LangSpanish: "Ningún número ni nombre normalizado de cliente coincidió exactamente con **%s**. Revise el nombre o indique el número de cliente. Feishu no se modificó y no se creó ninguna aprobación.",
+	},
+	MsgCRMBlockedTitle: {
+		LangEnglish: "Request blocked", LangChinese: "请求已拦截", LangTraditionalChinese: "請求已攔截", LangJapanese: "リクエストはブロックされました", LangSpanish: "Solicitud bloqueada",
+	},
+	MsgCRMBlockedBody: {
+		LangEnglish: "The request did not pass CRM validation or the CRM could not be read. Feishu was not changed and no approval was created. Review the request and try again; ask an administrator if it persists.", LangChinese: "请求未通过 CRM 校验，或当前无法读取 CRM。飞书未发生写入，也未创建审批。请检查请求后重试；若持续发生，请联系管理员。", LangTraditionalChinese: "請求未通過 CRM 校驗，或目前無法讀取 CRM。飛書未發生寫入，也未建立審批。請檢查請求後重試；若持續發生，請聯絡管理員。", LangJapanese: "CRM 検証に通らなかったか、CRM を読み取れませんでした。Feishu への書き込みも承認の作成も行われていません。内容を確認して再試行し、続く場合は管理者に連絡してください。", LangSpanish: "La solicitud no superó la validación de CRM o no se pudo leer el CRM. Feishu no se modificó y no se creó ninguna aprobación. Revise la solicitud y vuelva a intentarlo; si continúa, consulte al administrador.",
+	},
+	MsgCRMApprovalTitle: {
+		LangEnglish: "Approval required: record customer follow-up", LangChinese: "待审批：记录客户跟进", LangTraditionalChinese: "待審批：記錄客戶跟進", LangJapanese: "承認待ち：顧客フォローアップを記録", LangSpanish: "Pendiente de aprobación: registrar seguimiento del cliente",
+	},
+	MsgCRMApproveButton:            {LangEnglish: "Approve", LangChinese: "同意执行", LangTraditionalChinese: "同意執行", LangJapanese: "承認して実行", LangSpanish: "Aprobar"},
+	MsgCRMModifyButton:             {LangEnglish: "Modify plan", LangChinese: "修改方案", LangTraditionalChinese: "修改方案", LangJapanese: "プランを変更", LangSpanish: "Modificar plan"},
+	MsgCRMCancelButton:             {LangEnglish: "Cancel", LangChinese: "取消", LangTraditionalChinese: "取消", LangJapanese: "キャンセル", LangSpanish: "Cancelar"},
+	MsgCRMReceiptFollowupHeading:   {LangEnglish: "**Actual follow-up record (read back)**", LangChinese: "**实际跟进记录（回读）**", LangTraditionalChinese: "**實際跟進記錄（回讀）**", LangJapanese: "**実際のフォローアップ記録（再読込）**", LangSpanish: "**Registro de seguimiento real (releído)**"},
+	MsgCRMReceiptCustomerHeading:   {LangEnglish: "**Current customer state (read back)**", LangChinese: "**客户当前状态（回读）**", LangTraditionalChinese: "**客戶目前狀態（回讀）**", LangJapanese: "**現在の顧客状態（再読込）**", LangSpanish: "**Estado actual del cliente (releído)**"},
+	MsgCRMOpenCustomer:             {LangEnglish: "Open customer record", LangChinese: "打开客户记录", LangTraditionalChinese: "開啟客戶記錄", LangJapanese: "顧客レコードを開く", LangSpanish: "Abrir registro del cliente"},
+	MsgCRMFieldVerificationHeading: {LangEnglish: "**Field verification**", LangChinese: "**字段核验**", LangTraditionalChinese: "**欄位核驗**", LangJapanese: "**フィールド検証**", LangSpanish: "**Verificación de campos**"},
+	MsgCRMOperationNoteFmt:         {LangEnglish: "Operation ID: %s · Verification status: %s", LangChinese: "操作 ID：%s · 核验状态：%s", LangTraditionalChinese: "操作 ID：%s · 核驗狀態：%s", LangJapanese: "操作 ID: %s · 検証状態: %s", LangSpanish: "ID de operación: %s · Estado de verificación: %s"},
+	MsgCRMReceiptVerifiedTitle:     {LangEnglish: "✅ Executed and verified", LangChinese: "✅ 已执行并核验", LangTraditionalChinese: "✅ 已執行並核驗", LangJapanese: "✅ 実行・検証済み", LangSpanish: "✅ Ejecutado y verificado"},
+	MsgCRMReceiptPartialTitle:      {LangEnglish: "⚠️ Partially completed", LangChinese: "⚠️ 部分完成", LangTraditionalChinese: "⚠️ 部分完成", LangJapanese: "⚠️ 一部完了", LangSpanish: "⚠️ Completado parcialmente"},
+	MsgCRMReceiptUnknownTitle:      {LangEnglish: "⚠️ Verification unknown", LangChinese: "⚠️ 核验未知", LangTraditionalChinese: "⚠️ 核驗未知", LangJapanese: "⚠️ 検証結果不明", LangSpanish: "⚠️ Verificación desconocida"},
+	MsgCRMReceiptCancelledTitle:    {LangEnglish: "Cancelled: Feishu was not changed", LangChinese: "已取消：飞书未写入", LangTraditionalChinese: "已取消：飛書未寫入", LangJapanese: "キャンセル済み：Feishu は変更されていません", LangSpanish: "Cancelado: Feishu no se modificó"},
+	MsgCRMReceiptSupersededTitle:   {LangEnglish: "Send the revised plan", LangChinese: "请发送修改后的方案", LangTraditionalChinese: "請傳送修改後的方案", LangJapanese: "修正したプランを送信してください", LangSpanish: "Envíe el plan revisado"},
+	MsgCRMReceiptExpiredTitle:      {LangEnglish: "Plan expired; stage it again", LangChinese: "方案已失效，请重新暂存", LangTraditionalChinese: "方案已失效，請重新暫存", LangJapanese: "プランは失効しました。再度ステージしてください", LangSpanish: "El plan caducó; vuelva a prepararlo"},
+	MsgCRMReceiptVerifiedBody: {
+		LangEnglish:            "The follow-up and customer summary were read back and verified.",
+		LangChinese:            "跟进记录与客户摘要均已回读核验。",
+		LangTraditionalChinese: "跟進記錄與客戶摘要均已回讀核驗。",
+		LangJapanese:           "フォローアップ記録と顧客要約を再読込し、検証しました。",
+		LangSpanish:            "Se releyeron y verificaron el seguimiento y el resumen del cliente.",
+	},
+	MsgCRMReceiptNewerBody: {
+		LangEnglish:            "The follow-up was recorded and verified; the newer customer summary was preserved.",
+		LangChinese:            "跟进记录已写入并核验；保留了较新的客户摘要。",
+		LangTraditionalChinese: "跟進記錄已寫入並核驗；保留了較新的客戶摘要。",
+		LangJapanese:           "フォローアップを記録・検証しました。より新しい顧客要約は保持しています。",
+		LangSpanish:            "El seguimiento se registró y verificó; se conservó el resumen más reciente del cliente.",
+	},
+	MsgCRMReceiptReplayBody: {
+		LangEnglish:            "The existing records match the approved plan and were verified; no duplicate write was made.",
+		LangChinese:            "已有记录与批准方案一致并已核验；未重复写入。",
+		LangTraditionalChinese: "既有記錄與批准方案一致並已核驗；未重複寫入。",
+		LangJapanese:           "既存の記録が承認済みプランと一致することを検証しました。重複書き込みはありません。",
+		LangSpanish:            "Los registros existentes coinciden con el plan aprobado y se verificaron; no se duplicó la escritura.",
+	},
+	MsgCRMReceiptPartialBody: {
+		LangEnglish:            "The recorded follow-up is retained. The customer summary is not fully verified and remaining writes stopped. Contact an administrator for manual review using the operation ID. No automatic retry or rollback was performed.",
+		LangChinese:            "已记录的跟进予以保留。客户摘要尚未完成核验，其余写入已停止。请提供操作 ID，联系管理员人工核对；未自动重试或回滚。",
+		LangTraditionalChinese: "已記錄的跟進予以保留。客戶摘要尚未完成核驗，其餘寫入已停止。請提供操作 ID，聯絡管理員人工核對；未自動重試或回滾。",
+		LangJapanese:           "記録済みのフォローアップは保持しています。顧客要約の検証は未完了で、残りの書き込みは停止しました。操作 ID を添えて管理者に手動確認を依頼してください。自動再試行やロールバックは行っていません。",
+		LangSpanish:            "Se conserva el seguimiento registrado. El resumen no está completamente verificado y se detuvieron las escrituras restantes. Contacte a un administrador para una revisión manual con el ID de operación. No hubo reintento ni reversión automáticos.",
+	},
+	MsgCRMReceiptPartialDriftBody: {
+		LangEnglish:            "The follow-up is retained, but customer data or the schema changed. Remaining writes stopped. Contact an administrator for manual review using the operation ID. No automatic retry or rollback was performed.",
+		LangChinese:            "跟进记录予以保留，但客户数据或表结构发生变化；其余写入已停止。请提供操作 ID，联系管理员人工核对；未自动重试或回滚。",
+		LangTraditionalChinese: "跟進記錄予以保留，但客戶資料或表結構發生變化；其餘寫入已停止。請提供操作 ID，聯絡管理員人工核對；未自動重試或回滾。",
+		LangJapanese:           "フォローアップは保持していますが、顧客データまたはスキーマが変更されました。残りの書き込みは停止しました。操作 ID を添えて管理者に手動確認を依頼してください。自動再試行やロールバックは行っていません。",
+		LangSpanish:            "Se conserva el seguimiento, pero cambiaron los datos del cliente o el esquema. Se detuvieron las escrituras restantes. Contacte a un administrador para una revisión manual con el ID de operación. No hubo reintento ni reversión automáticos.",
+	},
+	MsgCRMReceiptFollowupUnknownBody: {
+		LangEnglish:            "The follow-up write is not confirmed. The customer summary was not updated by this attempt. Check the actual records before retrying; no automatic retry or rollback was performed.",
+		LangChinese:            "跟进写入结果尚未确认，本次未继续更新客户摘要。请先人工核对实际记录；未自动重试或回滚。",
+		LangTraditionalChinese: "跟進寫入結果尚未確認，本次未繼續更新客戶摘要。請先人工核對實際記錄；未自動重試或回滾。",
+		LangJapanese:           "フォローアップの書き込み結果は未確認です。今回の処理では顧客要約の更新に進んでいません。実際の記録を手動で確認してください。自動再試行やロールバックは行っていません。",
+		LangSpanish:            "La escritura del seguimiento no está confirmada. Este intento no continuó con el resumen del cliente. Revise los registros reales; no hubo reintento ni reversión automáticos.",
+	},
+	MsgCRMReceiptCustomerUnknownBody: {
+		LangEnglish:            "The follow-up was verified, but the customer summary write is not confirmed. Check the actual customer record; no automatic retry or rollback was performed.",
+		LangChinese:            "跟进记录已核验，但客户摘要写入结果尚未确认。请先人工核对客户实际状态；未自动重试或回滚。",
+		LangTraditionalChinese: "跟進記錄已核驗，但客戶摘要寫入結果尚未確認。請先人工核對客戶實際狀態；未自動重試或回滾。",
+		LangJapanese:           "フォローアップは検証済みですが、顧客要約の書き込み結果は未確認です。実際の顧客状態を手動で確認してください。自動再試行やロールバックは行っていません。",
+		LangSpanish:            "El seguimiento se verificó, pero la escritura del resumen no está confirmada. Revise el estado real del cliente; no hubo reintento ni reversión automáticos.",
+	},
+	MsgCRMReceiptReviewBody: {
+		LangEnglish:            "Completion could not be confirmed. Do not assume that no write occurred or repeat the operation. Ask an administrator to check the actual records using the operation ID.",
+		LangChinese:            "当前无法确认完整结果；不要据此认定零写入，也不要重复提交。请提供操作 ID，由管理员人工核对实际记录。",
+		LangTraditionalChinese: "目前無法確認完整結果；不要據此認定零寫入，也不要重複提交。請提供操作 ID，由管理員人工核對實際記錄。",
+		LangJapanese:           "完了結果を確認できません。書き込みがなかったと判断したり、操作を繰り返したりしないでください。操作 ID を使い、管理者が実際の記録を確認してください。",
+		LangSpanish:            "No se pudo confirmar el resultado completo. No suponga que no hubo escrituras ni repita la operación. Pida a un administrador que revise los registros con el ID de operación.",
+	},
+	MsgCRMReceiptCancelledBody: {
+		LangEnglish:            "This plan was not executed. The approval is closed; existing records were not changed by this cancellation.",
+		LangChinese:            "未执行此方案，审批已关闭；取消操作未改变已有记录。",
+		LangTraditionalChinese: "未執行此方案，審批已關閉；取消操作未改變既有記錄。",
+		LangJapanese:           "このプランは実行されず、承認は終了しました。キャンセルによる既存記録の変更はありません。",
+		LangSpanish:            "Este plan no se ejecutó. La aprobación está cerrada; la cancelación no modificó registros existentes.",
+	},
+	MsgCRMReceiptSupersededBody: {
+		LangEnglish:            "The old approval is invalid and cannot execute this plan. Send revised instructions if needed; only a newly approved plan may write data.",
+		LangChinese:            "旧审批已失效，不能再执行此方案。需要时请发送修改内容；新方案须重新批准后才能写入。",
+		LangTraditionalChinese: "舊審批已失效，不能再執行此方案。需要時請傳送修改內容；新方案須重新批准後才能寫入。",
+		LangJapanese:           "以前の承認は無効で、このプランを実行できません。必要なら修正内容を送信してください。新しいプランも承認されるまで書き込めません。",
+		LangSpanish:            "La aprobación anterior es inválida y no puede ejecutar este plan. Envíe los cambios si hace falta; el nuevo plan requiere otra aprobación para escribir datos.",
+	},
+	MsgCRMReceiptExpiredBody: {
+		LangEnglish:            "The approval expired without executing this plan. Refresh the preview and approve it again before any write.",
+		LangChinese:            "审批已过期，未执行此方案。请重新获取预览并批准后再写入。",
+		LangTraditionalChinese: "審批已過期，未執行此方案。請重新取得預覽並批准後再寫入。",
+		LangJapanese:           "承認期限が切れたため、このプランは実行されませんでした。プレビューを更新し、再承認してから書き込んでください。",
+		LangSpanish:            "La aprobación caducó sin ejecutar este plan. Actualice la vista previa y vuelva a aprobar antes de escribir.",
+	},
+	MsgCRMReceiptReplanBody: {
+		LangEnglish:            "The customer match, data, schema, or approval state changed. This attempt stopped before writing; refresh the preview and approve the new plan.",
+		LangChinese:            "客户匹配、数据、表结构或审批状态发生变化，本次在写入前已停止。请重新获取预览并批准新方案。",
+		LangTraditionalChinese: "客戶匹配、資料、表結構或審批狀態發生變化，本次在寫入前已停止。請重新取得預覽並批准新方案。",
+		LangJapanese:           "顧客の照合結果、データ、スキーマまたは承認状態が変わったため、今回の書き込み前に停止しました。プレビューを更新し、新しいプランを承認してください。",
+		LangSpanish:            "Cambió la coincidencia del cliente, los datos, el esquema o la aprobación. Este intento se detuvo antes de escribir; actualice la vista previa y apruebe el nuevo plan.",
+	},
+	MsgCRMReceiptBlockedBody: {
+		LangEnglish:            "This request was not executed because approval validation failed. Check that the original sender is using the original conversation and approval card; contact an administrator if needed.",
+		LangChinese:            "审批校验未通过，未执行此请求。请确认由原发送者在原会话使用原审批卡；必要时联系管理员。",
+		LangTraditionalChinese: "審批校驗未通過，未執行此請求。請確認由原發送者在原會話使用原審批卡；必要時聯絡管理員。",
+		LangJapanese:           "承認の検証に失敗したため、このリクエストは実行されませんでした。元の送信者が元の会話と承認カードを使っているか確認し、必要なら管理者に連絡してください。",
+		LangSpanish:            "La validación de la aprobación falló y esta solicitud no se ejecutó. Compruebe el remitente, la conversación y la tarjeta originales; contacte al administrador si hace falta.",
+	},
+	MsgCRMReceiptPrewriteBody: {
+		LangEnglish:            "Pre-write checks failed. This attempt did not write to CRM. Ask an administrator to check the read access before trying again.",
+		LangChinese:            "写入前检查未通过，本次未写入 CRM。请先由管理员检查读取情况，再决定是否重试。",
+		LangTraditionalChinese: "寫入前檢查未通過，本次未寫入 CRM。請先由管理員檢查讀取情況，再決定是否重試。",
+		LangJapanese:           "書き込み前の確認に失敗し、今回は CRM に書き込んでいません。管理者が読み取り状況を確認してから再試行を判断してください。",
+		LangSpanish:            "Fallaron las comprobaciones previas; este intento no escribió en CRM. Pida al administrador que revise el acceso de lectura antes de reintentar.",
+	},
+	MsgCRMUnset:                          {LangEnglish: "Not set", LangChinese: "未设置", LangTraditionalChinese: "未設定", LangJapanese: "未設定", LangSpanish: "Sin asignar"},
+	MsgCRMOwnerUnavailable:               {LangEnglish: "Name unavailable", LangChinese: "姓名不可用", LangTraditionalChinese: "姓名不可用", LangJapanese: "氏名不明", LangSpanish: "Nombre no disponible"},
+	MsgCRMNameSeparator:                  {LangEnglish: ", ", LangChinese: "、", LangTraditionalChinese: "、", LangJapanese: "、", LangSpanish: ", "},
+	MsgCRMBeijingTimeFmt:                 {LangEnglish: "%s (Beijing time)", LangChinese: "%s（北京时间）", LangTraditionalChinese: "%s（北京時間）", LangJapanese: "%s（北京時間）", LangSpanish: "%s (hora de Pekín)"},
+	MsgCRMNotReadBack:                    {LangEnglish: "Not read back", LangChinese: "未回读", LangTraditionalChinese: "未回讀", LangJapanese: "未読込", LangSpanish: "Sin releer"},
+	MsgCRMPreviewActorFmt:                {LangEnglish: "**Operator**: %s", LangChinese: "**操作者**：%s", LangTraditionalChinese: "**操作者**：%s", LangJapanese: "**操作者**: %s", LangSpanish: "**Operador**: %s"},
+	MsgCRMPreviewTargetHeading:           {LangEnglish: "**Target customer and current state**", LangChinese: "**目标客户与当前状态**", LangTraditionalChinese: "**目標客戶與目前狀態**", LangJapanese: "**対象顧客と現在の状態**", LangSpanish: "**Cliente objetivo y estado actual**"},
+	MsgCRMPreviewNewFollowupHeading:      {LangEnglish: "**Follow-up to create**", LangChinese: "**将新增跟进**", LangTraditionalChinese: "**將新增跟進**", LangJapanese: "**作成するフォローアップ**", LangSpanish: "**Seguimiento que se creará**"},
+	MsgCRMPreviewExistingFollowupHeading: {LangEnglish: "**Existing verified follow-up (no new row)**", LangChinese: "**已存在且已核验的跟进（不新增记录）**", LangTraditionalChinese: "**已存在且已核驗的跟進（不新增記錄）**", LangJapanese: "**検証済みの既存フォローアップ（新規行なし）**", LangSpanish: "**Seguimiento existente verificado (sin fila nueva)**"},
+	MsgCRMPreviewChangesHeading:          {LangEnglish: "**Customer field changes**", LangChinese: "**客户字段变更**", LangTraditionalChinese: "**客戶欄位變更**", LangJapanese: "**顧客フィールドの変更**", LangSpanish: "**Cambios en campos del cliente**"},
+	MsgCRMPreviewExpiryBlockFmt: {
+		LangEnglish:            "**Expires**: %s\n**Order**: create and read back the follow-up → update and read back the customer summary\n**Failure handling**: a verified follow-up is not blindly rolled back; remaining steps stop and the receipt reports the actual state.",
+		LangChinese:            "**有效期**：%s\n**执行顺序**：新增并回读跟进 → 更新并回读客户摘要\n**失败处理**：已核验的跟进不会被盲目回滚；其余步骤停止并如实回执。",
+		LangTraditionalChinese: "**有效期**：%s\n**執行順序**：新增並回讀跟進 → 更新並回讀客戶摘要\n**失敗處理**：已核驗的跟進不會被盲目回滾；其餘步驟停止並如實回執。",
+		LangJapanese:           "**有効期限**: %s\n**実行順序**: フォローアップを作成・再読込 → 顧客要約を更新・再読込\n**失敗時**: 検証済みのフォローアップは安易に戻さず、残りを停止して実際の状態を通知します。",
+		LangSpanish:            "**Caduca**: %s\n**Orden**: crear y releer el seguimiento → actualizar y releer el resumen del cliente\n**Si falla**: no se revierte a ciegas un seguimiento verificado; se detienen los pasos restantes y el recibo informa el estado real.",
+	},
+	MsgCRMPreviewRepairExpiryBlockFmt: {
+		LangEnglish:            "**Expires**: %s\n**Order**: keep the verified follow-up → repair and read back the customer summary\n**Failure handling**: no new follow-up row is created; remaining steps stop and the receipt reports the actual state.",
+		LangChinese:            "**有效期**：%s\n**执行顺序**：保留已核验的跟进 → 修复并回读客户摘要\n**失败处理**：不会新增跟进记录；其余步骤停止并如实回执。",
+		LangTraditionalChinese: "**有效期**：%s\n**執行順序**：保留已核驗的跟進 → 修復並回讀客戶摘要\n**失敗處理**：不會新增跟進記錄；其餘步驟停止並如實回執。",
+		LangJapanese:           "**有効期限**: %s\n**実行順序**: 検証済みフォローアップを保持 → 顧客要約を修復・再読込\n**失敗時**: 新しいフォローアップ行は作成せず、残りを停止して実際の状態を通知します。",
+		LangSpanish:            "**Caduca**: %s\n**Orden**: conservar el seguimiento verificado → reparar y releer el resumen del cliente\n**Si falla**: no se crea una nueva fila de seguimiento; se detienen los pasos restantes y el recibo informa el estado real.",
+	},
+	MsgCRMNoFields:                 {LangEnglish: "- No fields to display", LangChinese: "- 无可显示字段", LangTraditionalChinese: "- 無可顯示欄位", LangJapanese: "- 表示できるフィールドはありません", LangSpanish: "- No hay campos para mostrar"},
+	MsgCRMFieldCustomerNumber:      {LangEnglish: "Customer number", LangChinese: "客户编号", LangTraditionalChinese: "客戶編號", LangJapanese: "顧客番号", LangSpanish: "Número de cliente"},
+	MsgCRMFieldName:                {LangEnglish: "Customer name", LangChinese: "客户名称", LangTraditionalChinese: "客戶名稱", LangJapanese: "顧客名", LangSpanish: "Nombre del cliente"},
+	MsgCRMFieldContact:             {LangEnglish: "Contact", LangChinese: "联系人", LangTraditionalChinese: "聯絡人", LangJapanese: "連絡先", LangSpanish: "Contacto"},
+	MsgCRMFieldPhone:               {LangEnglish: "Phone", LangChinese: "电话", LangTraditionalChinese: "電話", LangJapanese: "電話", LangSpanish: "Teléfono"},
+	MsgCRMFieldEmail:               {LangEnglish: "Email", LangChinese: "邮箱", LangTraditionalChinese: "電子郵件", LangJapanese: "メール", LangSpanish: "Correo"},
+	MsgCRMFieldStage:               {LangEnglish: "Stage", LangChinese: "阶段", LangTraditionalChinese: "階段", LangJapanese: "ステージ", LangSpanish: "Etapa"},
+	MsgCRMFieldOwner:               {LangEnglish: "Owner", LangChinese: "负责人", LangTraditionalChinese: "負責人", LangJapanese: "担当者", LangSpanish: "Responsable"},
+	MsgCRMFieldLastFollowupAt:      {LangEnglish: "Last follow-up", LangChinese: "最近跟进时间", LangTraditionalChinese: "最近跟進時間", LangJapanese: "最終フォロー日時", LangSpanish: "Último seguimiento"},
+	MsgCRMFieldLastFollowupContent: {LangEnglish: "Last follow-up summary", LangChinese: "最近跟进摘要", LangTraditionalChinese: "最近跟進摘要", LangJapanese: "最終フォロー要約", LangSpanish: "Resumen del último seguimiento"},
+	MsgCRMFieldNextAction:          {LangEnglish: "Next action", LangChinese: "下一步行动", LangTraditionalChinese: "下一步行動", LangJapanese: "次のアクション", LangSpanish: "Próxima acción"},
+	MsgCRMFieldNextFollowupAt:      {LangEnglish: "Next follow-up", LangChinese: "下次跟进时间", LangTraditionalChinese: "下次跟進時間", LangJapanese: "次回フォロー日時", LangSpanish: "Próximo seguimiento"},
+	MsgCRMFieldOccurredAt:          {LangEnglish: "Contact time", LangChinese: "沟通时间", LangTraditionalChinese: "溝通時間", LangJapanese: "連絡日時", LangSpanish: "Hora del contacto"},
+	MsgCRMFieldChannel:             {LangEnglish: "Channel", LangChinese: "沟通方式", LangTraditionalChinese: "溝通方式", LangJapanese: "連絡手段", LangSpanish: "Canal"},
+	MsgCRMFieldContent:             {LangEnglish: "Content", LangChinese: "沟通内容", LangTraditionalChinese: "溝通內容", LangJapanese: "内容", LangSpanish: "Contenido"},
 }
 
 func (i *I18n) T(key MsgKey) string {

@@ -370,6 +370,20 @@ type CardRefresher interface {
 	RefreshCard(ctx context.Context, sessionKey string, card *Card) error
 }
 
+// CardMessageRefresher updates one exact card message. Hosted approvals use
+// this instead of a per-session "last card" pointer so concurrent callbacks
+// cannot refresh the wrong approval card.
+type CardMessageRefresher interface {
+	RefreshCardMessage(ctx context.Context, messageID, sessionKey string, card *Card) error
+}
+
+// HostedActionCardPublisher emits a non-actionable placeholder and returns the
+// platform-assigned message ID. The host binds that ID before core replaces the
+// placeholder with an actionable approval card.
+type HostedActionCardPublisher interface {
+	ReplyHostedActionPlaceholder(ctx context.Context, replyCtx any, card *Card) (string, error)
+}
+
 // PlatformLifecycleHandler receives readiness state transitions from async
 // recoverable platforms.
 type PlatformLifecycleHandler interface {

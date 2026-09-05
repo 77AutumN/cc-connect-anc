@@ -8,8 +8,75 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chenhg5/cc-connect/core"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 )
+
+func TestHostedActionPlaceholderReturnsTheEmittedReplyMessageID(t *testing.T) {
+	const appID = "cli_hosted_placeholder"
+	const appSecret = "secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			writeJSON(t, w, map[string]any{"code": 0, "expire": 7200, "tenant_access_token": "token"})
+		case strings.HasSuffix(r.URL.Path, "/reply"):
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"message_id": "om_exact_placeholder"}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	base := &Platform{
+		platformName: "feishu", domain: srv.URL, appID: appID, appSecret: appSecret,
+		client:       lark.NewClient(appID, appSecret, lark.WithOpenBaseUrl(srv.URL), lark.WithHttpClient(srv.Client())),
+		replayClient: lark.NewClient(appID, appSecret, lark.WithEnableTokenCache(false), lark.WithOpenBaseUrl(srv.URL), lark.WithHttpClient(srv.Client())),
+	}
+	ip := &interactivePlatform{Platform: base}
+	messageID, err := ip.ReplyHostedActionPlaceholder(
+		context.Background(),
+		replyContext{messageID: "om_user_request", chatID: "oc_chat", sessionKey: "feishu:oc_chat:ou_owner"},
+		core.NewCard().Title("Preparing", "blue").Build(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID != "om_exact_placeholder" {
+		t.Fatalf("messageID = %q, want exact emitted card id", messageID)
+	}
+}
+
+func TestHostedActionPlaceholderFailsClosedWhenFeishuOmitsMessageID(t *testing.T) {
+	const appID = "cli_hosted_placeholder_no_id"
+	const appSecret = "secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			writeJSON(t, w, map[string]any{"code": 0, "expire": 7200, "tenant_access_token": "token"})
+		case strings.HasSuffix(r.URL.Path, "/reply"):
+			writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	base := &Platform{
+		platformName: "feishu", domain: srv.URL, appID: appID, appSecret: appSecret,
+		client:       lark.NewClient(appID, appSecret, lark.WithOpenBaseUrl(srv.URL), lark.WithHttpClient(srv.Client())),
+		replayClient: lark.NewClient(appID, appSecret, lark.WithEnableTokenCache(false), lark.WithOpenBaseUrl(srv.URL), lark.WithHttpClient(srv.Client())),
+	}
+	ip := &interactivePlatform{Platform: base}
+	if _, err := ip.ReplyHostedActionPlaceholder(
+		context.Background(),
+		replyContext{messageID: "om_user_request", chatID: "oc_chat"},
+		core.NewCard().Title("Preparing", "blue").Build(),
+	); err == nil {
+		t.Fatal("placeholder without a platform message id was accepted")
+	}
+}
 
 func TestReplyRefreshesTenantTokenAfterInvalidCachedToken(t *testing.T) {
 	const appID = "cli_reply_retry"

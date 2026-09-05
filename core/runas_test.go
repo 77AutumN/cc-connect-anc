@@ -135,6 +135,25 @@ func TestFilterEnvForSpawn_Legacy(t *testing.T) {
 	}
 }
 
+func TestSudoEnvKeepDoesNotBroadenEnvironmentOrAuditSecret(t *testing.T) {
+	opts := SpawnOptions{
+		RunAsUser: "target", EnvAllowlist: []string{"SESSION_TOKEN"},
+		SudoEnvKeep: []string{"SESSION_TOKEN", "HOST_SECRET"},
+	}
+	env := FilterEnvForSpawn([]string{"LANG=C", "SESSION_TOKEN=fixture", "HOST_SECRET=forbidden"}, opts)
+	if !reflect.DeepEqual(env, []string{"LANG=C", "SESSION_TOKEN=fixture"}) {
+		t.Fatal("sudoers inheritance changed the child environment allowlist")
+	}
+	cmd := BuildSpawnCommand(context.Background(), opts, "true")
+	preserved := strings.Split(strings.TrimPrefix(cmd.Args[4], "--preserve-env="), ",")
+	if slices.Contains(preserved, "SESSION_TOKEN") || slices.Contains(preserved, "HOST_SECRET") {
+		t.Fatal("a sudoers-inherited secret would enter the explicit environment audit field")
+	}
+	if !slices.Contains(preserved, "LANG") {
+		t.Fatal("ordinary upstream environment preservation regressed")
+	}
+}
+
 func TestFilterEnvForSpawn_RunAsUser(t *testing.T) {
 	env := []string{
 		"PATH=/usr/bin",
@@ -154,7 +173,7 @@ func TestFilterEnvForSpawn_RunAsUser(t *testing.T) {
 	// sudo -i can rebuild it from the target user's login profile
 	// instead of inheriting the supervisor's PATH.
 	wantKept := map[string]bool{
-		"LANG=en_US.UTF-8":                 true,
+		"LANG=en_US.UTF-8":                  true,
 		"PGSSLROOTCERT=/etc/certs/root.crt": true,
 	}
 	for _, e := range got {
@@ -201,8 +220,8 @@ func TestVerifyRunAsUserCheap_Success(t *testing.T) {
 	ResetVerifyCache()
 	runner := &stubSudoRunner{
 		script: map[string]stubResponse{
-			key("-n", "-iu", "target", "--", "/usr/bin/true"):                           {nil, nil},
-			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"):             {[]byte("a password is required"), &exec.ExitError{}},
+			key("-n", "-iu", "target", "--", "/usr/bin/true"):               {nil, nil},
+			key("-n", "-iu", "target", "--", "sudo", "-n", "/usr/bin/true"): {[]byte("a password is required"), &exec.ExitError{}},
 		},
 	}
 	if err := VerifyRunAsUserCheap(context.Background(), runner, "target"); err != nil {
@@ -277,4 +296,3 @@ func TestVerifyRunAsUserCheap_CacheHit(t *testing.T) {
 		t.Fatalf("cached call made runner calls; want 2 total, got %d", len(runner.calls))
 	}
 }
-

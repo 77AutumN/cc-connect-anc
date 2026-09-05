@@ -18,6 +18,48 @@ func decodeRenderedCard(t *testing.T, card *core.Card) map[string]any {
 	return got
 }
 
+func TestRenderCardMap_HostedButtonOmitsEmptyGenericAction(t *testing.T) {
+	card := core.NewCard().Buttons(core.CardButton{
+		Text: "approve",
+		Extra: map[string]string{
+			"kind":        "crm.followup.v1",
+			"approval_id": "apr_opaque",
+			"decision":    "approve",
+		},
+	}).Build()
+	got := renderCardMap(card, "feishu:oc_chat:ou_owner")
+	elements := got["elements"].([]map[string]any)
+	actions := elements[0]["actions"].([]map[string]any)
+	value := actions[0]["value"].(map[string]string)
+	if _, exists := value["action"]; exists {
+		t.Fatalf("hosted button contains generic command action: %#v", value)
+	}
+	if value["kind"] != "crm.followup.v1" || value["approval_id"] != "apr_opaque" ||
+		value["decision"] != "approve" || value["session_key"] != "feishu:oc_chat:ou_owner" {
+		t.Fatalf("unexpected hosted button payload: %#v", value)
+	}
+}
+
+func TestRenderCardMap_HostedExecutingCardIsLocalizedAndHasNoActions(t *testing.T) {
+	got := renderCardMap(hostedExecutingCard(core.LangChinese), "feishu:oc_chat:ou_owner")
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := string(raw)
+	for _, want := range []string{
+		core.NewI18n(core.LangChinese).T(core.MsgHostedActionExecutingTitle),
+		core.NewI18n(core.LangChinese).T(core.MsgHostedActionExecutingBody),
+	} {
+		if !strings.Contains(visible, want) {
+			t.Fatalf("executing card missing %q: %s", want, visible)
+		}
+	}
+	if strings.Contains(visible, `"actions"`) {
+		t.Fatalf("executing card remained actionable: %s", visible)
+	}
+}
+
 func TestRenderCardMap_EqualColumnsActionsUseColumnSet(t *testing.T) {
 	buttons := []core.CardButton{
 		core.PrimaryBtn("Session Management", "nav:/help session"),
