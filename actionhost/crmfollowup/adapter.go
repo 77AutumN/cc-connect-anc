@@ -544,15 +544,24 @@ func receiptCard(result map[string]any, lang core.Language) *core.Card {
 	status := text(result["status"])
 	title, color := receiptTitle(status, i18n)
 	parent := relatedParent(result)
-	if parent != nil && (status == "cancelled" || status == "superseded" || status == "expired" || status == "replan_required") {
+	repairClosed := text(result["code"]) == "repair_closed_partial" && (status == "cancelled" || status == "superseded" || status == "expired")
+	if repairClosed {
+		title, color = i18n.T(core.MsgCRMRepairClosedTitle), "orange"
+	} else if parent != nil && (status == "cancelled" || status == "superseded" || status == "expired" || status == "replan_required") {
 		title = i18n.T(core.MsgCRMChildCancelledTitle)
 	}
 	b := core.NewCard().Title(title, color)
-	b.Markdown(receiptMessage(status, text(result["code"]), i18n))
+	if repairClosed {
+		b.Markdown(i18n.T(core.MsgCRMRepairClosedBody))
+	} else {
+		b.Markdown(receiptMessage(status, text(result["code"]), i18n))
+	}
 	if parent != nil {
 		b.Markdown(i18n.T(core.MsgCRMParentUnaffectedBody))
 	}
-	if text(result["child_change_id"]) != "" || text(result["next_approval_status"]) != "" {
+	if next := text(result["next_approval_status"]); next == "unavailable" || next == "not_published" {
+		b.Markdown(i18n.T(core.MsgCRMFollowupUnpublishedBody))
+	} else if text(result["child_change_id"]) != "" || next != "" {
 		b.Markdown(i18n.T(core.MsgCRMFollowupSeparateBody))
 	}
 	if profile, ok := result["customer_profile"].(map[string]any); ok {

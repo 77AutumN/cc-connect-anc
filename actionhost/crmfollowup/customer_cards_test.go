@@ -82,3 +82,37 @@ func TestCustomerToolRoutesReuseCanonicalApprovalAndNextOnlyOnExecute(t *testing
 		}
 	}
 }
+
+func TestUnpublishedFollowupIsExplicitInActualHostExecuteReceipt(t *testing.T) {
+	for _, state := range []string{"unavailable", "not_published"} {
+		a := &Adapter{run: func(context.Context, string, string, []byte, []string) ([]byte, error) {
+			return []byte(`{"status":"verified","code":"customer_created_verified","next_approval_status":"` + state + `"}`), nil
+		}}
+		result, err := a.Execute(context.Background(), "parent", core.ActionPrincipal{}, core.LangChinese)
+		if err != nil || result.Next != nil || result.Card == nil || result.Card.Header.Color != "green" {
+			t.Fatalf("parent success was lost: %+v %v", result, err)
+		}
+		for _, want := range []string{"客户资料已创建", "未生成或发布", "未提交跟进", "人工恢复", "不要重复客户操作"} {
+			if !strings.Contains(result.Card.RenderText(), want) {
+				t.Fatalf("%s missing %q: %s", state, want, result.Card.RenderText())
+			}
+		}
+	}
+}
+
+func TestClosedChildRepairDoesNotDenyExistingFollowup(t *testing.T) {
+	for _, state := range []string{"cancelled", "superseded", "expired"} {
+		card := receiptCard(map[string]any{"status": state, "code": "repair_closed_partial",
+			"durable_change_state": "partial", "parent_operation": map[string]any{"status": "verified"},
+			"followup": map[string]any{"content": "已写入的虚构跟进"}}, core.LangChinese)
+		visible := card.RenderText()
+		if card.Header.Color != "orange" || !strings.Contains(visible, "已写入跟进保留") || !strings.Contains(visible, "已写入的虚构跟进") {
+			t.Fatal(visible)
+		}
+		for _, forbidden := range []string{"跟进未提交", "飞书未写入", "取消操作未改变"} {
+			if strings.Contains(visible, forbidden) {
+				t.Fatalf("false no-write claim %q: %s", forbidden, visible)
+			}
+		}
+	}
+}
