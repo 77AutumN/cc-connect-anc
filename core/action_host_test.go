@@ -25,6 +25,7 @@ type actionHostStub struct {
 	bindErr        error
 	claimResult    *ActionHostResult
 	claimExecute   bool
+	executeResult  *ActionHostResult
 }
 
 func (h *actionHostStub) BindCard(_ context.Context, approvalID string, principal ActionPrincipal) error {
@@ -133,6 +134,9 @@ func (h *actionHostStub) Execute(_ context.Context, approvalID string, principal
 	h.executions = append(h.executions, approvalID)
 	h.principals = append(h.principals, principal)
 	h.mu.Unlock()
+	if h.executeResult != nil {
+		return *h.executeResult, nil
+	}
 	return ActionHostResult{Status: "verified", Card: NewCard().Title(approvalID, "green").Build()}, nil
 }
 

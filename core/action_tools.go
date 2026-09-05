@@ -140,7 +140,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if command != "customer" && command != "stage" && command != "result" {
+	if command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])

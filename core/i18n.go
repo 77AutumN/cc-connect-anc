@@ -673,6 +673,20 @@ const (
 	MsgCRMBlockedTitle                    MsgKey = "crm_blocked_title"
 	MsgCRMBlockedBody                     MsgKey = "crm_blocked_body"
 	MsgCRMApprovalTitle                   MsgKey = "crm_approval_title"
+	MsgHostedActionNextFailedBody         MsgKey = "hosted_action_next_failed_body"
+	MsgCRMCreateApprovalTitle             MsgKey = "crm_create_approval_title"
+	MsgCRMUpdateApprovalTitle             MsgKey = "crm_update_approval_title"
+	MsgCRMNeedsInputTitle                 MsgKey = "crm_needs_input_title"
+	MsgCRMNeedsInputBody                  MsgKey = "crm_needs_input_body"
+	MsgCRMProfileFieldsHeading            MsgKey = "crm_profile_fields_heading"
+	MsgCRMSameNameHeading                 MsgKey = "crm_same_name_heading"
+	MsgCRMFollowupDraftHeading            MsgKey = "crm_followup_draft_heading"
+	MsgCRMProfileExpiryBlockFmt           MsgKey = "crm_profile_expiry_block_fmt"
+	MsgCRMCreatedBody                     MsgKey = "crm_created_body"
+	MsgCRMUpdatedBody                     MsgKey = "crm_updated_body"
+	MsgCRMChildCancelledTitle             MsgKey = "crm_child_cancelled_title"
+	MsgCRMParentUnaffectedBody            MsgKey = "crm_parent_unaffected_body"
+	MsgCRMFollowupSeparateBody            MsgKey = "crm_followup_separate_body"
 	MsgCRMApproveButton                   MsgKey = "crm_approve_button"
 	MsgCRMModifyButton                    MsgKey = "crm_modify_button"
 	MsgCRMCancelButton                    MsgKey = "crm_cancel_button"
@@ -4353,6 +4367,20 @@ var messages = map[MsgKey]map[Language]string{
 	MsgCRMApprovalTitle: {
 		LangEnglish: "Approval required: record customer follow-up", LangChinese: "待审批：记录客户跟进", LangTraditionalChinese: "待審批：記錄客戶跟進", LangJapanese: "承認待ち：顧客フォローアップを記録", LangSpanish: "Pendiente de aprobación: registrar seguimiento del cliente",
 	},
+	MsgHostedActionNextFailedBody:  {LangEnglish: "The customer operation succeeded. The separate follow-up approval could not be delivered; the follow-up was not submitted. Query the stored result before arranging manual recovery.", LangChinese: "客户操作已成功。独立的跟进审批卡发送未完成，跟进未提交；请先查询存储结果，再安排人工恢复。", LangTraditionalChinese: "客戶操作已成功。獨立的跟進審批卡傳送未完成，跟進未提交；請先查詢儲存結果，再安排人工恢復。", LangJapanese: "顧客操作は成功しました。別のフォローアップ承認を配信できず、フォローアップは未送信です。保存結果を確認してから手動で復旧してください。", LangSpanish: "La operación del cliente se completó. No se pudo entregar la aprobación separada del seguimiento; el seguimiento no se envió. Consulte el resultado guardado antes de la recuperación manual."},
+	MsgCRMCreateApprovalTitle:      {LangEnglish: "Approval required: create customer", LangChinese: "待审批：创建客户资料", LangTraditionalChinese: "待審批：建立客戶資料", LangJapanese: "承認待ち：顧客を作成", LangSpanish: "Pendiente de aprobación: crear cliente"},
+	MsgCRMUpdateApprovalTitle:      {LangEnglish: "Approval required: update customer", LangChinese: "待审批：更新客户资料", LangTraditionalChinese: "待審批：更新客戶資料", LangJapanese: "承認待ち：顧客を更新", LangSpanish: "Pendiente de aprobación: actualizar cliente"},
+	MsgCRMNeedsInputTitle:          {LangEnglish: "More customer details needed", LangChinese: "需要补充客户资料", LangTraditionalChinese: "需要補充客戶資料", LangJapanese: "顧客情報の入力が必要です", LangSpanish: "Se necesitan más datos del cliente"},
+	MsgCRMNeedsInputBody:           {LangEnglish: "Required details are missing. Confirm the customer name, stage and an identified assignee as requested, then prepare a new preview. No write or approval was created.", LangChinese: "缺少必填资料。请按追问补齐客户名称、阶段和已核实的负责人，再生成预览；尚未写入或建立审批。", LangTraditionalChinese: "缺少必填資料。請按追問補齊客戶名稱、階段和已核實的負責人，再產生預覽；尚未寫入或建立審批。", LangJapanese: "必須情報が不足しています。質問に応じて顧客名、段階、確認済み担当者を補ってからプレビューを作成してください。書き込みと承認作成は未実施です。", LangSpanish: "Faltan datos obligatorios. Complete el nombre, la etapa y el responsable verificado según lo solicitado antes de preparar otra vista previa. No hubo escrituras ni aprobación."},
+	MsgCRMProfileFieldsHeading:     {LangEnglish: "**Customer profile fields**", LangChinese: "**客户资料字段**", LangTraditionalChinese: "**客戶資料欄位**", LangJapanese: "**顧客情報フィールド**", LangSpanish: "**Campos del cliente**"},
+	MsgCRMSameNameHeading:          {LangEnglish: "**Existing customers with the same name — confirmed as distinct**", LangChinese: "**已存在的同名客户——本次已确认不是同一客户**", LangTraditionalChinese: "**已存在的同名客戶——本次已確認不是同一客戶**", LangJapanese: "**同名の既存顧客（別顧客と確認済み）**", LangSpanish: "**Clientes existentes con el mismo nombre: confirmados como distintos**"},
+	MsgCRMFollowupDraftHeading:     {LangEnglish: "**Follow-up draft — not approved; requires a separate approval after the customer operation**", LangChinese: "**跟进草稿——尚未批准；客户操作成功后需要第二笔独立批准**", LangTraditionalChinese: "**跟進草稿——尚未批准；客戶操作成功後需要第二筆獨立批准**", LangJapanese: "**フォローアップ下書き（未承認）：顧客操作後に別途承認が必要**", LangSpanish: "**Borrador de seguimiento sin aprobar: requiere otra aprobación tras la operación del cliente**"},
+	MsgCRMProfileExpiryBlockFmt:    {LangEnglish: "**Expires**: %s\n**Order**: recheck customer data → write only the approved profile fields → read back and verify. A follow-up requires separate approval. Partial or uncertain results require manual review; verified writes are not blindly rolled back.", LangChinese: "**有效期**：%s\n**执行顺序**：重查客户资料 → 仅写入本卡批准的资料字段 → 回读核验。跟进需要独立批准；部分完成或结果未知时人工核查，不盲目回滚已核验写入。", LangTraditionalChinese: "**有效期**：%s\n**執行順序**：重查客戶資料 → 僅寫入本卡批准的資料欄位 → 回讀核驗。跟進需要獨立批准；部分完成或結果未知時人工核查，不盲目回滾已核驗寫入。", LangJapanese: "**有効期限**: %s\n**実行順序**：顧客情報を再確認 → 承認済み情報のみ書き込み → 再読込・検証。フォローアップは別承認が必要です。一部完了や結果不明は手動確認し、検証済みの書き込みは無条件に戻しません。", LangSpanish: "**Caduca**: %s\n**Orden**: revisar los datos → escribir solo los campos aprobados → releer y verificar. El seguimiento requiere otra aprobación. Los resultados parciales o inciertos requieren revisión manual; no se revierten a ciegas las escrituras verificadas."},
+	MsgCRMCreatedBody:              {LangEnglish: "The customer was created and read back for verification.", LangChinese: "客户资料已创建，并已回读核验。", LangTraditionalChinese: "客戶資料已建立，並已回讀核驗。", LangJapanese: "顧客を作成し、再読込で検証しました。", LangSpanish: "Se creó el cliente y se verificó mediante relectura."},
+	MsgCRMUpdatedBody:              {LangEnglish: "The approved customer profile changes were read back and verified.", LangChinese: "已批准的客户资料变更均已回读核验。", LangTraditionalChinese: "已批准的客戶資料變更均已回讀核驗。", LangJapanese: "承認済み顧客情報の変更を再読込して検証しました。", LangSpanish: "Los cambios aprobados del cliente se verificaron mediante relectura."},
+	MsgCRMChildCancelledTitle:      {LangEnglish: "Follow-up not submitted; customer operation completed", LangChinese: "跟进未提交；客户操作已完成", LangTraditionalChinese: "跟進未提交；客戶操作已完成", LangJapanese: "フォローアップ未送信・顧客操作は完了", LangSpanish: "Seguimiento no enviado; operación del cliente completada"},
+	MsgCRMParentUnaffectedBody:     {LangEnglish: "The preceding customer operation is complete. This separate approval only controls the follow-up; cancelling, modifying or expiring it does not undo the customer operation.", LangChinese: "前一笔客户操作已完成。本笔独立审批仅控制跟进；取消、修改或过期不会撤销已完成的客户操作。", LangTraditionalChinese: "前一筆客戶操作已完成。本筆獨立審批僅控制跟進；取消、修改或過期不會撤銷已完成的客戶操作。", LangJapanese: "先行する顧客操作は完了しています。この別承認はフォローアップだけを対象とし、キャンセル・変更・失効しても完了済みの顧客操作は戻りません。", LangSpanish: "La operación anterior del cliente está completa. Esta aprobación separada solo controla el seguimiento; cancelarla, modificarla o dejarla caducar no revierte la operación del cliente."},
+	MsgCRMFollowupSeparateBody:     {LangEnglish: "The follow-up is a separate operation and needs its own approval. This receipt verifies only the customer operation; query the follow-up result for its current state.", LangChinese: "跟进是独立操作，需要另行批准。本回执仅核验客户操作；跟进当前状态请查询对应结果。", LangTraditionalChinese: "跟進是獨立操作，需要另行批准。本回執僅核驗客戶操作；跟進目前狀態請查詢對應結果。", LangJapanese: "フォローアップは別操作で別承認が必要です。この結果は顧客操作のみを検証し、フォローアップの現状は対応する結果を照会してください。", LangSpanish: "El seguimiento es una operación separada y necesita su propia aprobación. Este recibo solo verifica la operación del cliente; consulte el resultado del seguimiento para conocer su estado actual."},
 	MsgCRMApproveButton:            {LangEnglish: "Approve", LangChinese: "同意执行", LangTraditionalChinese: "同意執行", LangJapanese: "承認して実行", LangSpanish: "Aprobar"},
 	MsgCRMModifyButton:             {LangEnglish: "Modify plan", LangChinese: "修改方案", LangTraditionalChinese: "修改方案", LangJapanese: "プランを変更", LangSpanish: "Modificar plan"},
 	MsgCRMCancelButton:             {LangEnglish: "Cancel", LangChinese: "取消", LangTraditionalChinese: "取消", LangJapanese: "キャンセル", LangSpanish: "Cancelar"},

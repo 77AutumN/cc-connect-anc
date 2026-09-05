@@ -385,6 +385,16 @@ func (a *Adapter) Execute(ctx context.Context, approvalID string, principal core
 	response.Kind = Kind
 	response.ApprovalID = approvalID
 	response.Card = receiptCard(result, lang)
+	if next, ok := result["next_approval"].(map[string]any); ok && response.Status == "verified" {
+		// Only Execute's first durable worker may supply this transient child.
+		// Claim/replay never reconstructs or republishes it from a receipt.
+		if text(next["status"]) == "pending" && next["next_approval"] == nil {
+			child := hostResult(next)
+			child.Kind = Kind
+			child.Card = approvalCard(next, lang)
+			response.Next = &child
+		}
+	}
 	return response, nil
 }
 
@@ -451,7 +461,14 @@ func approvalCard(result map[string]any, lang core.Language) *core.Card {
 	}
 	approvalID := text(result["approval_id"])
 	preview, _ := result["preview"].(map[string]any)
-	b := core.NewCard().Title(i18n.T(core.MsgCRMApprovalTitle), "blue")
+	title := core.MsgCRMApprovalTitle
+	switch text(preview["operation_type"]) {
+	case "customer_create":
+		title = core.MsgCRMCreateApprovalTitle
+	case "customer_update":
+		title = core.MsgCRMUpdateApprovalTitle
+	}
+	b := core.NewCard().Title(i18n.T(title), "blue")
 	b.Markdown(renderPreview(preview, i18n))
 	b.Divider().ButtonsEqual(
 		actionButton(i18n.T(core.MsgCRMApproveButton), "primary", approvalID, core.ActionApprove, lang),
@@ -463,6 +480,8 @@ func approvalCard(result map[string]any, lang core.Language) *core.Card {
 
 func stageOutcomeCard(result map[string]any, i18n *core.I18n) *core.Card {
 	switch text(result["status"]) {
+	case "needs_input":
+		return core.NewCard().Title(i18n.T(core.MsgCRMNeedsInputTitle), "blue").Markdown(i18n.T(core.MsgCRMNeedsInputBody)).Build()
 	case "needs_time":
 		return core.NewCard().
 			Title(i18n.T(core.MsgCRMNeedsTimeTitle), "blue").
@@ -524,8 +543,21 @@ func receiptCard(result map[string]any, lang core.Language) *core.Card {
 	i18n := core.NewI18n(lang)
 	status := text(result["status"])
 	title, color := receiptTitle(status, i18n)
+	parent := relatedParent(result)
+	if parent != nil && (status == "cancelled" || status == "superseded" || status == "expired" || status == "replan_required") {
+		title = i18n.T(core.MsgCRMChildCancelledTitle)
+	}
 	b := core.NewCard().Title(title, color)
 	b.Markdown(receiptMessage(status, text(result["code"]), i18n))
+	if parent != nil {
+		b.Markdown(i18n.T(core.MsgCRMParentUnaffectedBody))
+	}
+	if text(result["child_change_id"]) != "" || text(result["next_approval_status"]) != "" {
+		b.Markdown(i18n.T(core.MsgCRMFollowupSeparateBody))
+	}
+	if profile, ok := result["customer_profile"].(map[string]any); ok {
+		b.Divider().Markdown(renderCustomerProfile(profile, true, i18n))
+	}
 	if followup, ok := result["followup"].(map[string]any); ok {
 		b.Divider().Markdown(i18n.T(core.MsgCRMReceiptFollowupHeading) + "\n" + renderFields(followup, []string{"occurred_at", "channel", "content", "next_action", "next_followup_at"}, i18n))
 	}
@@ -544,6 +576,9 @@ func receiptCard(result map[string]any, lang core.Language) *core.Card {
 				mark = "✅"
 			}
 			field := text(change["field"])
+			if fieldLabel(field, i18n) == "" {
+				continue
+			}
 			actual := i18n.T(core.MsgCRMNotReadBack)
 			if value, present := change["actual"]; present {
 				actual = displayField(field, value, i18n)
@@ -594,6 +629,10 @@ func receiptMessage(status, code string, i18n *core.I18n) string {
 		switch code {
 		case "followup_and_customer_verified":
 			key = core.MsgCRMReceiptVerifiedBody
+		case "customer_created_verified":
+			key = core.MsgCRMCreatedBody
+		case "customer_updated_verified":
+			key = core.MsgCRMUpdatedBody
 		case "followup_recorded_customer_unchanged":
 			key = core.MsgCRMReceiptNewerBody
 		case "already_applied", "partial_already_completed":
@@ -638,7 +677,13 @@ func receiptMessage(status, code string, i18n *core.I18n) string {
 }
 
 func renderPreview(preview map[string]any, i18n *core.I18n) string {
+	if op := text(preview["operation_type"]); op == "customer_create" || op == "customer_update" {
+		return renderCustomerPreview(preview, i18n)
+	}
 	var sections []string
+	if text(preview["parent_change_id"]) != "" {
+		sections = append(sections, i18n.T(core.MsgCRMParentUnaffectedBody))
+	}
 	repairing := repairPreview(preview)
 	if actor := text(preview["actor"]); actor != "" {
 		sections = append(sections, i18n.Tf(core.MsgCRMPreviewActorFmt, display(actor)))
@@ -665,6 +710,9 @@ func renderPreview(preview map[string]any, i18n *core.I18n) string {
 				for _, raw := range changes {
 					change, _ := raw.(map[string]any)
 					field := text(change["field"])
+					if fieldLabel(field, i18n) == "" {
+						continue
+					}
 					lines = append(lines, fmt.Sprintf("- **%s**: %s → %s", fieldLabel(field, i18n), displayField(field, change["before"], i18n), displayField(field, change["after"], i18n)))
 				}
 				sections = append(sections, i18n.T(core.MsgCRMPreviewChangesHeading)+"\n"+strings.Join(lines, "\n"))
@@ -785,7 +833,7 @@ func fieldLabel(field string, i18n *core.I18n) string {
 	if key := labels[field]; key != "" {
 		return i18n.T(key)
 	}
-	return escapeMarkdown(field)
+	return ""
 }
 
 func display(value any) string { return escapeMarkdown(stripFence(text(value))) }

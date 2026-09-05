@@ -122,9 +122,10 @@ type toolJourneyPlatform struct {
 	callback core.TrustedCardActionHandler
 }
 
-func (*toolJourneyPlatform) Name() string                    { return "mock" }
-func (*toolJourneyPlatform) Start(core.MessageHandler) error { return nil }
-func (*toolJourneyPlatform) Stop() error                     { return nil }
+func (*toolJourneyPlatform) Name() string                                { return "mock" }
+func (*toolJourneyPlatform) Start(core.MessageHandler) error             { return nil }
+func (*toolJourneyPlatform) Stop() error                                 { return nil }
+func (*toolJourneyPlatform) ReconstructReplyCtx(key string) (any, error) { return key, nil }
 func (p *toolJourneyPlatform) Reply(_ context.Context, _ any, content string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

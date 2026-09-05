@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"sync"
 )
 
 // ActionPrincipal is the transport-authenticated identity bound to a hosted
@@ -43,6 +44,8 @@ type ActionHostResult struct {
 	ApprovalID string
 	ChangeID   string
 	Card       *Card
+	// Next is one separately approved action, never an instruction to execute it.
+	Next *ActionHostResult
 }
 
 // ActionHost is the narrow seam between an agent turn and a host-owned action.
@@ -221,6 +224,10 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 	if result.Code == "principal_mismatch" {
 		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionPrincipalMismatchToast), ToastType: "error"}
 	}
+	if result.Code == "card_mismatch" {
+		// A copied/misdirected button must not replace another operation's card.
+		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionInvalidToast), ToastType: "error"}
+	}
 	if result.Status == "executing" && !execute {
 		// Another callback already owns execution. Do not return a card here:
 		// this response may arrive after the owner has published the final
@@ -232,13 +239,43 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 		principal := action.Principal
 		approvalID := action.ApprovalID
 		language := action.Language
+		var once sync.Once
+		var final TrustedCardActionResponse
 		response.Complete = func() TrustedCardActionResponse {
-			completed, completeErr := host.Execute(e.ctx, approvalID, principal, language)
-			if completeErr != nil {
-				slog.Error("action host execution failed", "action_kind", action.Kind, "error", completeErr)
-				return TrustedCardActionResponse{Card: e.hostedActionFailureCard()}
-			}
-			return TrustedCardActionResponse{Card: completed.Card}
+			once.Do(func() {
+				completed, completeErr := host.Execute(e.ctx, approvalID, principal, language)
+				if completeErr != nil {
+					slog.Error("action host execution failed", "action_kind", action.Kind, "error", completeErr)
+					final = TrustedCardActionResponse{Card: e.hostedActionFailureCard()}
+					return
+				}
+				final.Card = completed.Card
+				if completed.Next != nil && completed.Status == "verified" {
+					next := completed.Next
+					reconstructor, ok := p.(ReplyContextReconstructor)
+					var publishErr error
+					if !ok || next.Kind != host.Kind() || next.Status != "pending" || next.Next != nil {
+						publishErr = errors.New("invalid or unsupported next approval")
+					} else {
+						var replyCtx any
+						replyCtx, publishErr = reconstructor.ReconstructReplyCtx(principal.SessionKey)
+						if publishErr == nil {
+							publishErr = e.publishHostedActionContext(e.ctx, host, *next, principal, p, replyCtx)
+						}
+					}
+					if publishErr != nil {
+						slog.Warn("next approval was not published; completed action remains verified", "action_kind", action.Kind)
+						// Preserve the parent receipt. A second card delivery failure is
+						// not a failure or rollback of the already verified write.
+						if final.Card != nil {
+							card := *final.Card
+							card.Elements = append(append([]CardElement(nil), card.Elements...), CardDivider{}, CardMarkdown{Content: NewI18n(language).T(MsgHostedActionNextFailedBody)})
+							final.Card = &card
+						}
+					}
+				}
+			})
+			return final
 		}
 	}
 	return response

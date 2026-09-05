@@ -9,8 +9,10 @@ writes, re-reads, and receipts. cc-connect does not contain a workflow engine.
 ## Selected development path — rollout paused
 
 The general assistant keeps one ongoing Claude session. CRM is one bounded tool
-family: `customer` reads facts/history, `stage` prepares a canonical proposal, and
-`result` queries its actual state. A session bearer resolves to the Engine's live
+family: `customer` reads facts/history, `stage` prepares a canonical follow-up,
+`assignee` resolves a person, `stage-customer-create` and `stage-customer-update`
+prepare customer profile proposals, and `result` queries the stored actual state.
+A session bearer resolves to the Engine's live
 Principal; no model field supplies identity or authorizes a write.
 
 Set host-only deployment option `MYANC_CRM_TOOLS=1` to explicitly opt in;
@@ -188,6 +190,53 @@ an approved claim yields a continuation that calls `host-execute`. A callback
 never sends a second user message to Claude. The exact callback message ID is
 used to update the original card, so copied or concurrent cards cannot redirect
 the write or overwrite another approval.
+
+## Customer profile operation followed by an independently approved follow-up
+
+The adapter kind stays `crm.followup.v1` for compatibility. There is no additional
+adapter registry, workflow engine, MCP server or process handoff. New tool
+commands use the same bounded HTTP envelope and trusted Principal as the original
+three commands. Missing required profile fields return `needs_input`; the model
+must ask for them, not silently create a customer or choose an assignee.
+
+`preview.operation_type` distinguishes `customer_create` and `customer_update`.
+`effects.customer_profile` contains canonical business fields and old/new changes.
+An optional `followup_draft` is displayed as **not approved** and is not one of the
+parent's write effects. The card displays only known business fields; opaque
+person/record references are never rendered, while the operation ID remains.
+
+Only the parent's first successful `host-execute` may return transient
+`next_approval` in the existing pending-approval shape. The adapter exposes one
+optional `ActionHostResult.Next`; `Claim`, replay receipts, non-pending results
+and nested next approvals never republish a card. The callback continuation:
+
+1. keeps the parent verified receipt;
+2. reconstructs reply context from the validated session Principal;
+3. publishes a separate non-actionable placeholder, binds its exact new message
+   ID and activates the canonical follow-up card using the existing path;
+4. requires a new trusted callback to execute the follow-up. It never wakes Claude.
+
+Duplicate callback claims remain governed by the Python durable CAS; duplicate
+invocation of the same continuation is also one-shot. A wrong card ID produces
+only an error toast, not a replacement of the other operation's receipt.
+
+If publishing, binding or activating the second card fails, the parent remains
+verified and its card states that the follow-up was not submitted. A bound message
+is not proof that activation succeeded. Query stored operation state before manual
+recovery; this code does not retry, reconstruct a stale pending card from a receipt,
+or roll back an already completed customer operation. Cancelling, modifying or
+expiring the child similarly leaves the parent operation intact, and child cards
+state that distinction explicitly.
+
+Offline regression gates include `TestCUJ_CUSTOMER1` in `core/cuj_test.go` plus
+`TestCUJ_CRMIPC2` in the CRM adapter. The latter is opt-in with
+`MYANC_SPIKE_CRM_ROOT` pointing to the companion checkout and uses its persistent
+synthetic Feishu fixture, real Python core/SQLite and real gateway HTTP/callback
+path. It covers history, missing profile input, assignee resolution, parent create,
+two separate approvals, sender/card mismatch, replay, update/child cancellation,
+result queries, Quiet and continued discussion without restarting Claude.
+These tests do not prove live model understanding or real Feishu callback wiring;
+existing platform tests and a separately authorized canary are still required.
 
 ## State and rollback
 

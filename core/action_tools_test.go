@@ -56,7 +56,7 @@ func actionToolRequest(handler http.Handler, method, path, token, body string) *
 func TestActionToolHandlerScopedReadsAndStrictBoundary(t *testing.T) {
 	e, h, _, _ := actionToolFixture(t)
 	handler := e.ActionToolHandler()
-	for _, command := range []string{"customer", "result"} {
+	for _, command := range []string{"customer", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
 		w := actionToolRequest(handler, "POST", "/tool", "test-session-token", `{"command":"`+command+`","input":{}}`)
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"customer":"fixture"`) {
 			t.Fatalf("valid %s = %d %s", command, w.Code, w.Body.String())

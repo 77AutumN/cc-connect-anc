@@ -274,6 +274,106 @@ func (p *cujReplyCtxPlatform) ReconstructReplyCtx(sessionKey string) (any, error
 	return "reconstructed:" + sessionKey, nil
 }
 
+// Same fake platform boundary as the existing controlled-tool CUJ, with real
+// distinct outgoing card IDs and the native reply-context capability.
+type cujNextPlatform struct{ gatewaySpikePlatform }
+
+func (p *cujNextPlatform) ReconstructReplyCtx(key string) (any, error) { return key, nil }
+func (p *cujNextPlatform) RefreshCardMessage(ctx context.Context, id, _ string, card *Card) error {
+	if !strings.HasPrefix(id, "journey-card-") {
+		return errors.New("unknown journey card")
+	}
+	return p.stubPlatformEngine.Reply(ctx, id, card.RenderText())
+}
+func (p *cujNextPlatform) ReplyHostedActionPlaceholder(_ context.Context, _ any, card *Card) (string, error) {
+	p.cardMu.Lock()
+	defer p.cardMu.Unlock()
+	p.placeholders = append(p.placeholders, card)
+	return fmt.Sprintf("journey-card-%d", len(p.placeholders)), nil
+}
+
+func TestCUJ_CUSTOMER1_ProfileThenSeparateFollowupCancelAndDiscuss(t *testing.T) {
+	p := &cujNextPlatform{gatewaySpikePlatform: gatewaySpikePlatform{hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}}}
+	h := &actionToolHostStub{toolResult: map[string]any{"status": "ok", "customer": "Fictional customer history"}}
+	a := &actionToolJourneyAgent{}
+	e := NewEngine("test-project", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	e.SetActionHost(h)
+	child := &ActionHostResult{Kind: h.Kind(), Status: "pending", ApprovalID: "child", ChangeID: "chg_child", Card: NewCard().Title("Separate follow-up approval", "blue").Markdown("Follow-up not submitted; requires another approval").Build()}
+	h.executeResult = &ActionHostResult{Kind: h.Kind(), Status: "verified", Card: NewCard().Title("Customer profile verified", "green").Build(), Next: child}
+	a.tool = func(prompt string) string {
+		h.mu.Lock()
+		token := h.envTokens[len(h.envTokens)-1]
+		h.mu.Unlock()
+		command := "customer"
+		h.toolCard = nil
+		if strings.Contains(prompt, "Update profile") {
+			command = "stage-customer-update"
+			h.toolCard = &ActionHostResult{Kind: h.Kind(), Status: "pending", ApprovalID: "parent", ChangeID: "chg_parent", Card: NewCard().Title("Approve profile only", "blue").Markdown("New contact: Fictional Colleague; follow-up draft not approved").Build()}
+		}
+		if strings.Contains(prompt, "Discuss") {
+			command = "result"
+			h.toolResult = map[string]any{"status": "cancelled", "parent": "Customer profile verified; follow-up not submitted"}
+		}
+		return actionToolRequest(e.ActionToolHandler(), "POST", "/tool", token, `{"command":"`+command+`","input":{}}`).Body.String()
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	env := &cujEnv{t: t, engine: e, plat: &p.stubPlatformEngine, agent: &a.cujAgent}
+	const key = "test:chat:owner"
+	send := func(content, want string) {
+		t.Helper()
+		p.clearSent()
+		e.ReceiveMessage(p, &Message{SessionKey: key, Platform: "test", UserID: "owner", ChannelID: "chat", MessageID: "request", Content: content, ReplyCtx: "reply"})
+		env.waitFor(content, 2*time.Second, func() bool { return env.sentContains(want) })
+		if strings.Contains(strings.Join(p.getSent(), "\n"), "SPIKE_INTERNAL_") {
+			t.Fatal("Quiet leaked normal tool events")
+		}
+	}
+	send("/quiet quiet", "Quiet mode")
+	send("Read customer history", "Fictional customer history")
+	send("Update profile with a follow-up draft", "Approve profile only")
+	a.mu.Lock()
+	session := a.sessions[0]
+	a.mu.Unlock()
+	before := len(session.getSentPrompts())
+	click := TrustedCardAction{Kind: h.Kind(), ApprovalID: "parent", Decision: ActionApprove, Principal: ActionPrincipal{UserID: "owner", ChatID: "chat", SessionKey: key, MessageID: "journey-card-1"}}
+	approved := p.callback(click)
+	if approved.Complete == nil {
+		t.Fatal("parent was not claimed")
+	}
+	complete := approved.Complete()
+	if err := p.RefreshCardMessage(e.ctx, "journey-card-1", key, complete.Card); err != nil {
+		t.Fatal(err)
+	}
+	if !env.sentContains("Customer profile verified") || !env.sentContains("Separate follow-up approval") {
+		t.Fatalf("missing independent cards: %v", p.getSent())
+	}
+	if len(h.cardBindings) != 2 || h.cardBindings[1].MessageID != "journey-card-2" || h.cardBindings[1].UserID != "owner" {
+		t.Fatalf("child not exactly bound: %v", h.cardBindings)
+	}
+	h.claimResult = &ActionHostResult{Status: "cancelled", Card: NewCard().Title("Follow-up cancelled; customer profile remains verified", "grey").Build()}
+	click.ApprovalID, click.Decision, click.Principal.MessageID = "child", ActionCancel, "journey-card-2"
+	cancelled := p.callback(click)
+	if cancelled.Complete != nil {
+		t.Fatal("cancel started execution")
+	}
+	if err := p.RefreshCardMessage(e.ctx, "journey-card-2", key, cancelled.Card); err != nil {
+		t.Fatal(err)
+	}
+	if !env.sentContains("customer profile remains verified") || len(h.executions) != 1 || len(session.getSentPrompts()) != before {
+		t.Fatal("child cancellation hid parent success or resumed Claude")
+	}
+	send("Discuss the stored result", "Customer profile verified; follow-up not submitted")
+	a.mu.Lock()
+	starts := len(a.sessions)
+	a.mu.Unlock()
+	if starts != 1 || len(h.executions) != 1 {
+		t.Fatal("discussion restarted model or wrote again")
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
