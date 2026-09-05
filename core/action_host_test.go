@@ -237,7 +237,7 @@ func (p *hostedCardPlatform) ReplyCard(ctx context.Context, replyCtx any, card *
 	p.cardMu.Lock()
 	p.cards = append(p.cards, card)
 	p.cardMu.Unlock()
-	return p.stubPlatformEngine.Reply(ctx, replyCtx, card.RenderText())
+	return p.Reply(ctx, replyCtx, card.RenderText())
 }
 func (p *hostedCardPlatform) SendCard(ctx context.Context, replyCtx any, card *Card) error {
 	return p.ReplyCard(ctx, replyCtx, card)

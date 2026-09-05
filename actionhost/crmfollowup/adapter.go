@@ -255,7 +255,7 @@ func (a *Adapter) consumeStageInput(token string) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open CRM stage input directory: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }() // Read-only directory handle; no buffered writes.
 	rootInfo, err := root.Stat(".")
 	if err != nil {
 		return nil, fmt.Errorf("inspect open CRM stage input directory: %w", err)

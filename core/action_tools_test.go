@@ -162,13 +162,13 @@ func TestActionToolHandlerReportsCardDeliveryBeforeReturningStage(t *testing.T) 
 }
 
 func TestActionToolHandlerContextCancellationAndNoAdapter(t *testing.T) {
-	e, h, _, _ := actionToolFixture(t)
+	e, _, _, _ := actionToolFixture(t)
 	e.SetActionHost(&actionHostStub{})
 	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", "test-session-token", `{"command":"customer","input":{}}`)
 	if w.Code != 503 {
 		t.Fatalf("unsupported adapter: %d", w.Code)
 	}
-	e, h, _, _ = actionToolFixture(t)
+	e, h, _, _ := actionToolFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	cancel()
 	r := httptest.NewRequest("POST", "/tool", strings.NewReader(`{"command":"customer","input":{}}`)).WithContext(ctx)

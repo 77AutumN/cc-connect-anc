@@ -90,7 +90,7 @@ func (a *toolJourneyAgent) Send(string, string, []core.ImageAttachment, []core.F
 			var response *http.Response
 			response, err = a.client.Do(request)
 			if err == nil {
-				defer response.Body.Close()
+				defer func() { _ = response.Body.Close() }()
 				err = json.NewDecoder(response.Body).Decode(&data)
 				if response.StatusCode != http.StatusOK {
 					err = fmt.Errorf("tool HTTP status %d: %v", response.StatusCode, data)

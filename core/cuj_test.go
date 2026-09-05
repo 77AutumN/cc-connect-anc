@@ -283,7 +283,7 @@ func (p *cujNextPlatform) RefreshCardMessage(ctx context.Context, id, _ string, 
 	if !strings.HasPrefix(id, "journey-card-") {
 		return errors.New("unknown journey card")
 	}
-	return p.stubPlatformEngine.Reply(ctx, id, card.RenderText())
+	return p.Reply(ctx, id, card.RenderText())
 }
 func (p *cujNextPlatform) ReplyHostedActionPlaceholder(_ context.Context, _ any, card *Card) (string, error) {
 	p.cardMu.Lock()

@@ -26,7 +26,7 @@ func readHostSecretFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("open failed")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }() // Read-only secret descriptor.
 	opened, err := file.Stat()
 	if err != nil || !sameFileIdentity(info, opened) {
 		return nil, errors.New("file changed while opening")

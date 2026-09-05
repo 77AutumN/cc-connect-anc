@@ -67,7 +67,7 @@ func (p *gatewaySpikePlatform) RefreshCardMessage(ctx context.Context, messageID
 		return err
 	}
 	// Record what the fake platform user sees after the original card refresh.
-	return p.stubPlatformEngine.Reply(ctx, messageID, card.RenderText())
+	return p.Reply(ctx, messageID, card.RenderText())
 }
 
 // One fixed host fixture, NOT a second ledger/state-machine implementation.
@@ -139,7 +139,9 @@ func TestCUJ_SPIKE1_HostCardAndResultQueryPreserveConversation(t *testing.T) {
 			if !ok {
 				return "SPIKE_FAILED_TO_STAGE"
 			}
-			e.publishHostedAction(h, staged, principal, p, "reply")
+			if err := e.publishHostedAction(h, staged, principal, p, "reply"); err != nil {
+				return "SPIKE_FAILED_TO_PUBLISH"
+			}
 			output = "Staged; waiting for the original card. Canonical preview: " + staged.Card.RenderText()
 		case strings.Contains(prompt, "Read an unrelated document"):
 			output = "Other Feishu read: fictional document is available. Approval remains pending."

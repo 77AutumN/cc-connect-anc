@@ -953,14 +953,6 @@ func hostedExecutingCard(lang core.Language) *core.Card {
 		Build()
 }
 
-func hostedActionFailureCard(lang core.Language) *core.Card {
-	i18n := core.NewI18n(lang)
-	return core.NewCard().
-		Title(i18n.T(core.MsgHostedActionFailedTitle), "red").
-		Markdown(i18n.T(core.MsgHostedActionFailedBody)).
-		Build()
-}
-
 func (p *Platform) refreshHostedActionCard(ctx context.Context, messageID, sessionKey string, card *core.Card) error {
 	if messageID == "" {
 		return errors.New("hosted action card message id is missing")

@@ -5500,7 +5500,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 						e.replyWithCard(p, replyCtx, e.hostedActionFailureCard())
 						return
 					}
-					e.publishHostedAction(actionHost, result, principal, p, replyCtx)
+					// The publisher already reports failure to the legacy handoff user.
+					_ = e.publishHostedAction(actionHost, result, principal, p, replyCtx)
 					return
 				}
 			}
