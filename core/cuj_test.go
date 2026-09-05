@@ -2520,7 +2520,7 @@ func (p *cujHostedCardPlatform) RefreshCardMessage(ctx context.Context, messageI
 		return err
 	}
 	// A card refresh is visible to the user, just like a new text reply.
-	return p.stubPlatformEngine.Reply(ctx, nil, card.RenderText())
+	return p.Reply(ctx, nil, card.RenderText())
 }
 
 // CUJ-ACTION1 · Three consecutive user requests each hand off to the host,
