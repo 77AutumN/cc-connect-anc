@@ -45,9 +45,9 @@ func TestImageRootRejectsAncestorSymlinkSwap(t *testing.T) {
 		}
 		f, err := root.OpenFile("fixture", os.O_CREATE|os.O_WRONLY, 0600)
 		if err == nil {
-			f.Close()
+			_ = f.Close()
 		}
-		root.Close()
+		_ = root.Close()
 	}
 	close(stop)
 	wg.Wait()

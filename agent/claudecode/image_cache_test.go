@@ -156,7 +156,7 @@ func TestImageCacheConcurrentReservationsStayWithinCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	entries, err := c.entries(root)
 	if err != nil {
 		t.Fatal(err)

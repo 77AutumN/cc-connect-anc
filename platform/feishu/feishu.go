@@ -2959,7 +2959,7 @@ func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[strin
 			}
 			attachment := p.receiveImage(msgID, imgBody.ImageKey, budget)
 			*images = append(*images, attachment)
-			sb.WriteString(fmt.Sprintf("%s[%s] %s: %s\n", indent, ts, senderName, attachment.PromptMarker))
+			_, _ = fmt.Fprintf(sb, "%s[%s] %s: %s\n", indent, ts, senderName, attachment.PromptMarker)
 
 		case "file":
 			var fileBody struct {
@@ -3225,7 +3225,11 @@ func (p *Platform) downloadImageBounded(messageID, imageKey string, limit int) (
 		return nil, "", fmt.Errorf("%s: image API returned nil file body", p.tag())
 	}
 	if closer, ok := resp.File.(io.Closer); ok {
-		defer closer.Close()
+		defer func() {
+			if err := closer.Close(); err != nil {
+				slog.Warn("feishu: image resource close failed")
+			}
+		}()
 	}
 	data, mime, err := core.ReadImage(io.LimitReader(resp.File, int64(limit)+1))
 	if len(data) > limit {

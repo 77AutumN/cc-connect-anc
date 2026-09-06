@@ -1281,7 +1281,11 @@ func TestCUJ_A3_ImageBatchQueuedFailureAndContinuation(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
 	a := &cujImageEchoAgent{}
 	e := NewEngine("test", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
-	t.Cleanup(func() { e.Stop() })
+	t.Cleanup(func() {
+		if err := e.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
 	env := &cujEnv{t: t, engine: e, plat: p, agent: &a.cujAgent}
 	send := func(id, content string, images []ImageAttachment) {
 		e.ReceiveMessage(p, &Message{Platform: "test", SessionKey: "test:image-owner", UserID: "owner", MessageID: id, Content: content, Images: images, ReplyCtx: "reply"})

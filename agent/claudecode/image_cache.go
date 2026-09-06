@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -70,6 +71,13 @@ func sessionImageCache(workDir string) *imageCache {
 
 func (c *imageCache) open(create bool) (*os.Root, error) { return openImageCacheRoot(c.dir, create) }
 
+// These handles are directories; image data writes check Sync and Close separately.
+func closeImageCacheDirectory(handle io.Closer) {
+	if err := handle.Close(); err != nil {
+		slog.Warn("image cache directory close failed")
+	}
+}
+
 type cachedImage struct {
 	name, session string
 	created       time.Time
@@ -81,7 +89,7 @@ func (c *imageCache) entries(root *os.Root) ([]cachedImage, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeImageCacheDirectory(f)
 	entries, err := f.ReadDir(-1)
 	if err != nil {
 		return nil, err
@@ -154,7 +162,7 @@ func (c *imageCache) cleanup() {
 		return
 	}
 	if err == nil {
-		defer root.Close()
+		defer closeImageCacheDirectory(root)
 		err = c.reserve(root, 0)
 	}
 	if err != nil {
@@ -215,7 +223,7 @@ func (c *imageCache) acquire(session string, images []core.ImageAttachment) ([]s
 	if err != nil {
 		return fail()
 	}
-	defer root.Close()
+	defer closeImageCacheDirectory(root)
 	// Expire first, so starting a new turn cannot indefinitely retain stale data.
 	if err := c.reserve(root, 0); err != nil {
 		return fail()

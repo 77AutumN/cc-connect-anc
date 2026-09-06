@@ -2,7 +2,6 @@ package feishu
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -29,11 +28,11 @@ func TestImagePostAndQuoteCannotBeOvertaken(t *testing.T) {
 					started <- struct{}{}
 					<-release
 					w.Header().Set("Content-Type", "image/png")
-					w.Write(data)
+					_, _ = w.Write(data)
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{"items": []any{map[string]any{"msg_type": "image", "body": map[string]string{"content": `{"image_key":"quoted"}`}}}}})
+				writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": []any{map[string]any{"msg_type": "image", "body": map[string]string{"content": `{"image_key":"quoted"}`}}}}})
 			})
 			p.dedup = &core.MessageDedup{}
 			got := make(chan *core.Message, 3)
@@ -45,13 +44,17 @@ func TestImagePostAndQuoteCannotBeOvertaken(t *testing.T) {
 			if kind == "quoted-text" {
 				messageType, parent, content = "text", "quoted", `{"text":"identify this"}`
 			}
-			p.onMessage(context.Background(), imageInputEvent(messageType, "first", content, parent))
+			if err := p.onMessage(context.Background(), imageInputEvent(messageType, "first", content, parent)); err != nil {
+				t.Fatal(err)
+			}
 			select {
 			case <-started:
 			case <-time.After(3 * time.Second):
 				t.Fatal("image download did not start")
 			}
-			p.onMessage(context.Background(), imageInputEvent("text", "second", `{"text":"continue"}`, ""))
+			if err := p.onMessage(context.Background(), imageInputEvent("text", "second", `{"text":"continue"}`, "")); err != nil {
+				t.Fatal(err)
+			}
 			var early *core.Message
 			select {
 			case early = <-got:
@@ -78,7 +81,7 @@ func TestImagePostAndQuoteCannotBeOvertaken(t *testing.T) {
 func TestImageQuoteMetadataFailureRejectsWholeInput(t *testing.T) {
 	p := imageReceiverFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"code":999,"msg":"fixture unavailable"}`))
+		_, _ = w.Write([]byte(`{"code":999,"msg":"fixture unavailable"}`))
 	})
 	quote := p.fetchQuotedMessage(context.Background(), "missing")
 	if core.CheckImageBatch(quote.images) == nil || quote.text != "" {
@@ -91,7 +94,7 @@ func TestImageStickerAndThumbnailFailureIsNotSilent(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			p := imageReceiverFixture(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.Write([]byte(`{"code":999}`))
+				_, _ = w.Write([]byte(`{"code":999}`))
 			})
 			var got *core.Message
 			p.handler = func(_ core.Platform, m *core.Message) { got = m }

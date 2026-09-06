@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -41,7 +42,9 @@ func (c imageBoundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 			limit = min(limit, remaining)
 		}
 		if resp.ContentLength > int64(limit) {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				slog.Warn("feishu: rejected image response close failed")
+			}
 			return nil, &core.ImageInputError{Key: core.MsgImageLimit}
 		}
 		resp.Body = boundedImageBody{Reader: io.LimitReader(resp.Body, int64(limit)+1), Closer: resp.Body}

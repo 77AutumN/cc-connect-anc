@@ -3,7 +3,6 @@ package feishu
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"github.com/chenhg5/cc-connect/core"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	"io"
@@ -20,7 +19,7 @@ func imageReceiverFixture(t *testing.T, resource func(http.ResponseWriter, *http
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "tenant_access_token") {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"code": 0, "expire": 7200, "tenant_access_token": "synthetic-image-token"})
+			writeJSON(t, w, map[string]any{"code": 0, "expire": 7200, "tenant_access_token": "synthetic-image-token"})
 			return
 		}
 		resource(w, r)
@@ -35,7 +34,7 @@ func TestImageBudgetSharedAcrossQuotedAndCurrentPosts(t *testing.T) {
 	p := imageReceiverFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "image/png")
-		w.Write(data)
+		_, _ = w.Write(data)
 	})
 	budget := &imageReceiveBudget{}
 	post := `{"content":[[{"tag":"text","text":"before"},{"tag":"img","image_key":"fixture-a"},{"tag":"img","image_key":"fixture-b"},{"tag":"text","text":"after"}]]}`
@@ -57,7 +56,7 @@ func TestImageRemainingBytesBoundedBeforeSDKBuffer(t *testing.T) {
 		w.Header().Set("Content-Type", "image/png")
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
-		w.Write(data)
+		_, _ = w.Write(data)
 	})
 	budget := &imageReceiveBudget{count: 2, bytes: core.MaxImageBatchBytes - 128}
 	img := p.receiveImage("fixture", "fixture", budget)
@@ -74,10 +73,10 @@ func TestImagePartialDownloadRejectsWholePostAndStops(t *testing.T) {
 		w.Header().Set("Content-Type", "image/png")
 		if calls.Load() == 2 {
 			w.Header().Set("Content-Length", "999")
-			w.Write(data[:8])
+			_, _ = w.Write(data[:8])
 			return
 		}
-		w.Write(data)
+		_, _ = w.Write(data)
 	})
 	post := `{"content":[[{"tag":"text","text":"must not send alone"},{"tag":"img","image_key":"a"},{"tag":"img","image_key":"b"},{"tag":"img","image_key":"c"}]]}`
 	text, images := p.parsePostContent("fixture", post)
@@ -112,8 +111,12 @@ func TestImageHTTPBoundLeavesOtherFilesUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			t.Fatal(err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
 		want := 4096
 		if kind == "image" {
 			want = 129
@@ -130,7 +133,7 @@ func TestImageRawBatchPreservesOrderBeforeDownloads(t *testing.T) {
 	p := imageReceiverFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "image/png")
-		w.Write(data[r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]])
+		_, _ = w.Write(data[r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]])
 	})
 	var got *core.Message
 	p.handler = func(_ core.Platform, m *core.Message) { got = m }
@@ -153,7 +156,7 @@ func TestImageTimerDownloadCannotBeOvertakenByFollowingText(t *testing.T) {
 		close(started)
 		<-release
 		w.Header().Set("Content-Type", "image/png")
-		w.Write(data)
+		_, _ = w.Write(data)
 	})
 	p.imageBatchWindow = time.Hour
 	delivered := make(chan struct{})

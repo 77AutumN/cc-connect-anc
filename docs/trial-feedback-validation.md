@@ -13,8 +13,10 @@ The release branch is based on gateway main `d9304ba359a8b4b45b3baa5d65038ffdb95
 - Added missing frozen-preview and accepted-card facts tests. Replayed, failed-lookup and blocked callbacks cannot replace a newer receipt; a lost execution receipt is unknown, never evidence of no write.
 - Reproduced post/quoted-image/quoted-text overtaking, unavailable quote silently omitted, and startup cache expiry not running without a conversation. All have passing regressions. Sticker/thumbnail failures also reject input instead of becoming successful placeholder text.
 - Isolated Debian checks: Python unittest discovery, `go test ./...`, `go test ./core -run TestCUJ`, `go vet ./...`, `go build ./...`, and `go test -race ./...` all passed. Linux cross-UID cache read succeeds while write is denied. A private extracted compiler and private test HOME/umask were used; no system packages or service settings were changed.
-- The final source snapshot passed all six checks again after the last quoted/sticker/thumbnail and four-format fixture corrections (private run `checks5`, all exit codes zero).
+- The source snapshot passed all six checks after the last quoted/sticker/thumbnail and four-format fixture corrections (`checks5`). GitHub lint then identified unchecked cleanup/fixture returns and a string-formatting simplification; these were corrected without disabling lint, and incrementally reviewed. The final lint-correction snapshot passed all six checks in `checks7`.
 - Frontend `pnpm install --frozen-lockfile --ignore-scripts` and `pnpm run build` passed. Windows targeted approval/image/CUJ tests passed; Linux-only permission/shell cases were tested on Linux, not mislabeled as Windows successes.
+
+One intervening full race run (`checks6`) failed in the inherited `TestEventIdleTimeout_ResetOnEvent`: under CPU throttling, the test sent into its stub channel after its 200 ms idle deadline had already closed it. The test file is byte-identical to the main baseline (Git blob `2f9fb7d3f3a7d83ae4e2cccb9a6451ebb66c203c`); independent review confirmed this path exercises none of the changed image logic. The failure log is retained. The unchanged full candidate rerun passed; this does not erase the inherited wall-clock fixture risk. No timeout threshold was relaxed, test skipped, or production timer modified.
 
 ## Model behavior: independent semantic review
 

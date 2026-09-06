@@ -3,6 +3,7 @@ package claudecode
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ func openImageCacheRoot(path string, create bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { unix.Close(fd) }()
+	defer func() { closeImageDirectoryFD(fd) }()
 	for _, part := range strings.Split(strings.TrimPrefix(abs, "/"), "/") {
 		if part == "" {
 			continue
@@ -41,7 +42,7 @@ func openImageCacheRoot(path string, create bool) (*os.Root, error) {
 		if openErr != nil {
 			return nil, &os.PathError{Op: "open image directory", Path: part, Err: openErr}
 		}
-		unix.Close(fd)
+		closeImageDirectoryFD(fd)
 		fd = next
 		if created {
 			if err := unix.Fchmod(fd, 0750); err != nil {
@@ -51,4 +52,10 @@ func openImageCacheRoot(path string, create bool) (*os.Root, error) {
 	}
 	// /proc/self/fd refers to this still-open descriptor, not the mutable path.
 	return os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", fd))
+}
+
+func closeImageDirectoryFD(fd int) {
+	if err := unix.Close(fd); err != nil {
+		slog.Warn("image cache directory descriptor close failed")
+	}
 }

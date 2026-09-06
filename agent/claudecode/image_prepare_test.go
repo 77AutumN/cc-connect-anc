@@ -79,7 +79,9 @@ func TestImageBatchLimitsAndAtomicValidation(t *testing.T) {
 		t.Fatal("aggregate limit missing")
 	}
 	var buf bytes.Buffer
-	png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1)))
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
 	if images, err := prepareImages([]core.ImageAttachment{{Data: buf.Bytes()}, {Data: []byte("invalid")}}); err == nil || images != nil {
 		t.Fatal("partial validation returned usable images")
 	}

@@ -105,8 +105,8 @@ func (rt *lostNoticeResponse) RoundTrip(req *http.Request) (*http.Response, erro
 	if strings.HasSuffix(req.URL.Path, "/reply") && err == nil {
 		if !rt.lost {
 			rt.lost = true
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body) // Deliberately discard the accepted reply.
+			_ = resp.Body.Close()
 			return nil, io.ErrUnexpectedEOF
 		}
 	}
@@ -124,7 +124,10 @@ func TestHostedNoticeLostResponseReusesUUID(t *testing.T) {
 		var body struct {
 			UUID string `json:"uuid"`
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
 		ids[body.UUID]++
 		writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"message_id": "same-notice"}})
 	}))
