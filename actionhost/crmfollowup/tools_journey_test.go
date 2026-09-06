@@ -294,7 +294,8 @@ func TestCanaryNativeQuestionAnswerUsesExistingSessionAndSeparatePermissionCount
 	if !p.hasNewQuestion(0) || !e.GetSessions().GetOrCreateActive(key).Busy() || !strings.Contains(p.transcript(), "Required: contact, stage, owner and communication time.") {
 		t.Fatal("native question did not retain its visible preface and waiting session")
 	}
-	if !a.observed.hasPendingQuestion() || a.observed.Events() != a.observed.Events() {
+	events := a.observed.Events()
+	if !a.observed.hasPendingQuestion() || events != a.observed.Events() {
 		t.Fatal("question UI did not match a native request on the shared event channel")
 	}
 	const answer = "These are not the customer; create a distinct company with the earlier details."
