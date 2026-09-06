@@ -533,6 +533,17 @@ func TestHostedActionHandoffDeniesAgentAndSuppressesRemainingTurn(t *testing.T) 
 		t.Fatalf("agent env did not receive adapter-owned action token: %#v", agent.env)
 	}
 
+	// Marker denial precedes agent close and card publication/binding. Wait
+	// for the whole handoff turn before inspecting its final visible effects.
+	session := engine.sessions.GetOrCreateActive("test:chat:owner")
+	deadline := time.Now().Add(2 * time.Second)
+	for session.Busy() {
+		if time.Now().After(deadline) {
+			t.Fatal("hosted handoff turn did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
 	platform.cardMu.Lock()
 	cardCount := len(platform.cards)
 	platform.cardMu.Unlock()
