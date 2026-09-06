@@ -115,11 +115,12 @@ func (a *toolJourneyAgent) Alive() bool               { return a.closes.Load() =
 func (a *toolJourneyAgent) Close() error              { a.closes.Add(1); return nil }
 
 type toolJourneyPlatform struct {
-	mu       sync.Mutex
-	sent     []string
-	cards    map[string]*core.Card
-	cardIDs  []string
-	callback core.TrustedCardActionHandler
+	mu         sync.Mutex
+	sent       []string
+	cards      map[string]*core.Card
+	cardIDs    []string
+	questionUI []string
+	callback   core.TrustedCardActionHandler
 }
 
 func (*toolJourneyPlatform) Name() string                                { return "mock" }
@@ -135,6 +136,40 @@ func (p *toolJourneyPlatform) Reply(_ context.Context, _ any, content string) er
 func (p *toolJourneyPlatform) Send(ctx context.Context, target any, content string) error {
 	return p.Reply(ctx, target, content)
 }
+func (p *toolJourneyPlatform) ReplyCard(_ context.Context, _ any, card *core.Card) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sent = append(p.sent, card.RenderText())
+	if nativeQuestionCard(card) {
+		p.questionUI = append(p.questionUI, card.RenderText())
+	}
+	return nil
+}
+func (p *toolJourneyPlatform) SendCard(ctx context.Context, target any, card *core.Card) error {
+	return p.ReplyCard(ctx, target, card)
+}
+
+func nativeQuestionCard(card *core.Card) bool {
+	if card == nil || card.Header == nil {
+		return false
+	}
+	for _, element := range card.Elements {
+		if item, ok := element.(core.CardListItem); ok && strings.HasPrefix(item.BtnValue, "askq:") &&
+			item.Extra["askq_label"] != "" && item.Extra["askq_question"] != "" {
+			return true
+		}
+	}
+	// Native multi-select/free-text questions have no answer buttons.
+	for _, lang := range []core.Language{core.LangEnglish, core.LangChinese, core.LangTraditionalChinese, core.LangJapanese, core.LangSpanish} {
+		title := core.NewI18n(lang).T(core.MsgAskQuestionTitle)
+		if !card.HasButtons() && card.Header.Color == "blue" && (card.Header.Title == title ||
+			(strings.HasPrefix(card.Header.Title, title+" (") && strings.HasSuffix(card.Header.Title, ")"))) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *toolJourneyPlatform) SetTrustedCardActionHandler(h core.TrustedCardActionHandler) {
 	p.callback = h
 }
@@ -170,6 +205,119 @@ func (p *toolJourneyPlatform) lastCard() (string, *core.Card) {
 	}
 	id := p.cardIDs[len(p.cardIDs)-1]
 	return id, p.cards[id]
+}
+
+func (p *toolJourneyPlatform) hasNewQuestion(before int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.questionUI) > before
+}
+
+func TestCanaryNativeQuestionsAreFreshAndSeparateFromHostedCards(t *testing.T) {
+	p := &toolJourneyPlatform{cards: map[string]*core.Card{}}
+	sender, ok := any(p).(core.CardSender)
+	if !ok {
+		t.Fatal("canary platform cannot present native question cards")
+	}
+	question := core.NewCard().Title(core.NewI18n(core.LangEnglish).T(core.MsgAskQuestionTitle), "blue").
+		ListItemBtnExtra("Existing customer", "Existing", "default", "askq:0:1", map[string]string{"askq_label": "Existing", "askq_question": "Which customer?"}).Build()
+	if err := sender.SendCard(context.Background(), "group", question); err != nil || !p.hasNewQuestion(0) {
+		t.Fatal("new native question was not detected")
+	}
+	before := len(p.questionUI)
+	business := core.NewCard().Title("Approval required", "blue").Markdown("AskUserQuestion is only quoted data here").Buttons(core.PrimaryBtn("Approve", "approve")).Build()
+	id, _ := p.ReplyHostedActionPlaceholder(context.Background(), "group", business)
+	if err := p.RefreshCardMessage(context.Background(), id, "group", business); err != nil {
+		t.Fatal(err)
+	}
+	if err := sender.ReplyCard(context.Background(), "group", business); err != nil || p.hasNewQuestion(before) {
+		t.Fatal("old question or business card was treated as a new native question")
+	}
+	multi := core.NewCard().Title(core.NewI18n(core.LangEnglish).T(core.MsgAskQuestionTitle)+" (2/2)", "blue").Markdown("Select the relevant facts").Build()
+	if err := sender.SendCard(context.Background(), "group", multi); err != nil || !p.hasNewQuestion(before) || len(p.cardIDs) != 1 {
+		t.Fatal("native question header was lost or question UI changed hosted approval counts")
+	}
+	for name := range customerBehaviorCases {
+		want := name == "customer-missing-input" || name == "customer-duplicate-ask" || name == "customer-duplicate-distinct" || name == "customer-assignee-unknown"
+		if canaryAllowsNativeQuestion(name, 1) != want || canaryAllowsNativeQuestion(name, 2) {
+			t.Fatalf("native question ended an unexpected case/turn: %s", name)
+		}
+	}
+}
+
+type nativeQuestionJourney struct {
+	toolJourneyAgent
+	observed *realCanarySession
+	answer   chan core.PermissionResult
+}
+
+func (a *nativeQuestionJourney) StartSession(ctx context.Context, _ string) (core.AgentSession, error) {
+	a.starts.Add(1)
+	a.observed.ctx = ctx
+	return a.observed, nil
+}
+func (a *nativeQuestionJourney) Send(string, string, []core.ImageAttachment, []core.FileAttachment) error {
+	a.events <- core.Event{Type: core.EventText, Content: "Required: contact, stage, owner and communication time."}
+	a.events <- core.Event{Type: core.EventPermissionRequest, RequestID: "native-question", ToolName: "AskUserQuestion",
+		ToolInputRaw: map[string]any{"questions": []any{map[string]any{"question": "Which customer?"}}},
+		Questions:    []core.UserQuestion{{Question: "Which customer?", Options: []core.UserQuestionOption{{Label: "Existing"}, {Label: "Distinct"}}}}}
+	return nil
+}
+func (a *nativeQuestionJourney) RespondPermission(id string, result core.PermissionResult) error {
+	if id == "native-question" {
+		a.answer <- result
+		a.events <- core.Event{Type: core.EventResult, Content: "Distinct company acknowledged", Done: true}
+	}
+	return nil
+}
+
+func TestCanaryNativeQuestionAnswerUsesExistingSessionAndSeparatePermissionCount(t *testing.T) {
+	p := &toolJourneyPlatform{cards: map[string]*core.Card{}}
+	a := &nativeQuestionJourney{toolJourneyAgent: toolJourneyAgent{events: make(chan core.Event, 8)}, answer: make(chan core.PermissionResult, 1)}
+	observed := &realCanaryAgent{}
+	a.observed = &realCanarySession{AgentSession: a, agent: observed}
+	e := core.NewEngine("test", a, []core.Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), core.LangEnglish)
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	const key = "mock:group-1:sender-1"
+	receive := func(content string) {
+		e.ReceiveMessage(p, &core.Message{Platform: "mock", SessionKey: key, UserID: "sender-1", ChannelID: "group-1", MessageID: content, Content: content, ReplyCtx: "group"})
+	}
+	receive("/quiet quiet")
+	receive("Clarify customer")
+	deadline := time.Now().Add(3 * time.Second)
+	for !p.hasNewQuestion(0) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !p.hasNewQuestion(0) || !e.GetSessions().GetOrCreateActive(key).Busy() || !strings.Contains(p.transcript(), "Required: contact, stage, owner and communication time.") {
+		t.Fatal("native question did not retain its visible preface and waiting session")
+	}
+	if !a.observed.hasPendingQuestion() || a.observed.Events() != a.observed.Events() {
+		t.Fatal("question UI did not match a native request on the shared event channel")
+	}
+	const answer = "These are not the customer; create a distinct company with the earlier details."
+	receive(answer)
+	select {
+	case result := <-a.answer:
+		if result.Behavior != "allow" || result.UpdatedInput["answers"].(map[string]any)["Which customer?"] != answer {
+			t.Fatal("ReceiveMessage did not return the natural answer to the native request")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("native question was not answered through ReceiveMessage")
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for e.GetSessions().GetOrCreateActive(key).Busy() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if e.GetSessions().GetOrCreateActive(key).Busy() || a.observed.hasPendingQuestion() || a.starts.Load() != 1 || observed.sends.Load() != 1 || observed.questionAnswers.Load() != 1 || observed.permissions.Load() != 0 || len(p.cardIDs) != 0 {
+		t.Fatal("answer changed native session, hosted-card or ordinary permission boundaries")
+	}
+	// An ordinary permission remains ordinary even if its input resembles answers.
+	if err := a.observed.RespondPermission("ordinary-request", core.PermissionResult{Behavior: "allow", UpdatedInput: map[string]any{"answers": map[string]any{"Question": "Answer"}}}); err != nil || observed.permissions.Load() != 1 || observed.questionAnswers.Load() != 1 {
+		t.Fatal("ordinary permission was mistaken for a native question answer")
+	}
 }
 
 func TestCUJ_CRMIPC1_CustomerApprovalAndContinuedDiscussion(t *testing.T) {

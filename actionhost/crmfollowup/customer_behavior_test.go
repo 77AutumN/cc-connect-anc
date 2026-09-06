@@ -171,6 +171,9 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	precondition := map[string]any{"fixture": "customer-trial", "source": "host-injected synthetic backend/ledger, not model turns"}
 	observe := func(message string) []realCanaryObservation {
 		t.Helper()
+		p.mu.Lock()
+		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
+		p.mu.Unlock()
 		outcomes := turn(message)
 		calls := make([]map[string]any, 0, len(outcomes))
 		for _, outcome := range outcomes {
@@ -178,10 +181,18 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 		}
 		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
 		reply := ""
-		if len(history) != 0 {
+		if len(history) != 0 && history[0].Role == "assistant" {
 			reply = history[0].Content
 		}
-		evidence = append(evidence, map[string]any{"user": message, "calls": calls, "reply": reply})
+		p.mu.Lock()
+		visible := append([]string(nil), p.sent[visibleBefore:]...)
+		questions := append([]string(nil), p.questionUI[questionsBefore:]...)
+		p.mu.Unlock()
+		awaitingUser := len(questions) > 0
+		if awaitingUser {
+			reply = strings.Join(visible, "\n")
+		}
+		evidence = append(evidence, map[string]any{"user": message, "calls": calls, "reply": reply, "visible_messages": visible, "questions": questions, "awaiting_user": awaitingUser})
 		return outcomes
 	}
 	t.Cleanup(func() {
@@ -190,14 +201,16 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 		for _, id := range p.cardIDs {
 			cards = append(cards, p.cards[id].RenderText())
 		}
+		questions := append([]string(nil), p.questionUI...)
 		p.mu.Unlock()
 		artifact := map[string]any{"case": name, "pair": definition.pair, "policy_sha256": policyFingerprint, "policy_loading": "native-workspace-CLAUDE.md", "model": os.Getenv("MYANC_REAL_CLAUDE_MODEL"), "trial": os.Getenv("MYANC_REAL_CLAUDE_TRIAL"), "rubric": definition.rubric, "rubric_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(definition.rubric))), "precondition": precondition, "turns": evidence, "cards": cards, "host_executions": executes.Load(), "code_grader_passed": !t.Failed(), "semantic_review": "pending human review; code pass is not semantic acceptance", "memory_coverage": "no controlled memory tool; no claim about whole-host/native memory files"}
+		artifact["native_questions"], artifact["native_question_answers"], artifact["ordinary_permissions"] = questions, agent.questionAnswers.Load(), agent.permissions.Load()
 		data, err := json.MarshalIndent(artifact, "", "  ")
 		if err != nil {
 			t.Error("cannot encode synthetic customer evidence")
 			return
 		}
-		data = regexp.MustCompile(`(?:chg_|apr_|own_)[A-Za-z0-9_-]+`).ReplaceAll(data, []byte("[opaque-id]"))
+		data = anonymizeCustomerBehaviorEvidence(data)
 		if err := os.WriteFile(filepath.Join(scratch, "behavior-evidence.json"), data, 0o600); err != nil {
 			t.Error("cannot save synthetic customer evidence")
 		}
@@ -257,6 +270,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 		t.Fatal("cannot inject synthetic case precondition")
 	}
 	expectedCards, expectedExecutions := 0, int32(0)
+	expectedQuestionAnswers := int32(0)
 	var parent, cachedPerson map[string]any
 	message := definition.message
 	if strings.HasPrefix(name, "customer-result-") {
@@ -303,6 +317,9 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	}
 	if name == "customer-duplicate-distinct" {
 		initial := observe(customerBehaviorCases["customer-duplicate-ask"].message)
+		if evidence[len(evidence)-1]["awaiting_user"] == true {
+			expectedQuestionAnswers = 1
+		}
 		if err := customerBehaviorNoPending(initial); err != nil {
 			t.Fatal(err)
 		}
@@ -426,7 +443,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	p.mu.Lock()
 	cards := len(p.cardIDs)
 	p.mu.Unlock()
-	if cards != expectedCards || executes.Load() != expectedExecutions || agent.starts.Load() != 1 || agent.closes.Load() != 0 || agent.permissions.Load() != 0 || agent.unsafeEnv.Load() {
+	if cards != expectedCards || executes.Load() != expectedExecutions || agent.starts.Load() != 1 || agent.closes.Load() != 0 || agent.permissions.Load() != 0 || agent.questionAnswers.Load() != expectedQuestionAnswers || agent.unsafeEnv.Load() {
 		t.Fatal("customer behavior changed card/write/session boundary")
 	}
 	if strings.Contains(p.transcript(), "🔧 **Tool #") || strings.Contains(p.transcript(), "💭 ") {
@@ -546,6 +563,48 @@ func TestCustomerBehaviorGradersRejectWrongEffectsNotJustWording(t *testing.T) {
 	child["status"] = "pending"
 	if customerBehaviorRelatedResult([]realCanaryObservation{result}, "chg_parent", "chg_child", "cancelled") {
 		t.Fatal("stale pending child accepted as cancelled")
+	}
+}
+
+func anonymizeCustomerBehaviorEvidence(data []byte) []byte {
+	aliases := map[string]string{}
+	return regexp.MustCompile(`(?:chg_|apr_|own_)[A-Za-z0-9_-]+`).ReplaceAllFunc(data, func(id []byte) []byte {
+		original := string(id)
+		if aliases[original] == "" {
+			aliases[original] = fmt.Sprintf("[%s-%d]", original[:3], len(aliases)+1)
+		}
+		return []byte(aliases[original])
+	})
+}
+
+func TestCustomerEvidenceAnonymizationPreservesParentChildAttribution(t *testing.T) {
+	data := []byte(`{"user":"Query chg_parent and chg_child; apr_child belongs to own_member.","tool":{"parent":"chg_parent","parent_status":"verified","child":"chg_child","child_status":"cancelled","approval":"apr_child","owner":"own_member"},"reply":"chg_parent verified; chg_child cancelled"}`)
+	redacted := anonymizeCustomerBehaviorEvidence(data)
+	swapped := bytes.Replace(data, []byte("chg_parent verified; chg_child cancelled"), []byte("chg_child verified; chg_parent cancelled"), 1)
+	if bytes.Equal(redacted, anonymizeCustomerBehaviorEvidence(swapped)) {
+		t.Fatal("anonymization erased the difference between correct and reversed parent/child results")
+	}
+	var artifact struct {
+		User, Reply string
+		Tool        map[string]string
+	}
+	if err := json.Unmarshal(redacted, &artifact); err != nil {
+		t.Fatal("anonymized evidence is not valid JSON:", err)
+	}
+	aliases := map[string]bool{}
+	for field, original := range map[string]string{"parent": "chg_parent", "child": "chg_child", "approval": "apr_child", "owner": "own_member"} {
+		alias := artifact.Tool[field]
+		if alias == "" || aliases[alias] || !strings.Contains(artifact.User, alias) || bytes.Contains(redacted, []byte(original)) {
+			t.Fatalf("%s lost its distinct, consistent anonymous identity", field)
+		}
+		aliases[alias] = true
+	}
+	if artifact.Reply != artifact.Tool["parent"]+" verified; "+artifact.Tool["child"]+" cancelled" ||
+		artifact.Tool["parent_status"] != "verified" || artifact.Tool["child_status"] != "cancelled" {
+		t.Fatal("anonymization changed the reply's attribution relative to the stored results")
+	}
+	if !bytes.Equal(redacted, anonymizeCustomerBehaviorEvidence(data)) {
+		t.Fatal("aliases must be stable for the same artifact")
 	}
 }
 
