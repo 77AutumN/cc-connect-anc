@@ -6,7 +6,7 @@ bind the staged change to an authenticated Feishu sender and apply it. The CRM
 helper owns the SQLite ledger, compare-and-swap state transitions, Feishu
 writes, re-reads, and receipts. cc-connect does not contain a workflow engine.
 
-## Selected development path — rollout paused
+## Selected path — real CRM rollout paused
 
 The general assistant keeps one ongoing Claude session. CRM is one bounded tool
 family: `customer` reads facts/history, `stage` prepares a canonical follow-up,
@@ -46,8 +46,12 @@ process. It is not restored in the parent's global environment. The new process
 captures and clears it again before any agent or helper is created.
 
 Do not activate a deployment from these notes. Runtime-user permissions, real
-callback validation and unrelated Feishu resource isolation remain rollout gates.
-Automatic merge/deploy is paused.
+callback validation and unrelated Feishu resource isolation are separate checks;
+the existing fictional Owner Sandbox has acceptance evidence for its listed
+journeys, not every adverse live case. The companion CRM document
+`docs/customer-trial-release-gate.md` records the final layered merge evidence.
+Merge requires final independent review and exact-head CI; real CRM creation and
+switching remain paused until the Owner separately confirms. No automatic deploy.
 See the CRM repository's `CLAUDE.md` for the current model-facing contract.
 
 ## Legacy startup reference — not the selected tools path
@@ -155,8 +159,11 @@ closed and no approval card is published. After a successful deny, cc-connect:
 3. replaces that exact placeholder with the canonical preview and opaque
    approve/modify/cancel buttons.
 
-A publish, bind, or activation failure never exposes approval buttons. The
-gateway silently drains the rest of the Agent turn and does not show a generic
+A publish or bind failure stops before activation. An activation request may
+reach Feishu even if its response is lost, so a reported activation failure does
+not prove that buttons were never displayed or that no callback ran. Query the
+durable operation receipt before recovery; do not blindly republish. The gateway
+silently drains the rest of the Agent turn and does not show a generic
 Allow/Allow All card.
 
 ## Shared card binding and execution
@@ -221,10 +228,12 @@ invocation of the same continuation is also one-shot. A wrong card ID produces
 only an error toast, not a replacement of the other operation's receipt.
 
 If publishing, binding or activating the second card fails, the parent remains
-verified and its card states that the follow-up was not submitted. A bound message
-is not proof that activation succeeded. Query stored operation state before manual
-recovery; this code does not retry, reconstruct a stale pending card from a receipt,
-or roll back an already completed customer operation. Cancelling, modifying or
+verified and its card reports that follow-up approval delivery could not be
+confirmed. A bound message is not proof that activation succeeded; an activation
+error is also not proof of zero writes, because the request or a callback may
+have completed before its response was lost. Query stored operation state before
+manual recovery; this code does not retry, reconstruct a stale pending card from
+a receipt, or roll back an already completed customer operation. Cancelling, modifying or
 expiring the child similarly leaves the parent operation intact, and child cards
 state that distinction explicitly.
 
