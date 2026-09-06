@@ -359,6 +359,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	// spawn. WorkDir tells BuildSpawnCommand to wrap the command with a chdir;
 	// the path itself is passed through RunAsChdirEnv below.
 	spawnOpts.WorkDir = workDir
+	spawnOpts = preserveCRMStageEnvironment(spawnOpts, extraEnv)
 	cmd := core.BuildSpawnCommand(sessionCtx, spawnOpts, cliBin, allArgs...)
 	cmd.Dir = workDir
 	// Put the child into its own process group so Close() can terminate the
@@ -367,12 +368,10 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	// MCP grandchildren (e.g. the Telegram bridge bun process) spinning at
 	// 100% CPU after their parent's stdio pipe closes.
 	prepareCmdForKill(cmd)
-	// Filter out CLAUDECODE env var to prevent "nested session" detection,
-	// since cc-connect is a bridge, not a nested Claude Code session.
-	env := filterEnv(os.Environ(), "CLAUDECODE")
-	if len(extraEnv) > 0 {
-		env = core.MergeEnv(env, extraEnv)
-	}
+	// Filter bridge-only supervisor secrets even if they were accidentally
+	// repeated in agent extraEnv. Claude receives a per-session action token,
+	// never the credential that authorizes host-side CRM apply.
+	env := claudeChildEnv(os.Environ(), extraEnv)
 	// Signal to PermissionRequest hooks that they are running inside
 	// cc-connect. Hooks can check this env var to skip LLM calls on
 	// the Claude Code side (the hook result is ignored anyway when
@@ -1284,4 +1283,53 @@ func filterEnv(env []string, key string) []string {
 		}
 	}
 	return out
+}
+
+func claudeChildEnv(base, extra []string) []string {
+	env := filterEnv(base, "CLAUDECODE")
+	if len(extra) > 0 {
+		env = core.MergeEnv(env, extra)
+	}
+	// These variables grant the gateway's host-owned CRM capability. Strip
+	// both after merging project/session env so no configuration layer can
+	// accidentally re-introduce them into the Claude child. The per-session
+	// action token and workspace-local input path are retained;
+	// they can stage actions but cannot apply them.
+	env = filterEnv(env, "MYANC_CRM_HOST_SECRET")
+	return filterEnv(env, "MYANC_CRM_HOST_SECRET_FILE")
+}
+
+func preserveCRMStageEnvironment(opts core.SpawnOptions, env []string) core.SpawnOptions {
+	opts.EnvAllowlist = append([]string(nil), opts.EnvAllowlist...)
+	if envHasNonEmptyValue(env, "MYANC_CRM_ACTION_TOKEN") {
+		// Root-owned sudoers keeps this single session value without placing
+		// it in sudo's explicit-environment audit record. Logging stays on.
+		opts.SudoEnvKeep = append(append([]string(nil), opts.SudoEnvKeep...), "MYANC_CRM_ACTION_TOKEN")
+	}
+	for _, key := range []string{"MYANC_CRM_ACTION_TOKEN", "MYANC_CRM_STAGE_INPUT"} {
+		if !envHasNonEmptyValue(env, key) {
+			continue
+		}
+		found := false
+		for _, existing := range opts.EnvAllowlist {
+			if existing == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			opts.EnvAllowlist = append(opts.EnvAllowlist, key)
+		}
+	}
+	return opts
+}
+
+func envHasNonEmptyValue(env []string, key string) bool {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) && len(entry) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }

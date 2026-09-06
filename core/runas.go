@@ -59,6 +59,7 @@ import (
 	"fmt"
 	"os/exec"
 	"os/user"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -112,6 +113,10 @@ var DefaultEnvAllowlist = []string{
 type SpawnOptions struct {
 	RunAsUser    string
 	EnvAllowlist []string // extends DefaultEnvAllowlist, not a replacement
+	// SudoEnvKeep is a subset of the allowlist inherited via sudoers env_keep.
+	// Never name secrets in --preserve-env: sudo audits their values as ENV=.
+	// This does not expand FilterEnvForSpawn's allowlist or change sudo policy.
+	SudoEnvKeep []string
 	// WorkDir is the directory the spawned command should run in. Under
 	// sudo -i (IsolationMode) cmd.Dir is ignored because -i chdirs to the
 	// target user's HOME, so when WorkDir is set BuildSpawnCommand wraps the
@@ -156,10 +161,14 @@ func BuildSpawnCommand(ctx context.Context, opts SpawnOptions, name string, args
 	if !opts.IsolationMode() {
 		return exec.CommandContext(ctx, name, args...)
 	}
+	preserved := opts.mergedAllowlist()
+	preserved = slices.DeleteFunc(preserved, func(key string) bool {
+		return slices.Contains(opts.SudoEnvKeep, key)
+	})
 	sudoArgs := []string{
 		"-n",
 		"-iu", opts.RunAsUser,
-		"--preserve-env=" + strings.Join(opts.mergedAllowlist(), ","),
+		"--preserve-env=" + strings.Join(preserved, ","),
 		"--",
 	}
 	if opts.WorkDir != "" {

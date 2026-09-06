@@ -7,6 +7,6 @@ import (
 	"syscall"
 )
 
-func restartProcess(execPath string) error {
-	return syscall.Exec(execPath, os.Args, os.Environ())
+func restartProcess(execPath string, env []string) error {
+	return syscall.Exec(execPath, os.Args, env)
 }

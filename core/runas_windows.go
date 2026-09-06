@@ -19,6 +19,7 @@ var DefaultEnvAllowlist = []string{}
 type SpawnOptions struct {
 	RunAsUser    string
 	EnvAllowlist []string
+	SudoEnvKeep  []string
 	WorkDir      string
 }
 

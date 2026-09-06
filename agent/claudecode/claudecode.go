@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -454,17 +455,42 @@ func (a *Agent) SetPlatformPrompt(prompt string) {
 // resume a session whose stored ID was inherited from another project, the
 // engine calls this and — on a false return — clears the ID and starts a
 // fresh session instead of reloading the wrong conversation.
-func (a *Agent) ValidateSessionID(_ context.Context, sessionID string) bool {
-	if sessionID == "" {
+func (a *Agent) ValidateSessionID(ctx context.Context, sessionID string) bool {
+	return a.validateSessionID(ctx, sessionID, core.ExecSudoRunner{}, user.Lookup)
+}
+
+var claudeSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+func (a *Agent) validateSessionID(ctx context.Context, sessionID string, runner core.SudoRunner, lookupUser func(string) (*user.User, error)) bool {
+	if !claudeSessionIDPattern.MatchString(sessionID) || ctx.Err() != nil {
 		return false
+	}
+	a.mu.RLock()
+	workDir := a.workDir
+	runAsUser := a.spawnOpts.RunAsUser
+	a.mu.RUnlock()
+	if runAsUser != "" {
+		// The supervisor must neither inspect the private user home nor trust
+		// its own Claude store. Check only this native-encoded workspace path
+		// as the same OS user that will execute --resume; never scan/fallback.
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		target, err := lookupUser(runAsUser)
+		if err != nil || target == nil || !filepath.IsAbs(target.HomeDir) || workDir == "" {
+			return false
+		}
+		absWorkDir, err := filepath.Abs(workDir)
+		if err != nil || ctx.Err() != nil {
+			return false
+		}
+		path := filepath.Join(target.HomeDir, ".claude", "projects", encodeClaudeProjectKey(absWorkDir), sessionID+".jsonl")
+		_, err = runner.Run(ctx, "-n", "-iu", runAsUser, "--", "/usr/bin/test", "-f", path)
+		return err == nil && ctx.Err() == nil
 	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return false
 	}
-	a.mu.RLock()
-	workDir := a.workDir
-	a.mu.RUnlock()
 	return validateSessionIDInProject(homeDir, workDir, sessionID)
 }
 
