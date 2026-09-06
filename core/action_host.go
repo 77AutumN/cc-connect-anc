@@ -264,7 +264,7 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 						}
 					}
 					if publishErr != nil {
-						slog.Warn("next approval was not published; completed action remains verified", "action_kind", action.Kind)
+						slog.Warn("next approval delivery could not be confirmed; completed action remains verified", "action_kind", action.Kind)
 						// Preserve the parent receipt. A second card delivery failure is
 						// not a failure or rollback of the already verified write.
 						if final.Card != nil {

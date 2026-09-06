@@ -62,7 +62,7 @@ func TestHostedNextApprovalPublishesOnceAndKeepsParentReceipt(t *testing.T) {
 			if len(h.executions) != 1 || first.Card != repeat.Card || first.Card.Header.Color != "green" {
 				t.Fatal("completion replay executed twice or lost parent success")
 			}
-			if strings.Contains(parent.Card.RenderText(), "follow-up was not submitted") {
+			if strings.Contains(parent.Card.RenderText(), e.i18n.T(MsgHostedActionNextFailedBody)) {
 				t.Fatal("shared parent receipt was mutated")
 			}
 			if variant == "success" {
@@ -73,7 +73,8 @@ func TestHostedNextApprovalPublishesOnceAndKeepsParentReceipt(t *testing.T) {
 				if bound.UserID != "owner" || bound.ChatID != "chat" || bound.Project != "project" || bound.Platform != "test" || bound.SessionKey != action.Principal.SessionKey || bound.MessageID != "outgoing-approval-card" || p.reconstructed != action.Principal.SessionKey {
 					t.Fatalf("child binding changed principal or retained parent card: %+v", bound)
 				}
-			} else if !strings.Contains(first.Card.RenderText(), "follow-up was not submitted") {
+			} else if reply := first.Card.RenderText(); !strings.Contains(reply, "could not be confirmed") ||
+				!strings.Contains(reply, "execution state is unknown") || strings.Contains(reply, "follow-up was not submitted") {
 				t.Fatalf("delivery failure was not distinguished from parent success: %s", first.Card.RenderText())
 			}
 			// Durable Claim is authoritative on a replay. Even a stale Next on

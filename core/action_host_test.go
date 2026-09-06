@@ -581,6 +581,72 @@ func TestHostedActionCallbackDelegatesAuthorizationToPersistentHost(t *testing.T
 	}
 }
 
+type hostedActivationTimeoutPlatform struct{ nextCardPlatform }
+
+func (p *hostedActivationTimeoutPlatform) RefreshCardMessage(ctx context.Context, id, key string, card *Card) error {
+	// The server applied activation, but its response and the fallback PATCH
+	// both time out. The separately bound approval remains actionable.
+	if card.HasButtons() {
+		if err := p.hostedCardPlatform.RefreshCardMessage(ctx, id, key, card); err != nil {
+			return err
+		}
+	}
+	return context.DeadlineExceeded
+}
+
+func TestHostedNextActivationTimeoutDoesNotClaimFollowupUnsubmitted(t *testing.T) {
+	for _, tc := range []struct {
+		lang                            Language
+		unknown, stored, falseUnwritten string
+	}{
+		{LangEnglish, "could not be confirmed", "stored result", "follow-up was not submitted"},
+		{LangChinese, "发送结果尚未确认", "持久回执", "跟进未提交"},
+		{LangTraditionalChinese, "傳送結果尚未確認", "持久回執", "跟進未提交"},
+		{LangJapanese, "配信結果は未確認", "保存済み", "フォローアップは未送信"},
+		{LangSpanish, "entrega no se ha confirmado", "resultado guardado", "seguimiento no se envió"},
+	} {
+		t.Run(string(tc.lang), func(t *testing.T) {
+			p := &hostedActivationTimeoutPlatform{nextCardPlatform: nextCardPlatform{
+				hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}},
+			}}
+			h := &actionHostStub{}
+			child := &ActionHostResult{Kind: h.Kind(), Status: "pending", ApprovalID: "child",
+				Card: NewCard().Title("Separate follow-up approval", "blue").Buttons(PrimaryBtn("Approve", "child")).Build()}
+			parent := &ActionHostResult{Kind: h.Kind(), Status: "verified", Card: NewCard().Title("Customer verified", "green").Build(), Next: child}
+			parentReceipt := parent.Card.RenderText()
+			h.executeResult = parent
+			e := NewEngine("project", &stubAgent{}, []Platform{p}, "", tc.lang)
+			e.SetActionHost(h)
+			action := TrustedCardAction{Kind: h.Kind(), ApprovalID: "parent", Decision: ActionApprove, Language: tc.lang,
+				Principal: ActionPrincipal{UserID: "owner", ChatID: "chat", SessionKey: "test:chat:owner", MessageID: "parent-card"}}
+			response := e.handleTrustedCardAction(p, action)
+			if response.Complete == nil {
+				t.Fatal("parent approval was not claimed")
+			}
+			completed := response.Complete()
+			if len(h.cardBindings) != 1 || len(p.refreshes) != 1 || len(p.cards) != 1 || p.cards[0] != child.Card || !p.cards[0].HasButtons() {
+				t.Fatal("fixture did not retain a bound, activated child after the lost response")
+			}
+			// Publication uncertainty does not block a later trusted callback;
+			// the host remains authoritative on the independently approved child.
+			h.executeResult = &ActionHostResult{Status: "verified", Card: NewCard().Title("Follow-up verified", "green").Build()}
+			action.ApprovalID, action.Principal = "child", h.cardBindings[0]
+			childResponse := e.handleTrustedCardAction(p, action)
+			if childResponse.Complete == nil || childResponse.Complete().Card.Header.Title != "Follow-up verified" ||
+				len(h.executions) != 2 || h.executions[1] != "child" {
+				t.Fatal("bound child callback could not execute after activation response timeout")
+			}
+			if completed.Card == nil || completed.Card.Header.Title != "Customer verified" || parent.Card.RenderText() != parentReceipt {
+				t.Fatal("delivery uncertainty changed the verified parent receipt")
+			}
+			reply := completed.Card.RenderText()
+			if !strings.Contains(reply, tc.unknown) || !strings.Contains(reply, tc.stored) || strings.Contains(reply, tc.falseUnwritten) {
+				t.Fatalf("unknown child delivery must defer to stored state without claiming no write: %s", reply)
+			}
+		})
+	}
+}
+
 func TestHostedActionDuplicateExecutingCallbackIsToastOnly(t *testing.T) {
 	stale := ActionHostResult{Status: "executing", Code: "apply_in_progress", Card: NewCard().Title("stale executing", "blue").Build()}
 	host := &actionHostStub{claimResult: &stale, claimExecute: false}

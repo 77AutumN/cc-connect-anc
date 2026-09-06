@@ -87,11 +87,18 @@ func customerBehaviorProfile(outcomes []realCanaryObservation, command string, e
 				return nil, fmt.Errorf("staged field %s differs from explicit facts", field)
 			}
 		}
-		_, supplied := outcome.input["followup"].(map[string]any)
+		followupInput, supplied := outcome.input["followup"].(map[string]any)
 		preview, _ := outcome.data["preview"].(map[string]any)
-		_, frozen := preview["followup_draft"].(map[string]any)
+		draft, frozen := preview["followup_draft"].(map[string]any)
 		if supplied != followup || frozen != followup {
 			return nil, fmt.Errorf("follow-up draft presence differs from request")
+		}
+		if followup { // The complete-input case supplies only content and time.
+			for _, facts := range []map[string]any{followupInput, draft} {
+				if err := customerBehaviorCompleteFollowup(facts); err != nil {
+					return nil, err
+				}
+			}
 		}
 		operation := "customer_create"
 		if command == "stage-customer-update" {
@@ -138,6 +145,19 @@ func customerBehaviorProfile(outcomes []realCanaryObservation, command string, e
 		return nil, fmt.Errorf("wanted one pending profile stage, got %d", count)
 	}
 	return staged, nil
+}
+
+func customerBehaviorCompleteFollowup(facts map[string]any) error {
+	when, err := time.Parse(time.RFC3339, stripFence(text(facts["occurred_at"])))
+	if err != nil || !when.Equal(time.Date(2026, 9, 6, 6, 0, 0, 0, time.UTC)) || !ownerFixtureValueMatches(facts["content"], "客户想了解演示") {
+		return fmt.Errorf("follow-up differs from supplied facts/time")
+	}
+	for field, value := range facts {
+		if field != "occurred_at" && field != "content" && value != nil {
+			return fmt.Errorf("follow-up invented field %s", field)
+		}
+	}
+	return nil
 }
 
 func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint string,
@@ -314,13 +334,6 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 			profile := preview["effects"].(map[string]any)["customer_profile"].(map[string]any)
 			if !customerBehaviorOwnerMatches(profile["fields"].(map[string]any)["owner"]) {
 				t.Fatal("canonical owner differs from verified fixture person")
-			}
-			if name == "customer-complete-input" {
-				draft := preview["followup_draft"].(map[string]any)
-				when, err := time.Parse(time.RFC3339, stripFence(text(draft["occurred_at"])))
-				if err != nil || !when.Equal(time.Date(2026, 9, 6, 6, 0, 0, 0, time.UTC)) || !ownerFixtureValueMatches(draft["content"], "客户想了解演示") {
-					t.Fatal("frozen follow-up differs from supplied facts/time")
-				}
 			}
 		}
 		expectedCards = 1
@@ -533,6 +546,54 @@ func TestCustomerBehaviorGradersRejectWrongEffectsNotJustWording(t *testing.T) {
 	child["status"] = "pending"
 	if customerBehaviorRelatedResult([]realCanaryObservation{result}, "chg_parent", "chg_child", "cancelled") {
 		t.Fatal("stale pending child accepted as cancelled")
+	}
+}
+
+func TestCustomerCompleteInputGraderRejectsInventedFollowupFacts(t *testing.T) {
+	expected := map[string]any{"name": "虚构新公司", "contact": "示例乙", "stage": "已联系"}
+	input := map[string]any{"occurred_at": "2026-09-06T14:00:00+08:00", "content": "客户想了解演示"}
+	draft := map[string]any{"occurred_at": "<CRM_DATA>2026-09-06T06:00:00Z</CRM_DATA>", "content": "<CRM_DATA>客户想了解演示</CRM_DATA>"}
+	outcome := realCanaryObservation{
+		command: "stage-customer-create",
+		input:   map[string]any{"name": expected["name"], "contact": expected["contact"], "stage": expected["stage"], "owner_ref": "own_fixture", "followup": input},
+		data: map[string]any{"status": "pending", "preview": map[string]any{
+			"operation_type": "customer_create", "followup_draft": draft,
+			"effects": map[string]any{"customer_profile": map[string]any{"fields": expected}},
+		}},
+	}
+	if _, err := customerBehaviorProfile([]realCanaryObservation{outcome}, outcome.command, expected, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, boundary := range []struct {
+		name  string
+		facts map[string]any
+	}{{"input", input}, {"frozen-draft", draft}} {
+		for _, field := range []struct{ name, value string }{
+			{"channel", "电话"}, {"next_action", "发送方案"}, {"next_followup_at", "2026-09-07T14:00:00+08:00"},
+			{"content", "客户已批准方案"}, {"occurred_at", "2026-09-06T14:00:00Z"},
+		} {
+			t.Run(boundary.name+"/"+field.name, func(t *testing.T) {
+				previous, present := boundary.facts[field.name]
+				defer func() {
+					if present {
+						boundary.facts[field.name] = previous
+					} else {
+						delete(boundary.facts, field.name)
+					}
+				}()
+				boundary.facts[field.name] = field.value
+				if _, err := customerBehaviorProfile([]realCanaryObservation{outcome}, outcome.command, expected, true); err == nil {
+					t.Fatal("complete-input grader accepted an invented follow-up fact")
+				}
+			})
+		}
+	}
+	// The backend normalizes optional null values to absence; they add no fact.
+	for _, field := range []string{"channel", "next_action", "next_followup_at"} {
+		input[field] = nil
+	}
+	if _, err := customerBehaviorProfile([]realCanaryObservation{outcome}, outcome.command, expected, true); err != nil {
+		t.Fatal("optional null inputs must remain equivalent to omitted facts:", err)
 	}
 }
 
