@@ -790,8 +790,8 @@ func runOwnerBehaviorCase(t *testing.T, name, scratch, policyFingerprint, previo
 }
 
 func ownerFixtureValueMatches(actual any, expected string) bool {
-	// CRM fencing intentionally applies NFKC (e.g. Chinese colon/comma become
-	// ASCII). Compare that canonical form, not the user's original glyph width.
+	// Legacy receipts applied NFKC. These older semantic cases accept equivalent
+	// forms; the separate Unicode pair requires exact spelling at each boundary.
 	return norm.NFKC.String(stripFence(text(actual))) == norm.NFKC.String(expected)
 }
 
