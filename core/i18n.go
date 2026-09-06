@@ -661,6 +661,17 @@ const (
 	MsgHostedActionExecutingBody          MsgKey = "hosted_action_executing_body"
 	MsgHostedActionHandoffHistory         MsgKey = "hosted_action_handoff_history"
 	MsgHostedActionProcessingToast        MsgKey = "hosted_action_processing_toast"
+	MsgHostedActionReceivedToast          MsgKey = "hosted_action_received_toast"
+	MsgHostedActionResultUnknownToast     MsgKey = "hosted_action_result_unknown_toast"
+	MsgHostedActionUnknownTitle           MsgKey = "hosted_action_unknown_title"
+	MsgHostedActionUnknownBody            MsgKey = "hosted_action_unknown_body"
+	MsgHostedActionDisplayFailedFmt       MsgKey = "hosted_action_display_failed_fmt"
+	MsgImageLimit                         MsgKey = "image_input_limit"
+	MsgImageInvalid                       MsgKey = "image_input_invalid"
+	MsgImageDimensions                    MsgKey = "image_input_dimensions"
+	MsgImageReceiveFailed                 MsgKey = "image_input_receive_failed"
+	MsgImageCacheFailed                   MsgKey = "image_input_cache_failed"
+	MsgImageDiskLow                       MsgKey = "image_input_disk_low"
 	MsgCRMApprovalFailedTitle             MsgKey = "crm_approval_failed_title"
 	MsgCRMApprovalFailedBody              MsgKey = "crm_approval_failed_body"
 	MsgCRMNeedsTimeTitle                  MsgKey = "crm_needs_time_title"
@@ -4323,16 +4334,53 @@ var messages = map[MsgKey]map[Language]string{
 		LangEnglish: "The host operation failed. Do not assume the external system was updated. Ask an administrator to inspect the protected service logs.", LangChinese: "宿主操作失败；不要据此判断外部系统已经写入。请联系管理员检查受保护服务日志。", LangTraditionalChinese: "宿主操作失敗；不要據此判斷外部系統已經寫入。請聯絡管理員檢查受保護服務日誌。", LangJapanese: "ホスト操作に失敗しました。外部システムが更新されたとは判断しないでください。管理者に保護されたサービスログの確認を依頼してください。", LangSpanish: "La operación del host falló. No suponga que el sistema externo se actualizó. Pida a un administrador que revise los registros protegidos.",
 	},
 	MsgHostedActionExecutingTitle: {
-		LangEnglish: "⏳ Executing approved operation", LangChinese: "⏳ 正在执行已批准的操作", LangTraditionalChinese: "⏳ 正在執行已批准的操作", LangJapanese: "⏳ 承認済み操作を実行中", LangSpanish: "⏳ Ejecutando la operación aprobada",
+		LangEnglish: "⏳ Accepted — executing and verifying", LangChinese: "⏳ 已受理，正在执行并核验，无需重复点击", LangTraditionalChinese: "⏳ 已受理，正在執行並核驗，無需重複點擊", LangJapanese: "⏳ 受付済み — 実行・検証中。再クリックは不要です", LangSpanish: "⏳ Aceptado — ejecutando y verificando; no vuelva a pulsar",
 	},
 	MsgHostedActionExecutingBody: {
-		LangEnglish: "The approval was accepted. The host is applying the exact staged plan and will replace this card with the verified result.", LangChinese: "审批已接受。宿主正在执行已暂存的原方案，完成后会用核验结果替换此卡片。", LangTraditionalChinese: "審批已接受。宿主正在執行已暫存的原方案，完成後會用核驗結果取代此卡片。", LangJapanese: "承認を受け付けました。ホストがステージ済みの同一プランを実行し、完了後に検証結果でこのカードを更新します。", LangSpanish: "La aprobación fue aceptada. El host está aplicando el plan preparado exacto y reemplazará esta tarjeta con el resultado verificado.",
+		LangEnglish: "Accepted. Executing and verifying the frozen plan; no need to click again. Approval controls are closed. The outcome is not yet confirmed.", LangChinese: "已受理，正在执行并核验，无需重复点击。批准内容已冻结，操作按钮已关闭；尚未确认执行结果。", LangTraditionalChinese: "已受理，正在執行並核驗，無需重複點擊。批准內容已凍結，操作按鈕已關閉；尚未確認執行結果。", LangJapanese: "受付済みです。確定済みプランを実行・検証しています。再クリックは不要です。承認操作は終了し、結果はまだ確定していません。", LangSpanish: "Aceptado. Ejecutando y verificando el plan congelado; no vuelva a pulsar. Los controles están cerrados. El resultado aún no está confirmado.",
 	},
 	MsgHostedActionHandoffHistory: {
 		LangEnglish: "The action request was handled by the authenticated gateway host; the agent did not execute the business write.", LangChinese: "操作请求已由经过身份验证的网关宿主处理；Agent 未执行业务写入。", LangTraditionalChinese: "操作請求已由經過身分驗證的閘道宿主處理；Agent 未執行業務寫入。", LangJapanese: "操作リクエストは認証済みゲートウェイホストによって処理され、Agent は業務書き込みを実行していません。", LangSpanish: "La solicitud de acción fue gestionada por el host de puerta de enlace autenticado; el agente no ejecutó la escritura de negocio.",
 	},
 	MsgHostedActionProcessingToast: {
-		LangEnglish: "⏳ Processing your decision", LangChinese: "⏳ 正在处理你的决定", LangTraditionalChinese: "⏳ 正在處理你的決定", LangJapanese: "⏳ 選択を処理しています", LangSpanish: "⏳ Procesando su decisión",
+		LangEnglish: "Accepted; executing. No need to click again.", LangChinese: "已受理，正在执行；无需重复点击。", LangTraditionalChinese: "已受理，正在執行；無需重複點擊。", LangJapanese: "受付済み、実行中です。再クリックは不要です。", LangSpanish: "Aceptado; ejecutando. No vuelva a pulsar.",
+	},
+	MsgHostedActionReceivedToast: {
+		LangEnglish: "Click received; checking approval.", LangChinese: "已收到点击，正在核验审批。", LangTraditionalChinese: "已收到點擊，正在核驗審批。", LangJapanese: "クリックを受信しました。承認を確認中です。", LangSpanish: "Clic recibido; comprobando la aprobación.",
+	},
+	MsgImageLimit: {
+		LangEnglish: "No images or text in this batch were submitted. Limit: 4 images, 5 MiB each, 10 MiB total (including a decoded first frame). Compress or resend in smaller batches.", LangChinese: "本批图片和文字均未提交。上限为4张、每张5MiB、合计10MiB（含动图首帧转换后大小）。请压缩或分批重发。", LangTraditionalChinese: "本批圖片和文字均未提交。上限為4張、每張5MiB、合計10MiB（含動圖首幀轉換後大小）。請壓縮或分批重發。", LangJapanese: "この画像・テキスト一式は未送信です。上限は4枚、各5MiB、合計10MiB（先頭フレーム変換後を含む）。圧縮または分割して再送してください。", LangSpanish: "No se envió este lote de imágenes ni texto. Máximo: 4 imágenes, 5 MiB cada una, 10 MiB total (incluido el primer fotograma convertido). Comprima o divida el lote.",
+	},
+	MsgImageInvalid: {
+		LangEnglish: "This image batch was not submitted: an image is damaged or unsupported. Resend valid JPEG, PNG, GIF or WebP images.", LangChinese: "本批图片和文字未提交：有图片损坏或格式不支持。请重发有效的JPEG、PNG、GIF或WebP图片。", LangTraditionalChinese: "本批圖片和文字未提交：有圖片損壞或格式不支援。請重發有效的JPEG、PNG、GIF或WebP圖片。", LangJapanese: "画像が破損または未対応のため、この一式は未送信です。有効なJPEG、PNG、GIF、WebPを再送してください。", LangSpanish: "Lote no enviado: una imagen está dañada o no es compatible. Reenvíe JPEG, PNG, GIF o WebP válidos.",
+	},
+	MsgImageDimensions: {
+		LangEnglish: "Batch not submitted: an image exceeds the native 8000-pixel edge limit. Reduce its dimensions and resend; no automatic resize was performed.", LangChinese: "本批未提交：图片边长超过原生模型8000像素上限。请缩小尺寸后重发；系统没有自动缩图。", LangTraditionalChinese: "本批未提交：圖片邊長超過原生模型8000像素上限。請縮小尺寸後重發；系統沒有自動縮圖。", LangJapanese: "画像の辺が8000ピクセルの上限を超えるため未送信です。自動縮小はしていません。サイズを変更して再送してください。", LangSpanish: "Lote no enviado: una dimensión supera 8000 píxeles. Reduzca el tamaño y reenvíe; no se redimensionó automáticamente.",
+	},
+	MsgImageReceiveFailed: {
+		LangEnglish: "An image could not be received completely. No part of this batch was submitted. Please resend the whole batch.", LangChinese: "有图片未能完整接收，本批内容均未提交。请整批重发。", LangTraditionalChinese: "有圖片未能完整接收，本批內容均未提交。請整批重發。", LangJapanese: "画像を完全に受信できず、一式を送信していません。全体を再送してください。", LangSpanish: "No se recibió una imagen completa. No se envió ninguna parte del lote. Reenvíelo completo.",
+	},
+	MsgImageCacheFailed: {
+		LangEnglish: "Image cache is unavailable or full of in-use images. No part of this batch was submitted. Ask the administrator to check storage, then resend the whole batch.", LangChinese: "图片缓存不可用，或已被处理中图片占满。本批内容均未提交。请管理员检查存储后，整批重发。", LangTraditionalChinese: "圖片快取不可用，或已被處理中圖片佔滿。本批內容均未提交。請管理員檢查儲存後，整批重發。", LangJapanese: "画像キャッシュが利用不能、または使用中画像で満杯です。一式は未送信です。管理者の確認後に再送してください。", LangSpanish: "Caché no disponible o llena de imágenes en uso. Lote no enviado. Pida al administrador revisar el almacenamiento y reenvíelo completo.",
+	},
+	MsgImageDiskLow: {
+		LangEnglish: "New images are paused: free disk space is below 1 GiB plus four times this batch's original size. Nothing was submitted. Ask the administrator to free space, then resend.", LangChinese: "新图片请求已暂停：可用磁盘不足1GiB加本批原图大小的四倍。本批未提交。请管理员释放空间后重发。", LangTraditionalChinese: "新圖片請求已暫停：可用磁碟不足1GiB加本批原圖大小的四倍。本批未提交。請管理員釋放空間後重發。", LangJapanese: "空き容量が1GiB＋原画像合計の4倍未満のため画像受付を停止しました。未送信です。空き容量確保後に再送してください。", LangSpanish: "Imágenes pausadas: espacio libre inferior a 1 GiB más cuatro veces el lote original. No se envió nada. Libere espacio y reenvíe.",
+	},
+	MsgHostedActionResultUnknownToast: {
+		LangEnglish: "Result unknown. Query the stored receipt; do not submit again.", LangChinese: "结果尚不明确，请查询操作回执；不要重新提交。", LangTraditionalChinese: "結果尚不明確，請查詢操作回執；不要重新提交。", LangJapanese: "結果が不明です。記録を照会し、再送信しないでください。", LangSpanish: "Resultado desconocido. Consulte el recibo; no vuelva a enviar.",
+	},
+	MsgHostedActionUnknownTitle: {
+		LangEnglish: "Execution result unknown", LangChinese: "执行结果待核查", LangTraditionalChinese: "執行結果待核查", LangJapanese: "実行結果の確認が必要", LangSpanish: "Resultado de ejecución desconocido",
+	},
+	MsgHostedActionUnknownBody: {
+		LangEnglish:            "The execution receipt could not be confirmed; writes may already have completed. Do not approve or resubmit again. Query this operation's stored result before taking any further action.",
+		LangChinese:            "未能确认执行回执；写入可能已经完成。请勿重复批准或重新提交。请先只读查询本操作的实际结果，再决定后续处理。",
+		LangTraditionalChinese: "未能確認執行回執；寫入可能已經完成。請勿重複批准或重新提交。請先唯讀查詢本操作的實際結果，再決定後續處理。",
+		LangJapanese:           "実行結果を確認できません。書き込みが完了している可能性があります。再承認・再送信せず、まずこの操作の保存済み結果を確認してください。",
+		LangSpanish:            "No se pudo confirmar el recibo; las escrituras pueden haberse completado. No vuelva a aprobar ni enviar. Consulte primero el resultado guardado de esta operación.",
+	},
+	MsgHostedActionDisplayFailedFmt: {
+		LangEnglish: "The original approval card could not be refreshed and may be stale. Host result: %s. Query this operation's stored receipt for details; do not submit the business action again.", LangChinese: "原审批卡显示更新未能确认，卡片可能仍是旧状态。宿主实际结果：%s。请只读查询这笔操作的回执了解详情，不要重新提交业务操作。", LangTraditionalChinese: "原審批卡顯示更新未能確認，卡片可能仍是舊狀態。宿主實際結果：%s。請唯讀查詢這筆操作的回執了解詳情，不要重新提交業務操作。", LangJapanese: "元の承認カードの更新を確認できず、古い表示の可能性があります。ホスト結果：%s。操作記録を照会し、業務操作を再送信しないでください。", LangSpanish: "No se pudo confirmar la actualización de la tarjeta original; puede estar desactualizada. Resultado del host: %s. Consulte el recibo de esta operación; no vuelva a enviar la acción.",
 	},
 	MsgCRMApprovalFailedTitle: {
 		LangEnglish: "❌ CRM approval was not created", LangChinese: "❌ CRM 审批未建立", LangTraditionalChinese: "❌ CRM 審批未建立", LangJapanese: "❌ CRM 承認を作成できませんでした", LangSpanish: "❌ No se creó la aprobación de CRM",

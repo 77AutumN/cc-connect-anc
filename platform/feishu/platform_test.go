@@ -659,7 +659,7 @@ func TestInteractivePlatform_HostedActionTimeoutRefreshesExactCard(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp == nil || resp.Toast == nil || resp.Toast.Content != core.NewI18n(core.LangEnglish).T(core.MsgHostedActionProcessingToast) {
+	if resp == nil || resp.Toast == nil || resp.Toast.Content != core.NewI18n(core.LangEnglish).T(core.MsgHostedActionReceivedToast) {
 		t.Fatalf("timeout response = %#v", resp)
 	}
 	for i := 0; i < 2; i++ {

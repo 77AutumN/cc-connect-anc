@@ -238,7 +238,7 @@ func TestCanaryNativeQuestionsAreFreshAndSeparateFromHostedCards(t *testing.T) {
 		t.Fatal("native question header was lost or question UI changed hosted approval counts")
 	}
 	for name := range customerBehaviorCases {
-		want := name == "customer-missing-input" || name == "customer-duplicate-ask" || name == "customer-duplicate-distinct" || name == "customer-assignee-unknown"
+		want := name == "customer-missing-input" || name == "customer-duplicate-ask" || name == "customer-duplicate-distinct" || name == "customer-assignee-unknown" || strings.HasPrefix(name, "customer-draft-")
 		if canaryAllowsNativeQuestion(name, 1) != want || canaryAllowsNativeQuestion(name, 2) {
 			t.Fatalf("native question ended an unexpected case/turn: %s", name)
 		}

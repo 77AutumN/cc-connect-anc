@@ -1255,6 +1255,61 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 }
 
 // CUJ-A4 · User sends voice → without STT configured, user gets a clear
+
+type cujImageEchoAgent struct{ cujAgent }
+type cujImageEchoSession struct{ *cujAgentSession }
+
+func (a *cujImageEchoAgent) StartSession(ctx context.Context, id string) (AgentSession, error) {
+	s, err := a.cujAgent.StartSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &cujImageEchoSession{s.(*cujAgentSession)}, nil
+}
+func (s *cujImageEchoSession) Send(prompt, id string, images []ImageAttachment, files []FileAttachment) error {
+	s.mu.Lock()
+	s.reply = "read " + prompt
+	for _, img := range images {
+		s.reply += " image:" + string(img.Data) + " marker:" + img.PromptMarker
+	}
+	s.delayMs = 150
+	s.mu.Unlock()
+	return s.cujAgentSession.Send(prompt, id, images, files)
+}
+
+func TestCUJ_A3_ImageBatchQueuedFailureAndContinuation(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	a := &cujImageEchoAgent{}
+	e := NewEngine("test", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	t.Cleanup(func() {
+		if err := e.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	env := &cujEnv{t: t, engine: e, plat: p, agent: &a.cujAgent}
+	send := func(id, content string, images []ImageAttachment) {
+		e.ReceiveMessage(p, &Message{Platform: "test", SessionKey: "test:image-owner", UserID: "owner", MessageID: id, Content: content, Images: images, ReplyCtx: "reply"})
+	}
+	send("first", "earlier task", nil)
+	env.waitFor("first session busy", time.Second, func() bool { return e.GetSessions().GetOrCreateActive("test:image-owner").Busy() })
+	send("batch", "first [image-one] then [image-two]", []ImageAttachment{{Data: []byte("ONE"), PromptMarker: "[image-one]"}, {Data: []byte("TWO"), PromptMarker: "[image-two]"}})
+	send("bad", "NEVER SEND PARTIAL TEXT", []ImageAttachment{{Data: []byte("VALID")}, {ReceiveError: MsgImageReceiveFailed}})
+	env.waitFor("failed whole batch is visible", time.Second, func() bool { return env.sentContains(e.i18n.T(MsgImageReceiveFailed)) })
+	env.waitFor("queued complete batch reaches agent", 3*time.Second, func() bool { return env.sentContains("image:ONE marker:[image-one] image:TWO marker:[image-two]") })
+	send("continue", "continue this conversation", nil)
+	env.waitFor("continuation reply", 3*time.Second, func() bool { return env.sentContains("read continue this conversation") })
+	a.mu.Lock()
+	sessions := append([]*cujAgentSession(nil), a.sessions...)
+	a.mu.Unlock()
+	if len(sessions) != 1 {
+		t.Fatal("image flow restarted session")
+	}
+	prompts := strings.Join(sessions[0].getSentPrompts(), "\n")
+	if strings.Contains(prompts, "NEVER SEND PARTIAL TEXT") || !strings.Contains(prompts, "first [image-one] then [image-two]") {
+		t.Fatal("queue lost order or forwarded partial data")
+	}
+}
+
 // "voice not enabled" message (the actual STT branch is covered by
 // platform-specific tests).
 func TestCUJ_A4_VoiceMessageWithoutSTTSurfacesClearMessage(t *testing.T) {

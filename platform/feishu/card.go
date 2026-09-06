@@ -98,7 +98,7 @@ func (p *interactivePlatform) RefreshCardMessage(ctx context.Context, msgID, ses
 			Content(cardJSON).
 			Build()).
 		Build()
-	return p.withTransientRetry(ctx, "refresh card", func() error {
+	patch := func() error {
 		return p.withFreshTenantAccessTokenRetry(ctx, "refresh card", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
 			resp, err := client.Im.Message.Patch(ctx, req, options...)
 			if err != nil {
@@ -109,7 +109,13 @@ func (p *interactivePlatform) RefreshCardMessage(ctx context.Context, msgID, ses
 			}
 			return nil
 		})
-	})
+	}
+	if card != nil && card.SharedUpdate {
+		// Hosted feedback owns ordering and retry budgets. A lost PATCH response
+		// must not schedule another intermediate update behind a final receipt.
+		return patch()
+	}
+	return p.withTransientRetry(ctx, "refresh card", patch)
 }
 
 // renderCardMap converts a core.Card into the Feishu Interactive Card map
@@ -123,6 +129,9 @@ func renderCardMap(card *core.Card, sessionKey string) map[string]any {
 	}
 	if card == nil {
 		return result
+	}
+	if card.SharedUpdate {
+		result["config"].(map[string]any)["update_multi"] = true
 	}
 
 	if card.Header != nil && card.Header.Title != "" {

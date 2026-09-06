@@ -340,7 +340,7 @@ func (a *Adapter) Claim(ctx context.Context, approvalID string, decision core.Ac
 		// running must be toast-only, otherwise its delayed response can replace
 		// an already verified receipt with stale UI.
 		if execute {
-			response.Card = executingCard(lang)
+			response.Card = executingCard(result, lang)
 		}
 	} else {
 		response.Card = receiptCard(result, lang)
@@ -445,7 +445,9 @@ func withoutEnv(env []string, keys ...string) []string {
 }
 
 func hostResult(result map[string]any) core.ActionHostResult {
+	replayed, _ := result["replayed"].(bool)
 	return core.ActionHostResult{
+		Replayed:   replayed,
 		Status:     text(result["status"]),
 		Code:       text(result["code"]),
 		ApprovalID: text(result["approval_id"]),
@@ -602,12 +604,16 @@ func receiptCard(result map[string]any, lang core.Language) *core.Card {
 	return b.Build()
 }
 
-func executingCard(lang core.Language) *core.Card {
+func executingCard(result map[string]any, lang core.Language) *core.Card {
 	i18n := core.NewI18n(lang)
-	return core.NewCard().
+	b := core.NewCard().
 		Title(i18n.T(core.MsgHostedActionExecutingTitle), "blue").
-		Markdown(i18n.T(core.MsgHostedActionExecutingBody)).
-		Build()
+		Markdown(i18n.T(core.MsgHostedActionExecutingBody))
+	// Only the ledger's frozen preview is authoritative, never callback values.
+	if preview, ok := result["preview"].(map[string]any); ok {
+		b.Divider().Markdown(renderPreview(preview, i18n))
+	}
+	return b.Divider().Markdown(i18n.T(core.MsgHostedActionExecutingBody)).Build()
 }
 
 func receiptTitle(status string, i18n *core.I18n) (string, string) {

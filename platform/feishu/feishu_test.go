@@ -1,8 +1,12 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +19,17 @@ import (
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+func feishuImageFixture(t *testing.T, variant byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	img.SetRGBA(0, 0, color.RGBA{R: variant, A: 255})
+	if err := png.Encode(&buffer, img); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
 
 func TestOnMessageRecalledDispatchesCoreRecallMessage(t *testing.T) {
 	got := make(chan *core.Message, 1)
@@ -95,7 +110,7 @@ func TestDispatchMessageIncludesQuotedImage(t *testing.T) {
 	const parentMessageID = "om_parent_image"
 	const imageKey = "img_parent"
 
-	imageData := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	imageData := feishuImageFixture(t, 1)
 
 	tests := []struct {
 		name    string
@@ -195,7 +210,7 @@ func TestDispatchMessageIncludesQuotedImage(t *testing.T) {
 				if msg.Content != "这是什么图" {
 					t.Fatalf("Content = %q, want question text", msg.Content)
 				}
-				if !strings.Contains(msg.ExtraContent, "[image]") {
+				if !strings.Contains(msg.ExtraContent, "[attached-image:") {
 					t.Fatalf("ExtraContent = %q, want quoted image marker", msg.ExtraContent)
 				}
 				if len(msg.Images) != 1 {
@@ -769,8 +784,8 @@ func TestParsePostContent_LangKeyedFormat(t *testing.T) {
 func TestParsePostContent_InvalidJSON(t *testing.T) {
 	p := &Platform{}
 	texts, images := p.parsePostContent("", "not json")
-	if texts != nil || images != nil {
-		t.Errorf("expected nil results for invalid json")
+	if texts != nil || core.CheckImageBatch(images) == nil {
+		t.Errorf("invalid post must explicitly fail, not deliver an empty or partial request")
 	}
 }
 
@@ -1210,7 +1225,7 @@ func TestOnMessageThreadIsolationAdmitsAttachmentWithoutMention(t *testing.T) {
 	const rootMsgID = "om_root"
 	const imageKey = "img_in_thread"
 
-	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	imageBytes := feishuImageFixture(t, 2)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1682,7 +1697,7 @@ func TestDispatchMessageCoalescesImageBatch(t *testing.T) {
 			// Per-image payload bytes so we can verify order preservation.
 			imageBytes := map[string][]byte{}
 			for i, k := range tc.imageKeys {
-				imageBytes[k] = []byte{0x89, 'P', 'N', 'G', byte(i + 1), '\r', '\n', 0x1a, '\n'}
+				imageBytes[k] = feishuImageFixture(t, byte(i+1))
 			}
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1794,7 +1809,7 @@ func TestDispatchMessageSingleImageRegression(t *testing.T) {
 	const appSecret = "secret-single-img"
 	const imageKey = "img_single"
 
-	imageBytes := []byte{0x89, 'P', 'N', 'G', 'S', '\r', '\n', 0x1a, '\n'}
+	imageBytes := feishuImageFixture(t, 'S')
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1873,7 +1888,7 @@ func TestDispatchMessageQuotedImageNotBatched(t *testing.T) {
 	const parentMessageID = "om_parent_quoted"
 	const imageKey = "img_quoted"
 
-	imageData := []byte{0x89, 'P', 'N', 'G', 'Q', '\r', '\n', 0x1a, '\n'}
+	imageData := feishuImageFixture(t, 'Q')
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1962,7 +1977,7 @@ func TestFlushImageBatchesStopsPendingTimers(t *testing.T) {
 	const appSecret = "secret-flush"
 	const imageKey = "img_flush"
 
-	imageBytes := []byte{0x89, 'P', 'N', 'G', 'F', '\r', '\n', 0x1a, '\n'}
+	imageBytes := feishuImageFixture(t, 'F')
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2070,7 +2085,7 @@ func TestFlushImageBatchForSession(t *testing.T) {
 	const appSecret = "secret-per-session"
 	const imageKey = "img_per_session"
 
-	imageBytes := []byte{0x89, 'P', 'N', 'G', 'F', '\r', '\n', 0x1a, '\n'}
+	imageBytes := feishuImageFixture(t, 'F')
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

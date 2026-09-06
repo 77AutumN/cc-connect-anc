@@ -2817,6 +2817,10 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		e.handleMessageRecall(p, msg)
 		return
 	}
+	if err := CheckImageBatch(msg.Images); err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(err.(*ImageInputError).Key))
+		return
+	}
 
 	slog.Info("message received",
 		"platform", msg.Platform, "msg_id", msg.MessageID,
@@ -4931,7 +4935,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				state.mu.Lock()
 				p := state.platform
 				state.mu.Unlock()
-				e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+				if message, imageFailure := ImageErrorMessage(err, e.i18n); imageFailure {
+					e.send(p, replyCtx, message)
+				} else {
+					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))
+				}
 				return
 			}
 			continue

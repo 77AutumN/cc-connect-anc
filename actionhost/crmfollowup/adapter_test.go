@@ -198,6 +198,25 @@ func TestClaimDoesNotReturnStaleExecutingCardForDuplicateCallback(t *testing.T) 
 	}
 }
 
+func TestClaimExecutingCardPreservesFrozenPreviewAndRemovesButtons(t *testing.T) {
+	a := &Adapter{command: "fixture", run: func(context.Context, string, string, []byte, []string) ([]byte, error) {
+		return []byte(`{"status":"executing","execute":true,"preview":{"actor":"Fixture Owner","customer":{"customer_number":"C-001","name":"Frozen Company"},"effects":{"followup":{"after":{"occurred_at":"2026-09-06T14:00:00+08:00","content":"Frozen followup"}}}}}`), nil
+	}}
+	result, execute, err := a.Claim(context.Background(), "apr_fixture", core.ActionApprove, core.ActionPrincipal{}, core.LangChinese)
+	if err != nil || !execute || result.Card == nil {
+		t.Fatalf("claim failed: execute=%v err=%v", execute, err)
+	}
+	visible := result.Card.RenderText()
+	for _, want := range []string{"Fixture Owner", "Frozen Company", "Frozen followup", "C-001"} {
+		if !strings.Contains(visible, want) {
+			t.Errorf("executing preview lost %q", want)
+		}
+	}
+	if result.Card.HasButtons() {
+		t.Fatal("executing card is still actionable")
+	}
+}
+
 func TestBindCardRequiresHelperToBindTheExactEmittedMessage(t *testing.T) {
 	var gotPayload []byte
 	a := &Adapter{command: "crm-followup", hostSecret: "secret", run: func(_ context.Context, _, subcommand string, payload []byte, _ []string) ([]byte, error) {
