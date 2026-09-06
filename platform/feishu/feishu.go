@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/chenhg5/cc-connect/core"
+	"github.com/google/uuid"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -185,6 +186,7 @@ type Platform struct {
 	// ever delivered to the agent (issue #1395).
 	imageBatchMu     sync.Mutex
 	imageBatch       map[string]*imageBatchEntry
+	imageBatchTail   map[string]*imageBatchEntry
 	imageBatchWindow time.Duration // quiet period before flushing a batch; 0 means use defaultImageBatchWindow
 }
 
@@ -246,10 +248,18 @@ type imageBatchEntry struct {
 	rctx         replyContext
 	quoted       quotedMessage
 	images       []core.ImageAttachment
+	imageRefs    []imageBatchRef
 	messageIDs   []string
 	createTimeMs int64
 	parentID     string
 	timer        *time.Timer
+	done         chan struct{}
+	previousDone <-chan struct{}
+}
+
+type imageBatchRef struct {
+	messageID, key string
+	created        int64
 }
 
 // compile-time interface assertions
@@ -409,7 +419,7 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		threadIsolation:            threadIsolation,
 		resolveMentions:            resolveMentionsOpt,
 		noReplyToTrigger:           noReplyToTrigger,
-		client:                     lark.NewClient(appID, appSecret, clientOpts...),
+		client:                     lark.NewClient(appID, appSecret, append(clientOpts, lark.WithHttpClient(imageBoundedHTTPClient{client: http.DefaultClient}))...),
 		replayClient:               newFeishuReplayClient(appID, appSecret, domain),
 		dedup:                      &core.MessageDedup{},
 		port:                       port,
@@ -931,16 +941,16 @@ func (p *Platform) handleHostedCardAction(value map[string]any, userID, chatID, 
 	select {
 	case result := <-done:
 		if result.Complete != nil {
-			p.startHostedActionCompletion(result, messageID, trustedSessionKey)
+			go p.startHostedActionCompletion(result, action)
 			return &callback.CardActionTriggerResponse{
 				Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionProcessingToast)},
 			}, true
 		}
 		return renderHostedActionResponse(result, trustedSessionKey), true
 	case <-timer.C:
-		go p.refreshHostedActionWhenReady(done, messageID, trustedSessionKey)
+		go p.refreshHostedActionWhenReady(done, action)
 		return &callback.CardActionTriggerResponse{
-			Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionProcessingToast)},
+			Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionReceivedToast)},
 		}, true
 	}
 }
@@ -979,17 +989,17 @@ func renderHostedActionResponse(result core.TrustedCardActionResponse, sessionKe
 	return response
 }
 
-func (p *Platform) refreshHostedActionWhenReady(done <-chan core.TrustedCardActionResponse, messageID, sessionKey string) {
+func (p *Platform) refreshHostedActionWhenReady(done <-chan core.TrustedCardActionResponse, action core.TrustedCardAction) {
 	result := <-done
 	if result.Complete != nil {
-		p.startHostedActionCompletion(result, messageID, sessionKey)
+		p.startHostedActionCompletion(result, action)
 		return
 	}
 	if result.Card == nil {
 		return
 	}
-	if err := p.refreshHostedActionCard(context.Background(), messageID, sessionKey, result.Card); err != nil {
-		slog.Warn("hosted action card refresh failed", "platform", p.platformName, "error", err)
+	if !p.refreshHostedFinal(action, result.Card) {
+		p.notifyHostedDisplayFailure(action, result.Card)
 	}
 }
 
@@ -997,23 +1007,17 @@ func (p *Platform) refreshHostedActionWhenReady(done <-chan core.TrustedCardActi
 // callback and atomically claimed the approval. The exact card is changed to
 // executing before the durable plan is applied; a presentation failure never
 // rolls back or duplicates the already accepted business decision.
-func (p *Platform) startHostedActionCompletion(result core.TrustedCardActionResponse, messageID, sessionKey string) {
-	if result.Card != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), hostedActionTimeout)
-		if err := p.refreshHostedActionCard(ctx, messageID, sessionKey, result.Card); err != nil {
-			slog.Warn("hosted action executing card refresh failed", "platform", p.platformName, "error", err)
-		}
-		cancel()
+func (p *Platform) startHostedActionCompletion(result core.TrustedCardActionResponse, action core.TrustedCardAction) {
+	intermediateConfirmed := result.Card == nil || p.refreshHostedFeedback(action, result.Card, "executing")
+	completed := result.Complete()
+	if completed.Card == nil {
+		return
 	}
-	go func() {
-		completed := result.Complete()
-		if completed.Card == nil {
-			return
-		}
-		if err := p.refreshHostedActionCard(context.Background(), messageID, sessionKey, completed.Card); err != nil {
-			slog.Warn("hosted action final card refresh failed", "platform", p.platformName, "error", err)
-		}
-	}()
+	// A timed-out intermediate PATCH may still arrive at the server. Do not
+	// race it with a final PATCH; preserve the receipt in a separate notice.
+	if !intermediateConfirmed || !p.refreshHostedFinal(action, completed.Card) {
+		p.notifyHostedDisplayFailure(action, completed.Card)
+	}
 }
 
 func trustedActionLanguage(value any) core.Language {
@@ -1304,7 +1308,17 @@ func (p *Platform) bufferImage(sessionKey string, entry *imageBatchEntry) {
 			existing.timer.Stop()
 		}
 		existing.images = append(existing.images, entry.images...)
+		existing.imageRefs = append(existing.imageRefs, entry.imageRefs...)
 		existing.messageIDs = append(existing.messageIDs, entry.messageIDs...)
+		if batchErr := core.CheckImageBatch(existing.images); len(existing.imageRefs)+len(existing.images) > core.MaxImageCount || batchErr != nil {
+			key := core.MsgImageLimit
+			if batchErr != nil {
+				key = batchErr.(*core.ImageInputError).Key
+			}
+			existing.imageRefs = nil
+			existing.images = []core.ImageAttachment{{ReceiveError: key}}
+			existing.messageIDs = []string{entry.messageIDs[len(entry.messageIDs)-1]}
+		}
 		if entry.createTimeMs > existing.createTimeMs {
 			existing.createTimeMs = entry.createTimeMs
 		}
@@ -1314,6 +1328,14 @@ func (p *Platform) bufferImage(sessionKey string, entry *imageBatchEntry) {
 		})
 	} else {
 		// Start a fresh batch with its own timer.
+		if p.imageBatchTail == nil {
+			p.imageBatchTail = make(map[string]*imageBatchEntry)
+		}
+		entry.done = make(chan struct{})
+		if previous := p.imageBatchTail[sessionKey]; previous != nil {
+			entry.previousDone = previous.done
+		}
+		p.imageBatchTail[sessionKey] = entry
 		ref := entry
 		entry.timer = time.AfterFunc(p.batchWindow(), func() {
 			p.flushImageBatchByRef(sessionKey, ref)
@@ -1363,7 +1385,13 @@ func (p *Platform) flushImageBatchForSession(sessionKey string) {
 	p.imageBatchMu.Lock()
 	entry, ok := p.imageBatch[sessionKey]
 	if !ok {
+		tail := p.imageBatchTail[sessionKey]
 		p.imageBatchMu.Unlock()
+		// A timer may already have removed the batch while downloading it.
+		// Wait before advancing the Engine's message watermark.
+		if tail != nil {
+			<-tail.done
+		}
 		return
 	}
 	if entry.timer != nil {
@@ -1397,6 +1425,30 @@ func (p *Platform) flushImageBatches() {
 // as UserMessageTimeMs so the merged message preserves the user's intended
 // ordering, and the newest message_id is used as the canonical id.
 func (p *Platform) dispatchImageBatchEntry(entry *imageBatchEntry) {
+	if entry.previousDone != nil {
+		<-entry.previousDone
+	}
+	if entry.done != nil {
+		defer func() {
+			p.imageBatchMu.Lock()
+			if p.imageBatchTail[entry.sessionKey] == entry {
+				delete(p.imageBatchTail, entry.sessionKey)
+			}
+			close(entry.done)
+			p.imageBatchMu.Unlock()
+		}()
+	}
+	if len(entry.imageRefs) > 0 && core.CheckImageBatch(entry.images) == nil {
+		budget := &imageReceiveBudget{}
+		sort.SliceStable(entry.imageRefs, func(i, j int) bool { return entry.imageRefs[i].created < entry.imageRefs[j].created })
+		for _, ref := range entry.imageRefs {
+			entry.images = append(entry.images, p.receiveImage(ref.messageID, ref.key, budget))
+			if err := core.CheckImageBatch(entry.images); err != nil {
+				entry.images = []core.ImageAttachment{{ReceiveError: err.(*core.ImageInputError).Key}}
+				break
+			}
+		}
+	}
 	if len(entry.images) == 0 {
 		return
 	}
@@ -1595,7 +1647,17 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	// blocked by IO-heavy operations (image/audio download, handler HTTP calls).
 	// The dedup and old-message checks above remain synchronous to guarantee
 	// correctness before spawning the goroutine.
-	go p.dispatchMessage(ctx, msgType, content, mentions, messageID, sessionKey, userID, chatID, rctx, parentID, createTimeMs)
+	if msgType == "image" && parentID == "" {
+		var body struct {
+			ImageKey string `json:"image_key"`
+		}
+		_ = json.Unmarshal([]byte(content), &body)
+		p.bufferImage(sessionKey, &imageBatchEntry{sessionKey: sessionKey, userID: userID, rctx: rctx, messageIDs: []string{messageID}, createTimeMs: createTimeMs, imageRefs: []imageBatchRef{{messageID, body.ImageKey, createTimeMs}}})
+		return nil
+	}
+	p.queueMessageDispatch(sessionKey, func() {
+		p.dispatchMessageContent(ctx, msgType, content, mentions, messageID, sessionKey, userID, chatID, rctx, parentID, createTimeMs)
+	})
 
 	return nil
 }
@@ -1613,6 +1675,13 @@ func (p *Platform) replyUnauthorizedAccess(ctx context.Context, rctx replyContex
 // handler invocation. It runs in its own goroutine so that onMessage returns
 // quickly and does not block the SDK event loop.
 func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string, mentions []*larkim.MentionEvent, messageID, sessionKey, userID, chatID string, rctx replyContext, parentID string, createTimeMs int64) {
+	if msgType != "image" || parentID != "" {
+		p.flushImageBatchForSession(sessionKey)
+	}
+	p.dispatchMessageContent(ctx, msgType, content, mentions, messageID, sessionKey, userID, chatID, rctx, parentID, createTimeMs)
+}
+
+func (p *Platform) dispatchMessageContent(ctx context.Context, msgType, content string, mentions []*larkim.MentionEvent, messageID, sessionKey, userID, chatID string, rctx replyContext, parentID string, createTimeMs int64) {
 	if p.isMessageRecalled(messageID) {
 		slog.Debug(p.tag()+": recalled message ignored in async dispatch", "message_id", messageID)
 		return
@@ -1633,9 +1702,14 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 	// (issue #764). The first accepted message in a pre-existing thread is the
 	// exception: earlier unmentioned messages were never dispatched to the
 	// agent, so bootstrap its context from the parent/root reply chain once.
+	budget := &imageReceiveBudget{}
 	var quoted quotedMessage
 	if parentID != "" && (!p.threadIsolation || !isThreadSessionKey(sessionKey) || rctx.bootstrapThread) {
-		quoted = p.fetchQuotedMessage(ctx, parentID)
+		quoted = p.fetchQuotedMessage(ctx, parentID, budget)
+		if core.CheckImageBatch(quoted.images) != nil {
+			p.dispatchCoreMessage(&core.Message{SessionKey: sessionKey, Platform: p.platformName, MessageID: messageID, UserID: userID, Images: quoted.images, ReplyCtx: rctx, UserMessageTimeMs: createTimeMs})
+			return
+		}
 	}
 
 	switch msgType {
@@ -1664,10 +1738,6 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			)
 			return
 		}
-		// Flush any image batch buffered earlier in this session so the image
-		// reaches the engine before the text message advances the user-message
-		// watermark (#1686 P1-B, related #1395).
-		p.flushImageBatchForSession(sessionKey)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
@@ -1680,18 +1750,8 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		var imgBody struct {
 			ImageKey string `json:"image_key"`
 		}
-		if err := json.Unmarshal([]byte(content), &imgBody); err != nil {
-			slog.Error(p.tag()+": failed to parse image content", "error", err)
-			return
-		}
-		imgData, mimeType, err := p.downloadImage(messageID, imgBody.ImageKey)
-		if err != nil {
-			slog.Error(p.tag()+": download image failed", "error", err)
-			if sendErr := p.Send(ctx, rctx, "⚠️ Image download failed (network error). Please resend."); sendErr != nil {
-				slog.Error(p.tag()+": failed to notify user about image download failure", "error", sendErr)
-			}
-			return
-		}
+		_ = json.Unmarshal([]byte(content), &imgBody)
+		attachment := p.receiveImage(messageID, imgBody.ImageKey, budget)
 		// Batch consecutive image-only messages from the same session into a
 		// single multi-image dispatch. Feishu mobile sends N batch-selected
 		// images as N separate events with very close create_time values;
@@ -1706,7 +1766,7 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 				userName:     userName,
 				chatName:     chatName,
 				rctx:         rctx,
-				images:       []core.ImageAttachment{{MimeType: mimeType, Data: imgData}},
+				images:       []core.ImageAttachment{attachment},
 				messageIDs:   []string{messageID},
 				createTimeMs: createTimeMs,
 				parentID:     parentID,
@@ -1719,7 +1779,7 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content:           "",
 			ExtraContent:      quoted.text,
-			Images:            append(quoted.images, core.ImageAttachment{MimeType: mimeType, Data: imgData}),
+			Images:            append(quoted.images, attachment),
 			ReplyCtx:          rctx,
 			UserMessageTimeMs: createTimeMs,
 		})
@@ -1742,10 +1802,6 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			}
 			return
 		}
-		// Flush any image batch buffered earlier in this session so the image
-		// reaches the engine before this audio message advances the user-message
-		// watermark (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
@@ -1761,13 +1817,11 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		})
 
 	case "post":
-		textParts, images := p.parsePostContent(messageID, content)
+		textParts, images := p.parsePostContent(messageID, content, budget)
 		text := stripMentions(strings.Join(textParts, "\n"), mentions, p.getBotOpenID())
 		if text == "" && len(images) == 0 && quoted.text == "" && len(quoted.images) == 0 {
 			return
 		}
-		// Flush any image batch buffered earlier in this session (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
@@ -1797,8 +1851,6 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		}
 		slog.Debug(p.tag()+": file downloaded", "file_name", fileBody.FileName, "size", len(fileData))
 		mimeType := detectMimeType(fileData)
-		// Flush any image batch buffered earlier in this session (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
@@ -1813,19 +1865,18 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		})
 
 	case "merge_forward":
-		text, images, files := p.parseMergeForward(messageID)
+		text, images, files := p.parseMergeForward(messageID, budget)
 		if text == "" && len(images) == 0 && len(files) == 0 {
 			slog.Warn(p.tag()+": merge_forward produced no content", "message_id", messageID)
 			return
 		}
-		// Flush any image batch buffered earlier in this session (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
 		coreMsg := &core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
 			Content:           text,
-			Images:            images,
+			ExtraContent:      quoted.text,
+			Images:            append(quoted.images, images...),
 			Files:             files,
 			ReplyCtx:          rctx,
 			UserMessageTimeMs: createTimeMs,
@@ -1841,27 +1892,13 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 			return
 		}
 		slog.Info(p.tag()+": sticker received", "user", userID, "file_key", stickerBody.FileKey)
-		imgData, mimeType, err := p.downloadImage(messageID, stickerBody.FileKey)
-		if err != nil {
-			slog.Warn(p.tag()+": download sticker failed, falling back to placeholder", "error", err)
-			// Flush any image batch buffered earlier in this session (#1686 P1-B).
-			p.flushImageBatchForSession(sessionKey)
-			p.dispatchCoreMessage(&core.Message{
-				SessionKey: sessionKey, Platform: p.platformName,
-				MessageID: messageID,
-				UserID:    userID, UserName: userName, ChatName: chatName,
-				Content: "[sticker]", ExtraContent: quoted.text, ReplyCtx: rctx,
-				UserMessageTimeMs: createTimeMs,
-			})
-			return
-		}
-		// Flush any image batch buffered earlier in this session (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
+		attachment := p.receiveImage(messageID, stickerBody.FileKey, budget)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Images:            []core.ImageAttachment{{MimeType: mimeType, Data: imgData}},
+			ExtraContent:      quoted.text,
+			Images:            append(quoted.images, attachment),
 			ReplyCtx:          rctx,
 			UserMessageTimeMs: createTimeMs,
 		})
@@ -1888,19 +1925,13 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 		text += "]"
 		var images []core.ImageAttachment
 		if mediaBody.ImageKey != "" {
-			if thumbData, thumbMime, err := p.downloadImage(messageID, mediaBody.ImageKey); err == nil {
-				images = append(images, core.ImageAttachment{MimeType: thumbMime, Data: thumbData})
-			} else {
-				slog.Warn(p.tag()+": download media thumbnail failed", "error", err)
-			}
+			images = append(images, p.receiveImage(messageID, mediaBody.ImageKey, budget))
 		}
-		// Flush any image batch buffered earlier in this session (#1686 P1-B).
-		p.flushImageBatchForSession(sessionKey)
 		p.dispatchCoreMessage(&core.Message{
 			SessionKey: sessionKey, Platform: p.platformName,
 			MessageID: messageID,
 			UserID:    userID, UserName: userName, ChatName: chatName,
-			Content: text, ExtraContent: quoted.text, Images: images, ReplyCtx: rctx,
+			Content: text, ExtraContent: quoted.text, Images: append(quoted.images, images...), ReplyCtx: rctx,
 			UserMessageTimeMs: createTimeMs,
 		})
 
@@ -2176,10 +2207,14 @@ const maxReplyChainDepth = 5
 // levels and returns the full conversation chain.
 // Files in the chain are downloaded on-demand; the per-file sender_id is
 // kept so the dispatcher can enforce same-user privacy (issue #1560).
-// Returns empty content on any failure (graceful degradation — the user's own
-// message is still delivered without the quote).
-func (p *Platform) fetchQuotedMessage(ctx context.Context, parentID string) quotedMessage {
-	chain := p.fetchReplyChain(ctx, parentID, maxReplyChainDepth)
+// If the quote cannot be read completely, reject this input rather than send
+// the user's remaining text without potentially essential images.
+func (p *Platform) fetchQuotedMessage(ctx context.Context, parentID string, budgets ...*imageReceiveBudget) quotedMessage {
+	budget := imageBudget(budgets)
+	chain := p.fetchReplyChain(ctx, parentID, maxReplyChainDepth, budget)
+	if budget.failure != "" {
+		return quotedMessage{images: []core.ImageAttachment{{ReceiveError: budget.failure}}}
+	}
 	if len(chain) == 0 {
 		return quotedMessage{}
 	}
@@ -2207,11 +2242,13 @@ func (p *Platform) resolveBotSenderName(appID string) string {
 
 // fetchSingleMessage retrieves one message by ID from the Feishu API and
 // returns its extracted content as a chainMessage. Returns nil on any failure.
-func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string) *chainMessage {
+func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string, budgets ...*imageReceiveBudget) *chainMessage {
+	budget := imageBudget(budgets)
 	apiPath := fmt.Sprintf("/open-apis/im/v1/messages/%s?card_msg_content_type=raw_card_content", messageID)
 	apiResp, err := p.client.Get(ctx, apiPath, nil, larkcore.AccessTokenTypeTenant)
 	if err != nil {
 		slog.Debug(p.tag()+": fetch single message failed", "message_id", messageID, "error", err)
+		budget.failure = core.MsgImageReceiveFailed
 		return nil
 	}
 	var resp struct {
@@ -2233,12 +2270,14 @@ func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string) *ch
 	}
 	if err := json.Unmarshal(apiResp.RawBody, &resp); err != nil || resp.Code != 0 || len(resp.Data.Items) == 0 {
 		slog.Debug(p.tag()+": fetch single message: parse failed or no data", "message_id", messageID)
+		budget.failure = core.MsgImageReceiveFailed
 		return nil
 	}
 
 	item := resp.Data.Items[0]
 	content := item.Body.Content
 	if content == "" {
+		budget.failure = core.MsgImageReceiveFailed
 		return nil
 	}
 
@@ -2255,7 +2294,7 @@ func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string) *ch
 			text = replaceMentions(textBody.Text, item.Mentions)
 		}
 	case "post":
-		textParts, postImages := p.parsePostContent(messageID, content)
+		textParts, postImages := p.parsePostContent(messageID, content, budget)
 		text = replaceMentions(strings.Join(textParts, "\n"), item.Mentions)
 		images = postImages
 		if text == "" && len(images) > 0 {
@@ -2266,14 +2305,10 @@ func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string) *ch
 		var imgBody struct {
 			ImageKey string `json:"image_key"`
 		}
-		if err := json.Unmarshal([]byte(content), &imgBody); err == nil && imgBody.ImageKey != "" {
-			imgData, mimeType, err := p.downloadImage(messageID, imgBody.ImageKey)
-			if err != nil {
-				slog.Error(p.tag()+": download quoted image failed", "error", err, "message_id", messageID, "key", imgBody.ImageKey)
-			} else {
-				images = append(images, core.ImageAttachment{MimeType: mimeType, Data: imgData})
-			}
-		}
+		_ = json.Unmarshal([]byte(content), &imgBody)
+		attachment := p.receiveImage(messageID, imgBody.ImageKey, budget)
+		images = append(images, attachment)
+		text = attachment.PromptMarker
 	case "file":
 		// Quoted file attachment (issue #1560). We do NOT download the file
 		// body here — that would defeat the "fetch only when bot is
@@ -2377,7 +2412,8 @@ func collectReplyChainFiles(chain []chainMessage) []quotedFileMeta {
 // fetchReplyChain iteratively traverses parent_id links to build a reply chain.
 // Returns messages in chronological order (oldest first). Stops on any failure,
 // circular reference, or when maxDepth is reached.
-func (p *Platform) fetchReplyChain(ctx context.Context, parentID string, maxDepth int) []chainMessage {
+func (p *Platform) fetchReplyChain(ctx context.Context, parentID string, maxDepth int, budgets ...*imageReceiveBudget) []chainMessage {
+	budget := imageBudget(budgets)
 	var chain []chainMessage
 	visited := make(map[string]struct{})
 	currentID := parentID
@@ -2389,7 +2425,7 @@ func (p *Platform) fetchReplyChain(ctx context.Context, parentID string, maxDept
 		}
 		visited[currentID] = struct{}{}
 
-		msg := p.fetchSingleMessage(ctx, currentID)
+		msg := p.fetchSingleMessage(ctx, currentID, budget)
 		if msg == nil {
 			break
 		}
@@ -2775,7 +2811,8 @@ func extractCardListItems(itemsRaw json.RawMessage, parts *[]string) {
 // parseMergeForward fetches sub-messages of a merge_forward message via the
 // GET /open-apis/im/v1/messages/{message_id} API, then formats them into
 // readable text. Returns combined text, images, and files from the sub-messages.
-func (p *Platform) parseMergeForward(rootMessageID string) (string, []core.ImageAttachment, []core.FileAttachment) {
+func (p *Platform) parseMergeForward(rootMessageID string, budgets ...*imageReceiveBudget) (string, []core.ImageAttachment, []core.FileAttachment) {
+	budget := imageBudget(budgets)
 	resp, err := p.client.Im.Message.Get(context.Background(),
 		larkim.NewGetMessageReqBuilder().
 			MessageId(rootMessageID).
@@ -2827,7 +2864,7 @@ func (p *Platform) parseMergeForward(rootMessageID string) (string, []core.Image
 	var allFiles []core.FileAttachment
 	var sb strings.Builder
 	sb.WriteString("<forwarded_messages>\n")
-	p.formatMergeForwardTree(rootMessageID, childrenMap, nameMap, &sb, &allImages, &allFiles, 0)
+	p.formatMergeForwardTree(rootMessageID, childrenMap, nameMap, &sb, &allImages, &allFiles, 0, budget)
 	sb.WriteString("</forwarded_messages>")
 
 	return sb.String(), allImages, allFiles
@@ -2844,7 +2881,8 @@ func replaceMentions(text string, mentions []*larkim.Mention) string {
 }
 
 // formatMergeForwardTree recursively formats the sub-message tree.
-func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[string][]*larkim.Message, nameMap map[string]string, sb *strings.Builder, images *[]core.ImageAttachment, files *[]core.FileAttachment, depth int) {
+func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[string][]*larkim.Message, nameMap map[string]string, sb *strings.Builder, images *[]core.ImageAttachment, files *[]core.FileAttachment, depth int, budgets ...*imageReceiveBudget) {
+	budget := imageBudget(budgets)
 	if depth > 10 {
 		sb.WriteString(strings.Repeat("    ", depth) + "[nested forwarding truncated]\n")
 		return
@@ -2853,6 +2891,9 @@ func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[strin
 	indent := strings.Repeat("    ", depth)
 
 	for _, item := range children {
+		if core.CheckImageBatch(*images) != nil {
+			return
+		}
 		msgID := ""
 		if item.MessageId != nil {
 			msgID = *item.MessageId
@@ -2897,7 +2938,7 @@ func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[strin
 			}
 
 		case "post":
-			textParts, postImages := p.parsePostContent(msgID, content)
+			textParts, postImages := p.parsePostContent(msgID, content, budget)
 			*images = append(*images, postImages...)
 			text := replaceMentions(strings.Join(textParts, "\n"), item.Mentions)
 			if text != "" {
@@ -2911,16 +2952,14 @@ func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[strin
 			var imgBody struct {
 				ImageKey string `json:"image_key"`
 			}
-			if err := json.Unmarshal([]byte(content), &imgBody); err == nil && imgBody.ImageKey != "" {
-				imgData, mimeType, err := p.downloadImage(msgID, imgBody.ImageKey)
-				if err != nil {
-					slog.Error(p.tag()+": download merge_forward image failed", "error", err)
-					sb.WriteString(fmt.Sprintf("%s[%s] %s: [image - download failed]\n", indent, ts, senderName))
-				} else {
-					*images = append(*images, core.ImageAttachment{MimeType: mimeType, Data: imgData})
-					sb.WriteString(fmt.Sprintf("%s[%s] %s: [image]\n", indent, ts, senderName))
-				}
+			_ = json.Unmarshal([]byte(content), &imgBody)
+			if len(*images) >= core.MaxImageCount {
+				*images = []core.ImageAttachment{{ReceiveError: core.MsgImageLimit}}
+				return
 			}
+			attachment := p.receiveImage(msgID, imgBody.ImageKey, budget)
+			*images = append(*images, attachment)
+			sb.WriteString(fmt.Sprintf("%s[%s] %s: %s\n", indent, ts, senderName, attachment.PromptMarker))
 
 		case "file":
 			var fileBody struct {
@@ -2941,7 +2980,7 @@ func (p *Platform) formatMergeForwardTree(parentID string, childrenMap map[strin
 
 		case "merge_forward":
 			sb.WriteString(fmt.Sprintf("%s[%s] %s: [forwarded messages]\n", indent, ts, senderName))
-			p.formatMergeForwardTree(msgID, childrenMap, nameMap, sb, images, files, depth+1)
+			p.formatMergeForwardTree(msgID, childrenMap, nameMap, sb, images, files, depth+1, budget)
 
 		default:
 			sb.WriteString(fmt.Sprintf("%s[%s] %s: [%s message]\n", indent, ts, senderName, msgType))
@@ -3163,7 +3202,14 @@ func buildFeishuFileMessageContent(msgType, fileKey string) (string, error) {
 }
 
 func (p *Platform) downloadImage(messageID, imageKey string) ([]byte, string, error) {
-	resp, err := p.client.Im.MessageResource.Get(context.Background(),
+	return p.downloadImageBounded(messageID, imageKey, core.MaxImageBytes)
+}
+
+func (p *Platform) downloadImageBounded(messageID, imageKey string, limit int) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, imageDownloadLimitKey{}, limit)
+	resp, err := p.client.Im.MessageResource.Get(ctx,
 		larkim.NewGetMessageResourceReqBuilder().
 			MessageId(messageID).
 			FileKey(imageKey).
@@ -3178,14 +3224,47 @@ func (p *Platform) downloadImage(messageID, imageKey string) ([]byte, string, er
 	if resp.File == nil {
 		return nil, "", fmt.Errorf("%s: image API returned nil file body", p.tag())
 	}
-	data, err := io.ReadAll(resp.File)
-	if err != nil {
-		return nil, "", fmt.Errorf("%s: read image: %w", p.tag(), err)
+	if closer, ok := resp.File.(io.Closer); ok {
+		defer closer.Close()
 	}
+	data, mime, err := core.ReadImage(io.LimitReader(resp.File, int64(limit)+1))
+	if len(data) > limit {
+		return nil, "", &core.ImageInputError{Key: core.MsgImageLimit}
+	}
+	return data, mime, err
+}
 
-	mimeType := detectMimeType(data)
-	slog.Debug(p.tag()+": downloaded image", "key", imageKey, "size", len(data), "mime", mimeType)
-	return data, mimeType, nil
+func (p *Platform) receiveImage(messageID, key string, budgets ...*imageReceiveBudget) core.ImageAttachment {
+	budget := imageBudget(budgets)
+	image := core.ImageAttachment{PromptMarker: "[attached-image:" + uuid.NewString() + "]"}
+	if budget.failure != "" {
+		image.ReceiveError = budget.failure
+		return image
+	}
+	if budget.count >= core.MaxImageCount || budget.bytes >= core.MaxImageBatchBytes {
+		budget.failure = core.MsgImageLimit
+		image.ReceiveError = budget.failure
+		return image
+	}
+	if key == "" {
+		budget.failure = core.MsgImageReceiveFailed
+		image.ReceiveError = core.MsgImageReceiveFailed
+		return image
+	}
+	budget.count++
+	data, mime, err := p.downloadImageBounded(messageID, key, min(core.MaxImageBytes, core.MaxImageBatchBytes-budget.bytes))
+	if err != nil {
+		image.ReceiveError = core.MsgImageReceiveFailed
+		var inputErr *core.ImageInputError
+		if errors.As(err, &inputErr) {
+			image.ReceiveError = inputErr.Key
+		}
+		budget.failure = image.ReceiveError
+		return image
+	}
+	budget.bytes += len(data)
+	image.Data, image.MimeType = data, mime
+	return image
 }
 
 func (p *Platform) downloadResource(messageID, fileKey, resType string) ([]byte, error) {
@@ -3213,21 +3292,7 @@ func (p *Platform) downloadResource(messageID, fileKey, resType string) ([]byte,
 }
 
 func detectMimeType(data []byte) string {
-	if len(data) >= 8 {
-		if data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G' {
-			return "image/png"
-		}
-		if data[0] == 0xFF && data[1] == 0xD8 {
-			return "image/jpeg"
-		}
-		if string(data[:4]) == "GIF8" {
-			return "image/gif"
-		}
-		if string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
-			return "image/webp"
-		}
-	}
-	return "image/png"
+	return http.DetectContentType(data)
 }
 
 func buildReplyContent(content string) (msgType string, body string) {
@@ -3830,12 +3895,24 @@ func (p *Platform) replyMessageWithID(ctx context.Context, rc replyContext, msgT
 }
 
 func (p *Platform) replyMessageResult(ctx context.Context, rc replyContext, msgType, content string, requireMessageID bool) (string, error) {
+	return p.replyMessageResultWithUUID(ctx, rc, msgType, content, requireMessageID, "")
+}
+
+func (p *Platform) replyMessageResultWithUUID(ctx context.Context, rc replyContext, msgType, content string, requireMessageID bool, uuid string) (string, error) {
+	body := p.buildReplyMessageReqBody(rc, msgType, content)
+	if uuid != "" {
+		body.Uuid = &uuid
+	}
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(rc.messageID).
-		Body(p.buildReplyMessageReqBody(rc, msgType, content)).
+		Body(body).
 		Build()
 	var messageID string
-	err := p.withTransientRetry(ctx, "reply", func() error {
+	retryOperation := "reply"
+	if uuid != "" {
+		retryOperation = "hosted feedback notice"
+	}
+	err := p.withTransientRetryLogging(ctx, retryOperation, func() error {
 		return p.withFreshTenantAccessTokenRetry(ctx, "reply", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
 			resp, err := client.Im.Message.Reply(ctx, req, options...)
 			if err != nil {
@@ -3852,7 +3929,7 @@ func (p *Platform) replyMessageResult(ctx context.Context, rc replyContext, msgT
 			}
 			return nil
 		})
-	})
+	}, uuid != "")
 	return messageID, err
 }
 
@@ -3940,6 +4017,7 @@ func (p *Platform) replayAPIClient() *lark.Client {
 func newFeishuReplayClient(appID, appSecret, domain string) *lark.Client {
 	var opts []lark.ClientOptionFunc
 	opts = append(opts, lark.WithEnableTokenCache(false))
+	opts = append(opts, lark.WithHttpClient(imageBoundedHTTPClient{client: http.DefaultClient}))
 	if domain != "" && domain != lark.FeishuBaseUrl {
 		opts = append(opts, lark.WithOpenBaseUrl(domain))
 	}
@@ -4002,6 +4080,10 @@ func isTransientError(err error) bool {
 // transient network errors. Non-transient errors are returned immediately.
 // Jitter (up to +25% of delay) is added to prevent thundering-herd retries.
 func (p *Platform) withTransientRetry(ctx context.Context, operation string, fn func() error) error {
+	return p.withTransientRetryLogging(ctx, operation, fn, false)
+}
+
+func (p *Platform) withTransientRetryLogging(ctx context.Context, operation string, fn func() error, redactError bool) error {
 	var lastErr error
 	delay := transientRetryInitial
 	for attempt := 0; attempt <= maxTransientRetries; attempt++ {
@@ -4024,12 +4106,16 @@ func (p *Platform) withTransientRetry(ctx context.Context, operation string, fn 
 		// Add jitter: up to +25% of delay to spread out concurrent retries.
 		jitter := time.Duration(rand.Int64N(int64(delay / 4)))
 		actualDelay := delay + jitter
+		logError := lastErr
+		if redactError {
+			logError = errors.New("delivery unconfirmed")
+		}
 		slog.Warn(p.tag()+": transient error, retrying",
 			"operation", operation,
 			"attempt", attempt+1,
 			"max_retries", maxTransientRetries,
 			"delay", actualDelay,
-			"error", lastErr,
+			"error", logError,
 		)
 		select {
 		case <-ctx.Done():
@@ -5218,24 +5304,26 @@ type postLang struct {
 // parsePostContent handles both formats of feishu post content:
 // 1. {"title":"...", "content":[[...]]}  (receive event)
 // 2. {"zh_cn":{"title":"...", "content":[[...]]}}  (some SDK versions)
-func (p *Platform) parsePostContent(messageID, raw string) ([]string, []core.ImageAttachment) {
+func (p *Platform) parsePostContent(messageID, raw string, budgets ...*imageReceiveBudget) ([]string, []core.ImageAttachment) {
+	budget := imageBudget(budgets)
 	// try flat format first
 	var flat postLang
 	if err := json.Unmarshal([]byte(raw), &flat); err == nil && flat.Content != nil {
-		return p.extractPostParts(messageID, &flat)
+		return p.extractPostParts(messageID, &flat, budget)
 	}
 	// try language-keyed format
 	var langMap map[string]postLang
 	if err := json.Unmarshal([]byte(raw), &langMap); err == nil {
 		for _, lang := range langMap {
-			return p.extractPostParts(messageID, &lang)
+			return p.extractPostParts(messageID, &lang, budget)
 		}
 	}
-	slog.Error(p.tag()+": failed to parse post content", "raw", raw)
-	return nil, nil
+	slog.Warn(p.tag() + ": invalid post payload")
+	return nil, []core.ImageAttachment{{ReceiveError: core.MsgImageReceiveFailed}}
 }
 
-func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string, []core.ImageAttachment) {
+func (p *Platform) extractPostParts(messageID string, post *postLang, budgets ...*imageReceiveBudget) ([]string, []core.ImageAttachment) {
+	budget := imageBudget(budgets)
 	var textParts []string
 	var images []core.ImageAttachment
 	if post.Title != "" {
@@ -5276,14 +5364,15 @@ func (p *Platform) extractPostParts(messageID string, post *postLang) ([]string,
 					textParts = append(textParts, "@"+p.resolveUserName(elem.UserId))
 				}
 			case "img":
-				if elem.ImageKey != "" {
-					imgData, mimeType, err := p.downloadImage(messageID, elem.ImageKey)
-					if err != nil {
-						slog.Error(p.tag()+": download post image failed", "error", err, "key", elem.ImageKey)
-						continue
-					}
-					images = append(images, core.ImageAttachment{MimeType: mimeType, Data: imgData})
+				if len(images) >= core.MaxImageCount {
+					return nil, []core.ImageAttachment{{ReceiveError: core.MsgImageLimit}}
 				}
+				attachment := p.receiveImage(messageID, elem.ImageKey, budget)
+				images = append(images, attachment)
+				if err := core.CheckImageBatch(images); err != nil {
+					return nil, []core.ImageAttachment{{ReceiveError: err.(*core.ImageInputError).Key}}
+				}
+				textParts = append(textParts, attachment.PromptMarker)
 			}
 		}
 	}

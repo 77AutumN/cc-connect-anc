@@ -44,6 +44,7 @@ type ActionHostResult struct {
 	ApprovalID string
 	ChangeID   string
 	Card       *Card
+	Replayed   bool
 	// Next is one separately approved action, never an instruction to execute it.
 	Next *ActionHostResult
 }
@@ -79,6 +80,16 @@ type TrustedCardActionResponse struct {
 }
 
 type TrustedCardActionHandler func(TrustedCardAction) TrustedCardActionResponse
+
+// hostedSharedCard copies the envelope without mutating adapter-owned cards.
+func hostedSharedCard(card *Card) *Card {
+	if card == nil {
+		return nil
+	}
+	shared := *card
+	shared.SharedUpdate = true
+	return &shared
+}
 
 // TrustedCardActionNavigable is intentionally separate from command-card
 // navigation. It preserves the platform-authenticated callback identity.
@@ -158,7 +169,7 @@ func (e *Engine) publishHostedActionContext(ctx context.Context, host ActionHost
 		Title(e.i18n.T(MsgHostedActionPreparingTitle), "blue").
 		Markdown(e.i18n.T(MsgHostedActionPreparingBody)).
 		Build()
-	messageID, err := publisher.ReplyHostedActionPlaceholder(ctx, replyCtx, placeholder)
+	messageID, err := publisher.ReplyHostedActionPlaceholder(ctx, replyCtx, hostedSharedCard(placeholder))
 	if err != nil || messageID == "" {
 		slog.Error("hosted approval placeholder publish failed", "platform", p.Name(), "action_kind", result.Kind)
 		return errors.New("hosted approval publish failed")
@@ -172,7 +183,7 @@ func (e *Engine) publishHostedActionContext(ctx context.Context, host ActionHost
 		}
 		return errors.New("hosted approval binding failed")
 	}
-	if err := refresher.RefreshCardMessage(ctx, messageID, principal.SessionKey, result.Card); err != nil {
+	if err := refresher.RefreshCardMessage(ctx, messageID, principal.SessionKey, hostedSharedCard(result.Card)); err != nil {
 		slog.Error("hosted approval activation failed", "platform", p.Name(), "action_kind", result.Kind)
 		if refreshErr := refresher.RefreshCardMessage(ctx, messageID, principal.SessionKey, e.hostedActionFailureCard()); refreshErr != nil {
 			slog.Warn("hosted approval activation failure card refresh failed", "platform", p.Name())
@@ -183,10 +194,10 @@ func (e *Engine) publishHostedActionContext(ctx context.Context, host ActionHost
 }
 
 func (e *Engine) hostedActionFailureCard() *Card {
-	return NewCard().
+	return hostedSharedCard(NewCard().
 		Title(e.i18n.T(MsgHostedActionFailedTitle), "red").
 		Markdown(e.i18n.T(MsgHostedActionFailedBody)).
-		Build()
+		Build())
 }
 
 func (e *Engine) failClosedHostedTurn(sessionKey string, state *interactiveState, err error) {
@@ -218,8 +229,12 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 
 	result, execute, err := host.Claim(e.ctx, action.ApprovalID, action.Decision, action.Principal, action.Language)
 	if err != nil {
-		slog.Error("action host decision claim failed", "action_kind", action.Kind, "decision", action.Decision, "error", err)
-		return TrustedCardActionResponse{Card: e.hostedActionFailureCard()}
+		slog.Error("action host decision claim unconfirmed", "action_kind", action.Kind, "decision", action.Decision)
+		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionResultUnknownToast), ToastType: "error"}
+	}
+	if result.Status == "failed" && !execute && !result.Replayed {
+		// A failed lookup is not proof that this callback owns a state change.
+		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionResultUnknownToast), ToastType: "error"}
 	}
 	if result.Code == "principal_mismatch" {
 		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionPrincipalMismatchToast), ToastType: "error"}
@@ -228,16 +243,33 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 		// A copied/misdirected button must not replace another operation's card.
 		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionInvalidToast), ToastType: "error"}
 	}
-	if result.Status == "executing" && !execute {
+	if result.Status == "blocked" {
+		// A rejected lookup has not acquired a durable transition. A delayed
+		// callback must not replace the operation owner's eventual receipt.
+		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionInvalidToast), ToastType: "error"}
+	}
+	if result.Status == "executing" && !execute && result.Code != "execution_result_unknown" {
 		// Another callback already owns execution. Do not return a card here:
 		// this response may arrive after the owner has published the final
 		// receipt, and replacing it would make the UI move backwards.
 		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionProcessingToast), ToastType: "info"}
 	}
-	response := TrustedCardActionResponse{Card: result.Card}
+	if result.Replayed || result.Code == "execution_result_unknown" {
+		// Never let a delayed replay replace the execution owner's newer card.
+		toast := e.i18n.T(MsgHostedActionResultUnknownToast)
+		if result.Code != "execution_result_unknown" && result.Card != nil && result.Card.Header != nil {
+			toast = result.Card.Header.Title
+		}
+		return TrustedCardActionResponse{Toast: toast, ToastType: "info"}
+	}
+	response := TrustedCardActionResponse{Card: hostedSharedCard(result.Card)}
 	if execute {
 		principal := action.Principal
 		approvalID := action.ApprovalID
+		operationID := result.ChangeID
+		if operationID == "" {
+			operationID = approvalID
+		}
 		language := action.Language
 		var once sync.Once
 		var final TrustedCardActionResponse
@@ -245,11 +277,15 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 			once.Do(func() {
 				completed, completeErr := host.Execute(e.ctx, approvalID, principal, language)
 				if completeErr != nil {
-					slog.Error("action host execution failed", "action_kind", action.Kind, "error", completeErr)
-					final = TrustedCardActionResponse{Card: e.hostedActionFailureCard()}
+					slog.Error("action host execution receipt unconfirmed", "action_kind", action.Kind)
+					i18n := NewI18n(language)
+					final = TrustedCardActionResponse{Card: hostedSharedCard(NewCard().
+						Title(i18n.T(MsgHostedActionUnknownTitle), "orange").
+						Markdown(i18n.T(MsgHostedActionUnknownBody)).
+						Note(operationID).Build())}
 					return
 				}
-				final.Card = completed.Card
+				final.Card = hostedSharedCard(completed.Card)
 				if completed.Next != nil && completed.Status == "verified" {
 					next := completed.Next
 					reconstructor, ok := p.(ReplyContextReconstructor)

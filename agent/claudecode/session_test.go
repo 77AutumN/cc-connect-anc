@@ -631,9 +631,9 @@ func makeFiller(n int) string {
 // assistant text reaches the user.
 //
 // Cases covered:
-//  - string content (plain text result)
-//  - array content (Anthropic SDK multi-block: [{type:"text", text:"..."}])
-//  - is_error=true (exit code 1, success=false)
+//   - string content (plain text result)
+//   - array content (Anthropic SDK multi-block: [{type:"text", text:"..."}])
+//   - is_error=true (exit code 1, success=false)
 func TestHandleUserEmitsToolResult(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -649,10 +649,10 @@ func TestHandleUserEmitsToolResult(t *testing.T) {
 				"message": map[string]any{
 					"content": []any{
 						map[string]any{
-							"type":          "tool_result",
-							"tool_use_id":   "toolu_abc",
-							"is_error":      false,
-							"content":       "command output here",
+							"type":        "tool_result",
+							"tool_use_id": "toolu_abc",
+							"is_error":    false,
+							"content":     "command output here",
 						},
 					},
 				},
@@ -761,6 +761,9 @@ func TestHelperProcess(t *testing.T) {
 
 	mode := os.Args[len(os.Args)-1]
 	switch mode {
+	case "fail-before-result":
+		_, _ = os.Stderr.WriteString("synthetic failure\n")
+		os.Exit(1)
 	case "sleep":
 		time.Sleep(30 * time.Second)
 		os.Exit(0)

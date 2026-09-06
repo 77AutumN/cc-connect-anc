@@ -11,6 +11,9 @@ import (
 type Card struct {
 	Header   *CardHeader
 	Elements []CardElement
+	// SharedUpdate opts host-owned cards into shared, in-place updates.
+	// The zero value preserves ordinary navigation card behavior.
+	SharedUpdate bool
 }
 
 // CardHeader is the optional colored title bar of a card.

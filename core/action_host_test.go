@@ -25,6 +25,8 @@ type actionHostStub struct {
 	bindErr        error
 	claimResult    *ActionHostResult
 	claimExecute   bool
+	claimErr       error
+	executeErr     error
 	executeResult  *ActionHostResult
 }
 
@@ -124,6 +126,9 @@ func (h *actionHostStub) Claim(_ context.Context, approvalID string, decision Ac
 	h.decisions = append(h.decisions, approvalID+":"+string(decision))
 	h.principals = append(h.principals, principal)
 	h.mu.Unlock()
+	if h.claimErr != nil {
+		return ActionHostResult{}, false, h.claimErr
+	}
 	if h.claimResult != nil {
 		return *h.claimResult, h.claimExecute, nil
 	}
@@ -134,6 +139,9 @@ func (h *actionHostStub) Execute(_ context.Context, approvalID string, principal
 	h.executions = append(h.executions, approvalID)
 	h.principals = append(h.principals, principal)
 	h.mu.Unlock()
+	if h.executeErr != nil {
+		return ActionHostResult{}, h.executeErr
+	}
 	if h.executeResult != nil {
 		return *h.executeResult, nil
 	}
@@ -635,7 +643,7 @@ func TestHostedNextActivationTimeoutDoesNotClaimFollowupUnsubmitted(t *testing.T
 				t.Fatal("parent approval was not claimed")
 			}
 			completed := response.Complete()
-			if len(h.cardBindings) != 1 || len(p.refreshes) != 1 || len(p.cards) != 1 || p.cards[0] != child.Card || !p.cards[0].HasButtons() {
+			if len(h.cardBindings) != 1 || len(p.refreshes) != 1 || len(p.cards) != 1 || p.cards[0].RenderText() != child.Card.RenderText() || !p.cards[0].SharedUpdate || !p.cards[0].HasButtons() || child.Card.SharedUpdate {
 				t.Fatal("fixture did not retain a bound, activated child after the lost response")
 			}
 			// Publication uncertainty does not block a later trusted callback;
