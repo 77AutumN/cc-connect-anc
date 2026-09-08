@@ -18,6 +18,37 @@ func newTestImageCache(t *testing.T, capacity int64, now *time.Time) *imageCache
 	return &imageCache{dir: filepath.Join(t.TempDir(), "images"), active: map[string]int{}, capacity: capacity, now: func() time.Time { return *now }, freeSpace: func(string) (uint64, error) { return 10 << 30, nil }}
 }
 
+func TestImageCacheFourEnvironmentCapacityAndLegacyDefault(t *testing.T) {
+	var total int64
+	for i := 0; i < 4; i++ {
+		workDir := t.TempDir()
+		if _, err := New(map[string]any{"work_dir": workDir, "run_as_user": "synthetic-no-spawn", "image_cache_capacity_mib": int64(128)}); err != nil {
+			t.Fatal(err)
+		}
+		cache := sessionImageCache(workDir)
+		if cache.capacity != 128<<20 {
+			t.Fatalf("wrong environment capacity: %d", cache.capacity)
+		}
+		total += cache.capacity
+	}
+	if total != imageCacheCapacity || sessionImageCache(t.TempDir()).capacity != imageCacheCapacity {
+		t.Fatal("cache capacity contract changed")
+	}
+	for _, value := range []any{0, -1, 513, "128", 128.5} {
+		if _, err := New(map[string]any{"work_dir": t.TempDir(), "run_as_user": "synthetic-no-spawn", "image_cache_capacity_mib": value}); err == nil {
+			t.Fatalf("invalid capacity accepted: %v", value)
+		}
+	}
+}
+
+func TestNewAcceptsSmallImageCaches(t *testing.T) {
+	for _, capacity := range []any{1, int64(9), 10} {
+		if _, err := New(map[string]any{"work_dir": t.TempDir(), "run_as_user": "synthetic-no-spawn", "image_cache_capacity_mib": capacity}); err != nil {
+			t.Errorf("valid capacity %v rejected: %v", capacity, err)
+		}
+	}
+}
+
 func TestImageCacheStartupWithoutSession(t *testing.T) {
 	workDir := t.TempDir()
 	now := time.Now().Add(-8 * 24 * time.Hour)

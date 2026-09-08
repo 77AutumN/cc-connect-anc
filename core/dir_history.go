@@ -162,7 +162,8 @@ func (dh *DirHistory) saveLocked() {
 		return
 	}
 
-	if err := AtomicWriteFile(dh.storePath, data, 0644); err != nil {
+	// This host-only index may contain paths from several private environments.
+	if err := AtomicWriteFile(dh.storePath, data, 0600); err != nil {
 		slog.Error("dir_history: failed to write", "path", dh.storePath, "error", err)
 	}
 }

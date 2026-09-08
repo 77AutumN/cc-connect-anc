@@ -14,6 +14,13 @@ type Card struct {
 	// SharedUpdate opts host-owned cards into shared, in-place updates.
 	// The zero value preserves ordinary navigation card behavior.
 	SharedUpdate bool
+	// Interaction is host metadata, never serialized into button values.
+	Interaction *CardInteraction
+}
+
+type CardInteraction struct {
+	RequestID string
+	Principal ActionPrincipal
 }
 
 // CardHeader is the optional colored title bar of a card.

@@ -1,6 +1,9 @@
 package feishu
 
 import (
+	"context"
+	"github.com/chenhg5/cc-connect/core"
+	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	"testing"
 )
 
@@ -38,6 +41,25 @@ func TestSharedWSGroup_RegisterAndAllPlatforms(t *testing.T) {
 	}
 	if len(g1.allPlatforms()) != 2 {
 		t.Fatalf("expected 2 platforms, got %d", len(g1.allPlatforms()))
+	}
+}
+
+func TestFixedGroupDropsMessagesUntilBotIsKnownAndMentioned(t *testing.T) {
+	p := &Platform{platformName: "feishu", appID: "fixed-bot-identity", strictRoutes: true, allowFrom: "owner", allowChat: "group", dedup: &core.MessageDedup{}}
+	if err := p.Prepare(func(core.Platform, *core.Message) { t.Error("unaddressed message reached core") }); err != nil {
+		t.Fatal(err)
+	}
+	defer unregisterSharedWS(p)
+	for _, bot := range []string{"", "verified-bot"} {
+		p.botOpenID = bot
+		msgType, chat, actor, chatType, content, id := "text", "group", "owner", "group", `{"text":"private discussion"}`, "message-"+bot
+		err := p.onMessage(context.Background(), &larkim.P2MessageReceiveV1{Event: &larkim.P2MessageReceiveV1Data{
+			Sender:  &larkim.EventSender{SenderId: &larkim.UserId{OpenId: &actor}},
+			Message: &larkim.EventMessage{MessageType: &msgType, ChatId: &chat, ChatType: &chatType, Content: &content, MessageId: &id},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -107,4 +129,75 @@ func TestSharedWSGroup_DifferentAppIDs(t *testing.T) {
 
 	unregisterSharedWS(p1)
 	unregisterSharedWS(p2)
+}
+
+func TestFixedRoutesRequireExactlyOneSenderAndChatBeforeReceiving(t *testing.T) {
+	owner := &Platform{appID: "fixed-fixture", domain: "feishu.cn", strictRoutes: true, allowFrom: "owner", allowChat: "group"}
+	partner := &Platform{appID: owner.appID, domain: owner.domain, strictRoutes: true, allowFrom: "partner", allowChat: "group"}
+	private := &Platform{appID: owner.appID, domain: owner.domain, strictRoutes: true, allowFrom: "owner", allowChat: "private"}
+	for _, p := range []*Platform{owner, partner, private} {
+		if err := p.Prepare(func(core.Platform, *core.Message) {}); err != nil {
+			t.Fatal(err)
+		}
+		defer unregisterSharedWS(p)
+	}
+	if !owner.acceptFixedRoute("owner", "group") || partner.acceptFixedRoute("owner", "group") || private.acceptFixedRoute("owner", "group") {
+		t.Fatal("sender and actual chat must both match")
+	}
+	if owner.acceptFixedRoute("alt", "group") || private.acceptFixedRoute("owner", "other-private") {
+		t.Fatal("unregistered route accepted")
+	}
+	if err := owner.Prepare(func(core.Platform, *core.Message) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(owner.sharedGroup.allPlatforms()) != 3 {
+		t.Fatal("prepare is not idempotent")
+	}
+	duplicate := &Platform{appID: owner.appID, domain: owner.domain, strictRoutes: true, allowFrom: "owner", allowChat: "group"}
+	if err := duplicate.Prepare(func(core.Platform, *core.Message) {}); err == nil {
+		t.Fatal("duplicate fixed route registered")
+	}
+}
+
+func TestFixedRoutesThreePeopleSixEnvironments(t *testing.T) {
+	var platforms []*Platform
+	for _, actor := range []string{"owner", "partner", "test"} {
+		for _, chat := range []string{"private-" + actor, "group"} {
+			p := &Platform{appID: "three-people-fixture", domain: "feishu.cn", strictRoutes: true, allowFrom: actor, allowChat: chat}
+			if err := p.Prepare(func(core.Platform, *core.Message) {}); err != nil {
+				t.Fatal(err)
+			}
+			defer unregisterSharedWS(p)
+			platforms = append(platforms, p)
+		}
+	}
+	for _, actor := range []string{"owner", "partner", "test", "fourth-person"} {
+		for _, chat := range []string{"private-owner", "private-partner", "private-test", "group", "other-group"} {
+			matches := 0
+			for _, p := range platforms {
+				if p.acceptFixedRoute(actor, chat) {
+					matches++
+					if p.allowFrom != actor || p.allowChat != chat {
+						t.Fatal("identity or actual chat changed at fixed route boundary")
+					}
+				}
+			}
+			want := 0
+			if actor != "fourth-person" && (chat == "private-"+actor || chat == "group") {
+				want = 1
+			}
+			if matches != want {
+				t.Fatalf("route %s/%s matched %d environments, want %d", actor, chat, matches, want)
+			}
+		}
+	}
+	group := platforms[0].sharedGroup
+	if len(group.allPlatforms()) != 6 {
+		t.Fatal("six fixed routes must share one receiver group")
+	}
+	for _, p := range platforms {
+		if p.sharedGroup != group {
+			t.Fatal("additional receiver group created")
+		}
+	}
 }

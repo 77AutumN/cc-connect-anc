@@ -250,7 +250,19 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 
 	// Register existing disk entries even if no conversation is started.
-	sessionImageCache(workDir).cleanup()
+	capacity := imageCacheCapacity
+	if value, exists := opts["image_cache_capacity_mib"]; exists {
+		mib, err := core.ParseImageCacheCapacityMiB(value)
+		if err != nil {
+			return nil, err
+		}
+		capacity = mib << 20
+	}
+	cache, err := configuredImageCache(workDir, capacity)
+	if err != nil {
+		return nil, err
+	}
+	cache.cleanup()
 	return &Agent{
 		workDir:          workDir,
 		cmd:              cmd,

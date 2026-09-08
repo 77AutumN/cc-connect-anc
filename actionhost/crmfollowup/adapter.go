@@ -25,6 +25,7 @@ const (
 	actionTokenEnv    = "MYANC_CRM_ACTION_TOKEN"
 	stageInputEnv     = "MYANC_CRM_STAGE_INPUT"
 	projectEnv        = "MYANC_CRM_PROJECT"
+	projectsEnv       = "MYANC_CRM_PROJECTS"
 	commandEnv        = "MYANC_CRM_HOST_COMMAND"
 	toolsEnv          = "MYANC_CRM_TOOLS"
 	minHostSecretLen  = 32
@@ -54,58 +55,104 @@ type Adapter struct {
 // NewFromEnv captures the host-only secret and removes it from the daemon
 // environment before any Claude subprocess can inherit it.
 func NewFromEnv() (*Adapter, string, error) {
+	hosts, err := NewProjectHostsFromEnv()
+	if err != nil {
+		return nil, "", err
+	}
+	if len(hosts) > 1 {
+		return nil, "", errors.New("multiple CRM projects require the shared listener")
+	}
+	for project, host := range hosts {
+		return host, project, nil
+	}
+	return nil, "", nil
+}
+
+// NewProjectHostsFromEnv captures credentials once and returns an independent,
+// initially unbound adapter per fixed project. It starts no process or listener.
+func NewProjectHostsFromEnv() (map[string]*Adapter, error) {
+	a, err := captureFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	single, multiple := strings.TrimSpace(os.Getenv(projectEnv)), strings.TrimSpace(os.Getenv(projectsEnv))
+	if single != "" && multiple != "" {
+		return nil, errors.New("legacy and multiple CRM project settings are mutually exclusive")
+	}
+	if a == nil {
+		if multiple != "" {
+			return nil, errors.New("multiple CRM projects require a configured tools host")
+		}
+		return nil, nil
+	}
+	if multiple != "" && !a.toolsEnabled {
+		return nil, errors.New("multiple CRM projects require tools mode")
+	}
+	names := []string{single}
+	if multiple != "" {
+		names = strings.Split(multiple, ",")
+	}
+	hosts := make(map[string]*Adapter, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" || hosts[name] != nil || strings.ContainsAny(name, "/\\\x00\r\n") || name == "." || name == ".." {
+			return nil, errors.New("CRM projects must have distinct non-empty names")
+		}
+		copy := *a
+		hosts[name] = &copy
+	}
+	return hosts, nil
+}
+
+func captureFromEnv() (*Adapter, error) {
 	secret := os.Getenv(hostSecretEnv)
 	toolsMode := os.Getenv(toolsEnv)
 	secretFile := strings.TrimSpace(os.Getenv(hostSecretFileEnv))
 	for _, key := range []string{hostSecretEnv, hostSecretFileEnv, actionTokenEnv, stageInputEnv} {
 		if err := os.Unsetenv(key); err != nil {
-			return nil, "", fmt.Errorf("clear protected CRM environment: %w", err)
+			return nil, fmt.Errorf("clear protected CRM environment: %w", err)
 		}
 	}
 	if secret != "" && secretFile != "" {
-		return nil, "", fmt.Errorf("set only one of %s or %s", hostSecretEnv, hostSecretFileEnv)
+		return nil, fmt.Errorf("set only one of %s or %s", hostSecretEnv, hostSecretFileEnv)
 	}
 	if secretFile != "" {
 		if strings.ContainsRune(secretFile, '\x00') || !filepath.IsAbs(secretFile) {
-			return nil, "", fmt.Errorf("%s must be an absolute path", hostSecretFileEnv)
+			return nil, fmt.Errorf("%s must be an absolute path", hostSecretFileEnv)
 		}
 		value, err := readHostSecretFile(secretFile)
 		if err != nil {
-			return nil, "", fmt.Errorf("read CRM host secret file: %w", err)
+			return nil, fmt.Errorf("read CRM host secret file: %w", err)
 		}
 		secret = strings.TrimSpace(string(value))
 		if secret == "" {
-			return nil, "", errors.New("CRM host secret file is empty")
+			return nil, errors.New("CRM host secret file is empty")
 		}
 	}
 	if secret == "" {
 		if toolsMode != "" {
-			return nil, "", errors.New("CRM tools require a configured action host")
+			return nil, errors.New("CRM tools require a configured action host")
 		}
-		return nil, "", nil
+		return nil, nil
 	}
 	if toolsMode != "" && toolsMode != "1" {
-		return nil, "", fmt.Errorf("%s must be absent or exactly 1", toolsEnv)
+		return nil, fmt.Errorf("%s must be absent or exactly 1", toolsEnv)
 	}
 	if len(secret) < minHostSecretLen || len(secret) > maxHostSecretLen {
-		return nil, "", fmt.Errorf("CRM host secret must be %d..%d bytes", minHostSecretLen, maxHostSecretLen)
-	}
-	project := strings.TrimSpace(os.Getenv(projectEnv))
-	if project == "" {
-		return nil, "", fmt.Errorf("%s is required when %s is set", projectEnv, hostSecretEnv)
+		return nil, fmt.Errorf("CRM host secret must be %d..%d bytes", minHostSecretLen, maxHostSecretLen)
 	}
 	command := strings.TrimSpace(os.Getenv(commandEnv))
 	if command == "" {
-		return nil, "", fmt.Errorf("%s is required when CRM action host is enabled", commandEnv)
+		return nil, fmt.Errorf("%s is required when CRM action host is enabled", commandEnv)
 	}
 	if command != markerCommand {
-		return nil, "", fmt.Errorf("%s must be exactly %s", commandEnv, markerCommand)
+		return nil, fmt.Errorf("%s must be exactly %s", commandEnv, markerCommand)
 	}
 	return &Adapter{
 		command: command, hostSecret: secret, hostSecretFile: secretFile, stageDir: hostStageInputDir,
 		toolsEnabled:    toolsMode == "1",
 		validateCommand: true, run: runCommand,
-	}, project, nil
+	}, nil
 }
 
 func (a *Adapter) Kind() string { return Kind }
@@ -136,6 +183,9 @@ func (a *Adapter) EnableTools() error {
 // SetWorkDir binds the adapter to the configured project workspace. It must
 // be called once before the adapter is attached to an engine.
 func (a *Adapter) SetWorkDir(workDir, runAsUser string) error {
+	if a.workDir != "" {
+		return errors.New("CRM adapter workspace is already bound")
+	}
 	workDir = filepath.Clean(strings.TrimSpace(workDir))
 	if workDir == "." || !filepath.IsAbs(workDir) {
 		return errors.New("CRM action host work directory must be absolute")
@@ -608,7 +658,8 @@ func executingCard(result map[string]any, lang core.Language) *core.Card {
 	i18n := core.NewI18n(lang)
 	b := core.NewCard().
 		Title(i18n.T(core.MsgHostedActionExecutingTitle), "blue").
-		Markdown(i18n.T(core.MsgHostedActionExecutingBody))
+		Markdown(i18n.T(core.MsgHostedActionExecutingBody)).
+		Markdown(i18n.T(core.MsgCRMWriteCoordination))
 	// Only the ledger's frozen preview is authoritative, never callback values.
 	if preview, ok := result["preview"].(map[string]any); ok {
 		b.Divider().Markdown(renderPreview(preview, i18n))
@@ -638,6 +689,12 @@ func receiptTitle(status string, i18n *core.I18n) (string, string) {
 // The helper's stable status/code select business copy; its diagnostic message
 // is never presentation authority or safe to relay to a chat.
 func receiptMessage(status, code string, i18n *core.I18n) string {
+	if code == "crm_write_unresolved" {
+		return i18n.T(core.MsgCRMWriteUnresolved)
+	}
+	if code == "crm_write_busy" {
+		return i18n.T(core.MsgCRMWriteBusy)
+	}
 	key := core.MsgCRMReceiptReviewBody
 	switch status {
 	case "verified":

@@ -1,7 +1,10 @@
 package feishu
 
 import (
+	"errors"
+	"github.com/chenhg5/cc-connect/core"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -39,6 +42,11 @@ func registerSharedWS(p *Platform) (group *sharedWSGroup, isPrimary bool) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	for i, sibling := range g.platforms {
+		if sibling == p {
+			return g, i == 0
+		}
+	}
 	g.platforms = append(g.platforms, p)
 	isPrimary = len(g.platforms) == 1
 	if !isPrimary {
@@ -46,6 +54,57 @@ func registerSharedWS(p *Platform) (group *sharedWSGroup, isPrimary bool) {
 			"app_id", p.appID, "platforms", len(g.platforms))
 	}
 	return g, isPrimary
+}
+
+// Prepare registers the fixed route without opening a connection. The host
+// prepares every environment before starting any receiver.
+func (p *Platform) Prepare(handler core.MessageHandler) error {
+	if p.strictRoutes {
+		for _, value := range []string{p.allowFrom, p.allowChat} {
+			if value == "" || strings.ContainsAny(value, "*, \t\r\n") {
+				return errors.New("fixed routes require one exact sender and chat")
+			}
+		}
+		if p.shareSessionInChannel || p.threadIsolation || p.shouldUseWebhookMode() {
+			return errors.New("fixed routes require isolated sessions and one websocket transport")
+		}
+	}
+	group, primary := registerSharedWS(p)
+	for _, sibling := range group.allPlatforms() {
+		if sibling != p && (p.strictRoutes || sibling.strictRoutes) &&
+			(!p.strictRoutes || !sibling.strictRoutes || (p.allowFrom == sibling.allowFrom && p.allowChat == sibling.allowChat) ||
+				p.appSecret != sibling.appSecret) {
+			unregisterSharedWS(p)
+			return errors.New("ambiguous or inconsistent fixed receiver routes")
+		}
+	}
+	p.sharedGroup, p.isWSPrimary = group, primary
+	p.mu.Lock()
+	p.handler = handler
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *Platform) acceptFixedRoute(sender, chat string) bool {
+	if !p.strictRoutes {
+		return true
+	}
+	if p.sharedGroup == nil || sender == "" || chat == "" {
+		return false
+	}
+	var match *Platform
+	for _, sibling := range p.sharedGroup.allPlatforms() {
+		if !sibling.strictRoutes {
+			return false
+		}
+		if sibling.allowFrom == sender && sibling.allowChat == chat {
+			if match != nil {
+				return false
+			}
+			match = sibling
+		}
+	}
+	return match == p
 }
 
 // unregisterSharedWS removes a platform from its shared group.
