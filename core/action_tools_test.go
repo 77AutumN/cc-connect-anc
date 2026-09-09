@@ -123,7 +123,7 @@ func TestActionToolsHandlerThreePeopleSixEnvironments(t *testing.T) {
 func TestActionToolHandlerScopedReadsAndStrictBoundary(t *testing.T) {
 	e, h, _, _ := actionToolFixture(t)
 	handler := e.ActionToolHandler()
-	for _, command := range []string{"customer", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
+	for _, command := range []string{"open", "customer", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
 		w := actionToolRequest(handler, "POST", "/tool", "test-session-token", `{"command":"`+command+`","input":{}}`)
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"customer":"fixture"`) {
 			t.Fatalf("valid %s = %d %s", command, w.Code, w.Body.String())
@@ -305,6 +305,10 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 		if strings.Contains(prompt, "result") {
 			command = "result"
 		}
+		if strings.Contains(prompt, "open CRM") {
+			command = "open"
+			h.toolResult = map[string]any{"status": "available", "url": "https://example.invalid/base/fixture"}
+		}
 		w := actionToolRequest(handler, "POST", "/tool", token, `{"command":"`+command+`","input":{}}`)
 		return w.Body.String()
 	}
@@ -319,6 +323,8 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 		{"owner", "result and discussion", `"customer":"fixture"`},
 		{"intruder", "customer history in accidentally shared session", `"code":"invalid_session"`},
 		{"owner", "customer history again", `"customer":"fixture"`},
+		{"owner", "open CRM", `"url":"https://example.invalid/base/fixture"`},
+		{"intruder", "open CRM in accidentally shared session", `"code":"invalid_session"`},
 	} {
 		p.clearSent()
 		e.ReceiveMessage(p, &Message{SessionKey: "test:chat:shared", Platform: "test", UserID: tc.user, ChannelID: "chat", MessageID: fmt.Sprintf("request-%d", i), Content: tc.content, ReplyCtx: "reply"})
@@ -330,7 +336,7 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 	a.mu.Lock()
 	starts := len(a.sessions)
 	a.mu.Unlock()
-	if starts != 1 || h.toolCalls != 4 {
+	if starts != 1 || h.toolCalls != 5 {
 		t.Fatalf("unexpected restarts or unauthorized host call: starts=%d calls=%d", starts, h.toolCalls)
 	}
 }
