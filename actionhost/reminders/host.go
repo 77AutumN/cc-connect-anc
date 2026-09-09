@@ -134,7 +134,7 @@ func blocked(code string) map[string]any { return map[string]any{"status": "bloc
 
 func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p core.ActionPrincipal, _ string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
 	r, ok := h.routes[p.Project]
-	if !ok || p.Platform != "feishu" || r.User != p.UserID || r.Chat != p.ChatID || p.MessageID == "" {
+	if !ok || p.Platform != "feishu" || r.User != p.UserID || r.Chat != p.ChatID || p.MessageID == "" || !h.authorized(r.User) {
 		return blocked("invalid_identity"), nil, nil
 	}
 	in, err := decode(raw)
@@ -219,6 +219,17 @@ func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p 
 }
 
 var beijing = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func (h *Host) authorized(user string) bool {
+	sender := h.senders[user]
+	if sender == nil {
+		return false
+	}
+	if live, ok := sender.(interface{ ReminderAuthorized() bool }); ok {
+		return live.ReminderAuthorized()
+	}
+	return true
+}
 
 func (h *Host) list(st *state, r Route, in input, lang core.Language) map[string]any {
 	items := scopedItems(st, r, in.All != nil && *in.All)

@@ -15,6 +15,14 @@ type ReminderSender interface {
 
 var ErrReminderPermission = errors.New("reminder delivery permission denied")
 
+// HostedUserAuthorized follows live role revocation without consuming a rate
+// limit slot. Fixed transport allowlists remain an independent outer boundary.
+func (e *Engine) HostedUserAuthorized(user string) bool {
+	e.userRolesMu.RLock()
+	defer e.userRolesMu.RUnlock()
+	return user != "" && (e.userRoles == nil || e.userRoles.ResolveRole(user) != nil)
+}
+
 // ActionClockHost opts a domain into trusted per-message clock context.
 type ActionClockHost interface{ RequiresMessageClock() bool }
 

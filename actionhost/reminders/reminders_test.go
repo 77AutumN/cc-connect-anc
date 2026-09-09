@@ -23,6 +23,42 @@ type senderStub struct {
 	hook  func()
 }
 
+type revocableSender struct {
+	senderStub
+	allowed bool
+}
+
+func (s *revocableSender) ReminderAuthorized() bool { return s.allowed }
+
+func TestLiveRevocationStopsToolsAndDelivery(t *testing.T) {
+	h, _, now, _ := fixture(t)
+	sender := &revocableSender{allowed: true}
+	h.senders["a"] = sender
+	create(t, h, "ag", "one", "test")
+	sender.allowed = false
+	if r := create(t, h, "ag", "two", "test"); r["code"] != "invalid_identity" {
+		t.Fatal("revoked user created reminder")
+	}
+	*now = now.Add(time.Hour)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.calls) != 0 {
+		t.Fatal("revoked identity received delivery")
+	}
+}
+
+func TestUnwritableDatabaseDisablesReminderOperations(t *testing.T) {
+	h, _, _, path := fixture(t)
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(path, 0600) }()
+	if err := h.Tick(context.Background(), core.LangChinese); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("readonly state not rejected", err)
+	}
+}
+
 func (s *senderStub) SendReminder(_ context.Context, c, text, id string) (string, error) {
 	s.calls = append(s.calls, delivery{c, text, id})
 	if s.hook != nil {
@@ -51,7 +87,7 @@ func fixture(t *testing.T) (*Host, *senderStub, *time.Time, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	s := &senderStub{}
 	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}, {"a", "group", "ag", "pa"}, {"b", "pb", "bp", "pb"}, {"b", "group", "bg", "pb"}}, map[string]Sender{"a": s, "b": s})
 	if err != nil {
@@ -131,12 +167,12 @@ func TestVersionUpdateCancelAndPersistAcrossRestart(t *testing.T) {
 	if r = call(t, h, "reminder-cancel", "ap", "stale", map[string]any{"id": id, "version": 1}); r["code"] != "version_conflict" {
 		t.Fatal(r)
 	}
-	h.store.Close()
+	_ = h.store.Close()
 	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	h.store = store
 	r = call(t, h, "reminder-cancel", "ap", "cancel", map[string]any{"id": id, "version": 2})
 	if r["status"] != "cancelled" {
@@ -157,13 +193,17 @@ func TestOverduePrivateBatchRetryUUIDAndWindow(t *testing.T) {
 		t.Fatal("lost overdue aggregation")
 	}
 	*now = now.Add(time.Minute)
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.calls) != 2 || s.calls[0].id != s.calls[1].id || s.calls[0].text != s.calls[1].text {
 		t.Fatal("retry payload changed")
 	}
 	*now = now.Add(time.Hour)
 	s.err = nil
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.calls) != 3 || s.calls[1].id == s.calls[2].id || !strings.Contains(s.calls[2].text, "可能重复") {
 		t.Fatal("dedup window not handled")
 	}
@@ -181,9 +221,13 @@ func TestCancelInFlightPreventsRetriesWithoutClaimingRecall(t *testing.T) {
 		s.hook = nil
 	}
 	*now = now.Add(time.Hour)
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	*now = now.Add(time.Hour)
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.calls) != 1 {
 		t.Fatal("cancelled reminder retried")
 	}
@@ -194,9 +238,13 @@ func TestPermissionDeniedPausesWithoutAlternateDestination(t *testing.T) {
 	create(t, h, "ag", "one", "test")
 	s.err = core.ErrReminderPermission
 	*now = now.Add(time.Hour)
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	*now = now.Add(24 * time.Hour)
-	h.Tick(context.Background(), core.LangChinese)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.calls) != 1 || s.calls[0].chat != "pa" {
 		t.Fatal("permission denial rerouted/retried")
 	}
@@ -210,7 +258,7 @@ func TestDatabaseMissingCorruptAndDeletedFailClosed(t *testing.T) {
 	if _, err := os.Stat(path + ".missing"); !os.IsNotExist(err) {
 		t.Fatal("missing DB created")
 	}
-	h.store.Close()
+	_ = h.store.Close()
 	if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +324,7 @@ func TestCrossProcessCreateDeduplicatesAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if err = store.change(context.Background(), func(st *state) error {
 		if len(st.Items) != 1 {
 			t.Fatalf("duplicate across processes: %d", len(st.Items))
@@ -296,7 +344,7 @@ func TestReminderProcessHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}}, map[string]Sender{"a": &senderStub{}})
 	if err != nil {
 		t.Fatal(err)

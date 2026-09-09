@@ -84,6 +84,9 @@ func (h *Host) addBatch(st *state, user, destination string, ids []string, text 
 }
 
 func (h *Host) privateRoute(user string) string {
+	if !h.authorized(user) {
+		return ""
+	}
 	for _, r := range h.routes {
 		if r.User == user {
 			return r.PrivateChat

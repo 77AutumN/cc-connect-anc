@@ -396,6 +396,7 @@ func main() {
 	var actionToolEngines []*core.Engine
 	knowledgeAttached := map[string]bool{}
 	reminderPlatforms := map[string]core.Platform{}
+	reminderEngines := map[string]*core.Engine{}
 	combinedHosts := map[string]core.ActionHost{}
 	crmToolErrors := make(chan error, 1)
 
@@ -507,6 +508,7 @@ func main() {
 			engine.SetActionHost(combinedHost)
 		}
 		combinedHosts[proj.Name] = combinedHost
+		reminderEngines[proj.Name] = engine
 		if len(platforms) == 1 {
 			reminderPlatforms[proj.Name] = platforms[0]
 		}
@@ -1075,7 +1077,7 @@ func main() {
 			for _, r := range routes {
 				if r.Chat == r.PrivateChat {
 					if sender, ok := reminderPlatforms[r.Project].(core.ReminderSender); ok {
-						senders[r.User] = sender
+						senders[r.User] = authorizedReminderSender{engine: reminderEngines[r.Project], user: r.User, sender: sender}
 					}
 				}
 			}

@@ -1,10 +1,28 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"github.com/chenhg5/cc-connect/actionhost/reminders"
 	"github.com/chenhg5/cc-connect/config"
+	"github.com/chenhg5/cc-connect/core"
 )
+
+type authorizedReminderSender struct {
+	engine *core.Engine
+	user   string
+	sender core.ReminderSender
+}
+
+func (s authorizedReminderSender) ReminderAuthorized() bool {
+	return s.engine.HostedUserAuthorized(s.user)
+}
+func (s authorizedReminderSender) SendReminder(ctx context.Context, chat, text, id string) (string, error) {
+	if !s.ReminderAuthorized() {
+		return "", core.ErrReminderPermission
+	}
+	return s.sender.SendReminder(ctx, chat, text, id)
+}
 
 // The CRM project-set validator has already checked exact identities, one app,
 // six isolated environments, three private chats and a shared group. This only

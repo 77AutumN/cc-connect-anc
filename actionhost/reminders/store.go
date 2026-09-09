@@ -3,6 +3,7 @@
 package reminders
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -105,7 +106,7 @@ func Open(path string) (*Store, error) {
 	}
 	info, err := os.Lstat(path)
 	dir, dirErr := os.Lstat(filepath.Dir(path))
-	if err != nil || dirErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || !dir.IsDir() || dir.Mode().Perm()&0077 != 0 || dir.Mode()&os.ModeSymlink != 0 {
+	if err != nil || dirErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Mode().Perm()&0200 == 0 || !dir.IsDir() || dir.Mode().Perm()&0077 != 0 || dir.Mode()&os.ModeSymlink != 0 {
 		return nil, ErrUnavailable
 	}
 	db, err := sql.Open("sqlite", sqliteExisting(path))
@@ -134,7 +135,7 @@ func (s *Store) change(ctx context.Context, fn func(*state) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	info, err := os.Lstat(s.path)
-	if s.failed || err != nil || !os.SameFile(s.file, info) || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if s.failed || err != nil || !os.SameFile(s.file, info) || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Mode().Perm()&0200 == 0 {
 		s.failed = true
 		return ErrUnavailable
 	}
@@ -159,8 +160,9 @@ func (s *Store) change(ctx context.Context, fn func(*state) error) error {
 	if err = fn(&st); err != nil {
 		return err
 	}
+	original := data
 	data, err = json.Marshal(st)
-	if err == nil {
+	if err == nil && !bytes.Equal(original, data) {
 		_, err = conn.ExecContext(ctx, "UPDATE reminder_state SET payload=? WHERE id=1", string(data))
 	}
 	if err == nil {
