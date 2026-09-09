@@ -1,5 +1,11 @@
 # CC-Connect Development Guide
 
+For implementation handoff, PR review/merge, VPS candidate preparation or
+emergency repair, first read the shared
+[CRM/gateway release contract](https://github.com/77AutumN/myanc-crm/blob/main/ops/RELEASE.md).
+It is authoritative for this private fork's delivery process; existing upstream
+build targets remain development builds and do not authorize VPS deployment.
+
 ## Project Overview
 
 CC-Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.

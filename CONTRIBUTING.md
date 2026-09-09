@@ -1,5 +1,9 @@
 # Contributing to cc-connect
 
+For this private fork, implementation handoff, PR merge and VPS releases follow
+the shared [release contract](https://github.com/77AutumN/myanc-crm/blob/main/ops/RELEASE.md).
+The upstream contribution guidance below does not grant deployment authority.
+
 [中文](#为-cc-connect-做贡献) | [English](#contributing-to-cc-connect)
 
 Thank you for using cc-connect and for every issue, pull request, and piece of feedback that helps improve it. This guide turns the contributor welcome note from [#295](https://github.com/chenhg5/cc-connect/issues/295) into a permanent repo document.
