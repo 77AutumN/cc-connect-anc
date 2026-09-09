@@ -170,38 +170,7 @@ func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p 
 		case "reminder-list":
 			result = h.list(st, r, in, lang)
 		case "reminder-update", "reminder-cancel":
-			item := st.Items[*in.ID]
-			if item == nil || item.User != r.User || (r.Chat != r.PrivateChat && item.Chat != r.Chat) {
-				result = blocked("not_found")
-				break
-			}
-			if item.Version != *in.Version {
-				result = blocked("version_conflict")
-				break
-			}
-			if item.Status != "pending" && item.Status != "sending" && item.Status != "retry" && item.Status != "paused" {
-				result = blocked("already_final")
-				break
-			}
-			if command == "reminder-update" && item.Status != "pending" {
-				result = blocked("already_dispatching")
-				break
-			}
-			item.Version++
-			if command == "reminder-cancel" {
-				inflight := item.Batch != ""
-				item.Status = "cancelled"
-				result = map[string]any{"status": "cancelled", "id": item.ID, "version": item.Version, "may_be_in_flight": inflight}
-			} else {
-				if in.At != nil {
-					at, _ := time.Parse(time.RFC3339, *in.At)
-					item.At = at.Unix()
-				}
-				if in.Content != nil {
-					item.Content = strings.TrimSpace(*in.Content)
-				}
-				result = map[string]any{"status": "updated", "reminder": visible(item)}
-			}
+			result = changeReminder(st, r, command, in)
 		}
 		if result == nil {
 			return errors.New("unsupported_command")
@@ -219,6 +188,35 @@ func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p 
 }
 
 var beijing = time.FixedZone("Asia/Shanghai", 8*60*60)
+
+func changeReminder(st *state, r Route, command string, in input) map[string]any {
+	item := st.Items[*in.ID]
+	if item == nil || item.User != r.User || (r.Chat != r.PrivateChat && item.Chat != r.Chat) {
+		return blocked("not_found")
+	}
+	if item.Version != *in.Version {
+		return blocked("version_conflict")
+	}
+	if item.Status != "pending" && item.Status != "sending" && item.Status != "retry" && item.Status != "paused" {
+		return blocked("already_final")
+	}
+	if command == "reminder-update" && item.Status != "pending" {
+		return blocked("already_dispatching")
+	}
+	item.Version++
+	if command == "reminder-cancel" {
+		item.Status = "cancelled"
+		return map[string]any{"status": "cancelled", "id": item.ID, "version": item.Version, "may_be_in_flight": item.Batch != ""}
+	}
+	if in.At != nil {
+		at, _ := time.Parse(time.RFC3339, *in.At)
+		item.At = at.Unix()
+	}
+	if in.Content != nil {
+		item.Content = strings.TrimSpace(*in.Content)
+	}
+	return map[string]any{"status": "updated", "reminder": visible(item)}
+}
 
 func (h *Host) authorized(user string) bool {
 	sender := h.senders[user]
