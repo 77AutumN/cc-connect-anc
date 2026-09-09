@@ -754,7 +754,7 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 	if response, handled := p.handleHostedCardAction(event.Event.Action.Value, userID, chatID, messageID, trustedSessionKey); handled {
 		return response, nil
 	}
-	if p.strictRoutes && !(strings.HasPrefix(actionVal, "perm:") || strings.HasPrefix(actionVal, "askq:")) {
+	if p.strictRoutes && !strings.HasPrefix(actionVal, "perm:") && !strings.HasPrefix(actionVal, "askq:") {
 		return nil, nil
 	}
 	interactionID := ""
