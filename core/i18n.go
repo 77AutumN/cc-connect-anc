@@ -762,7 +762,41 @@ const (
 	MsgCRMFieldContent                    MsgKey = "crm_field_content"
 )
 
+const (
+	MsgKnowledgePreview         MsgKey = "knowledge_preview"
+	MsgKnowledgePublished       MsgKey = "knowledge_published"
+	MsgKnowledgeNeedsReview     MsgKey = "knowledge_needs_review"
+	MsgKnowledgeReviewBody      MsgKey = "knowledge_review_body"
+	MsgKnowledgeReviewAgainBody MsgKey = "knowledge_review_again_body"
+)
+
 var messages = map[MsgKey]map[Language]string{
+	MsgKnowledgePreview: {
+		LangEnglish: "Review knowledge changes", LangChinese: "确认知识变更", LangTraditionalChinese: "確認知識變更",
+		LangJapanese: "ナレッジ変更の確認", LangSpanish: "Revisar cambios de conocimiento",
+	},
+	MsgKnowledgePublished: {
+		LangEnglish: "Knowledge published and verified", LangChinese: "知识已发布并核对", LangTraditionalChinese: "知識已發佈並核對",
+		LangJapanese: "ナレッジ公開・照合済み", LangSpanish: "Conocimiento publicado y verificado",
+	},
+	MsgKnowledgeNeedsReview: {
+		LangEnglish: "Knowledge change not published", LangChinese: "本次知识变更未发布", LangTraditionalChinese: "本次知識變更未發佈",
+		LangJapanese: "ナレッジ変更は未公開です", LangSpanish: "Cambio de conocimiento sin publicar",
+	},
+	MsgKnowledgeReviewBody: {
+		LangEnglish:            "Only the submitting member can confirm this preview, within 24 hours. Confirming the record does not mean the customer accepted the requirement. Check source labels and private information.",
+		LangChinese:            "请提交者在 24 小时内核对并确认这份变更。确认记录准确不等于客户已确认需求。请检查来源标签及隐私信息。",
+		LangTraditionalChinese: "請提交者在 24 小時內核對並確認這份變更。確認記錄準確不等於客戶已確認需求。請檢查來源標籤及隱私資訊。",
+		LangJapanese:           "提出者が24時間以内に変更内容・出典・個人情報を確認してください。記録の確認は顧客の要件承認を意味しません。",
+		LangSpanish:            "Solo quien envió el borrador puede confirmarlo en 24 horas. Confirmar el registro no significa que el cliente aceptó el requisito. Revise fuentes y datos privados.",
+	},
+	MsgKnowledgeReviewAgainBody: {
+		LangEnglish:            "Check the current page before submitting a new preview. If publication was interrupted, an administrator must reconcile the remote result first.",
+		LangChinese:            "请核对当前页面，再提交新草稿。若发布曾中断，应先由管理员核对远端结果。",
+		LangTraditionalChinese: "請核對目前頁面，再提交新草稿。若發佈曾中斷，應先由管理員核對遠端結果。",
+		LangJapanese:           "現在のページを確認してから新しい下書きを提出してください。公開中断時は管理者が先に結果を照合してください。",
+		LangSpanish:            "Revise la página actual antes de enviar otro borrador. Si la publicación se interrumpió, un administrador debe verificar primero el resultado remoto.",
+	},
 	MsgStarting: {
 		LangEnglish:            "⏳ Processing...",
 		LangChinese:            "⏳ 处理中...",

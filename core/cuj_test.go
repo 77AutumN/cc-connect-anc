@@ -374,6 +374,63 @@ func TestCUJ_CUSTOMER1_ProfileThenSeparateFollowupCancelAndDiscuss(t *testing.T)
 	}
 }
 
+func TestCUJ_KNOWLEDGE1_PrepareCaptureConfirmAndReturnToExistingTool(t *testing.T) {
+	p := &cujNextPlatform{gatewaySpikePlatform: gatewaySpikePlatform{hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}}}
+	primary := &actionToolHostStub{toolResult: map[string]any{"status": "ok", "result": "Existing customer history"}}
+	secondary := &secondToolHost{}
+	a := &actionToolJourneyAgent{}
+	e := NewEngine("test-project", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	e.SetActionHost(CombineActionHosts(primary, secondary, []string{"knowledge_search", "knowledge_propose", "knowledge_read"}))
+	secondary.executeResult = &ActionHostResult{Kind: secondary.Kind(), Status: "verified", Card: NewCard().Title("Knowledge verified", "green").Build()}
+	a.tool = func(prompt string) string {
+		primary.mu.Lock()
+		token := primary.envTokens[len(primary.envTokens)-1]
+		primary.mu.Unlock()
+		command := "knowledge_search"
+		secondary.toolCard = nil
+		secondary.toolResult = map[string]any{"status": "ok", "result": "Meeting sources with gaps"}
+		if strings.Contains(prompt, "Capture") {
+			command = "knowledge_propose"
+			secondary.toolCard = &ActionHostResult{Kind: secondary.Kind(), Status: "pending", ApprovalID: "knowledge-card", ChangeID: "knowledge-change", Card: NewCard().Title("Review meeting facts", "blue").Build()}
+		}
+		if strings.Contains(prompt, "Customer history") {
+			command = "customer"
+		}
+		return actionToolRequest(ActionToolsHandler(e), "POST", "/tool", token, `{"command":"`+command+`","input":{}}`).Body.String()
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	env := &cujEnv{t: t, engine: e, plat: &p.stubPlatformEngine, agent: &a.cujAgent}
+	const key = "test:chat:owner"
+	send := func(content, want string) {
+		t.Helper()
+		p.clearSent()
+		e.ReceiveMessage(p, &Message{SessionKey: key, Platform: "test", UserID: "owner", ChannelID: "chat", MessageID: "request", Content: content, ReplyCtx: "reply"})
+		env.waitFor(content, 2*time.Second, func() bool { return env.sentContains(want) })
+	}
+	send("Prepare meeting", "Meeting sources with gaps")
+	send("Capture meeting", "Review meeting facts")
+	click := TrustedCardAction{Kind: secondary.Kind(), ApprovalID: "knowledge-card", Decision: ActionApprove,
+		Principal: ActionPrincipal{UserID: "owner", ChatID: "chat", SessionKey: key, MessageID: "journey-card-1"}}
+	response := p.callback(click)
+	if response.Complete == nil {
+		t.Fatal("knowledge confirmation not routed")
+	}
+	completed := response.Complete()
+	if err := p.RefreshCardMessage(e.ctx, "journey-card-1", key, completed.Card); err != nil {
+		t.Fatal(err)
+	}
+	if !env.sentContains("Knowledge verified") {
+		t.Fatal("missing verified receipt")
+	}
+	send("Customer history", "Existing customer history")
+	if len(primary.executions) != 0 || len(secondary.executions) != 1 {
+		t.Fatal("writes crossed hosts")
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
