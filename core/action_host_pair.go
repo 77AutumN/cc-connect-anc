@@ -28,6 +28,9 @@ func (h *actionHostPair) Match(event Event) (ActionRef, bool) {
 }
 
 func (h *actionHostPair) SessionEnv(token string) ([]string, error) {
+	if err := ValidateActionHosts(h); err != nil {
+		return nil, err
+	}
 	first, err := h.ActionHost.SessionEnv(token)
 	if err != nil {
 		return nil, err
@@ -43,11 +46,18 @@ func (h *actionHostPair) SessionEnv(token string) ([]string, error) {
 }
 
 func actionHostForKind(host ActionHost, kind string) ActionHost {
+	if ValidateActionHosts(host) != nil {
+		return nil
+	}
+	return findActionKind(host, kind)
+}
+
+func findActionKind(host ActionHost, kind string) ActionHost {
 	if pair, ok := host.(*actionHostPair); ok {
-		if pair.additional.Kind() == kind {
-			return pair.additional
+		if found := findActionKind(pair.additional, kind); found != nil {
+			return found
 		}
-		host = pair.ActionHost
+		return findActionKind(pair.ActionHost, kind)
 	}
 	if host != nil && host.Kind() == kind {
 		return host
@@ -56,13 +66,54 @@ func actionHostForKind(host ActionHost, kind string) ActionHost {
 }
 
 func actionHostForCommand(host ActionHost, command string) ActionHost {
+	if ValidateActionHosts(host) != nil {
+		return nil
+	}
+	return findActionCommand(host, command)
+}
+
+func findActionCommand(host ActionHost, command string) ActionHost {
 	if pair, ok := host.(*actionHostPair); ok {
 		for _, candidate := range pair.commands {
 			if command == candidate {
-				return pair.additional
+				return findActionCommand(pair.additional, command)
 			}
 		}
-		return pair.ActionHost
+		return findActionCommand(pair.ActionHost, command)
 	}
 	return host
+}
+
+// ValidateActionHosts rejects ambiguous composition before any tool/card can
+// reach a backend. Primary legacy commands remain reserved for the base host.
+func ValidateActionHosts(host ActionHost) error {
+	kinds := map[string]bool{}
+	commands := map[string]bool{}
+	for _, command := range []string{"open", "customer", "stage", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
+		commands[command] = true
+	}
+	var visit func(ActionHost) error
+	visit = func(node ActionHost) error {
+		if node == nil {
+			return nil
+		}
+		if pair, ok := node.(*actionHostPair); ok {
+			for _, command := range pair.commands {
+				if command == "" || commands[command] {
+					return errors.New("duplicate action command")
+				}
+				commands[command] = true
+			}
+			if err := visit(pair.ActionHost); err != nil {
+				return err
+			}
+			return visit(pair.additional)
+		}
+		if node.Kind() == "" || kinds[node.Kind()] {
+			return errors.New("duplicate action domain")
+		}
+		kinds[node.Kind()] = true
+		return nil
+	}
+	return visit(host)
 }

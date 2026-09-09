@@ -431,6 +431,46 @@ func TestCUJ_KNOWLEDGE1_PrepareCaptureConfirmAndReturnToExistingTool(t *testing.
 	}
 }
 
+// This CUJ checks real Engine transport/clock/three-domain wiring. Reminder
+// persistence and delivery failures are tested against the real SQLite host.
+func TestCUJ_REMINDER1_ClockCreateKnowledgeAndCRM(t *testing.T) {
+	p := &cujNextPlatform{gatewaySpikePlatform: gatewaySpikePlatform{hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test"}}}}
+	primary := &actionToolHostStub{toolResult: map[string]any{"status": "ok", "result": "CRM_UNCHANGED"}}
+	knowledge := &secondToolHost{}
+	knowledge.toolResult = map[string]any{"status": "ok", "result": "KNOWLEDGE_UNCHANGED"}
+	reminder := &thirdToolHost{}
+	reminder.toolResult = map[string]any{"status": "created", "id": "REMINDER_RECEIPT"}
+	a := &actionToolJourneyAgent{}
+	e := NewEngine("test-project", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+	e.SetActionHost(CombineActionHosts(CombineActionHosts(primary, knowledge, []string{"knowledge_read"}), reminder, []string{"reminder-create", "reminder-list"}))
+	a.tool = func(prompt string) string {
+		if !strings.Contains(prompt, "reference=2026-09-09T12:00:00+08:00") {
+			return "CLOCK_MISSING"
+		}
+		primary.mu.Lock()
+		token := primary.envTokens[len(primary.envTokens)-1]
+		primary.mu.Unlock()
+		command := "reminder-create"
+		if strings.Contains(prompt, "Read knowledge") {
+			command = "knowledge_read"
+		}
+		if strings.Contains(prompt, "Read customer") {
+			command = "customer"
+		}
+		return actionToolRequest(e.ActionToolHandler(), "POST", "/tool", token, `{"command":"`+command+`","input":{}}`).Body.String()
+	}
+	if err := e.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Stop() })
+	env := &cujEnv{t: t, engine: e, plat: &p.stubPlatformEngine, agent: &a.cujAgent}
+	for index, step := range [][2]string{{"Remind me Monday", "REMINDER_RECEIPT"}, {"Read knowledge", "KNOWLEDGE_UNCHANGED"}, {"Read customer", "CRM_UNCHANGED"}} {
+		p.clearSent()
+		e.ReceiveMessage(p, &Message{SessionKey: "test:chat:owner", Platform: "test", UserID: "owner", ChannelID: "chat", MessageID: fmt.Sprintf("request-%d", index), Content: step[0], ReplyCtx: "reply", UserMessageTimeMs: time.Date(2026, 9, 9, 4, 0, 0, 0, time.UTC).UnixMilli()})
+		env.waitFor(step[0], 2*time.Second, func() bool { return env.sentContains(step[1]) })
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

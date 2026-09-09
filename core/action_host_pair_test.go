@@ -7,6 +7,50 @@ import (
 
 type secondToolHost struct{ actionToolHostStub }
 
+type thirdToolHost struct{ actionToolHostStub }
+
+func (h *thirdToolHost) Kind() string               { return "reminder.action.v1" }
+func (h *thirdToolHost) RequiresMessageClock() bool { return true }
+
+func TestThreeActionDomainsTraverseNestedToolsAndCards(t *testing.T) {
+	e, primary, _, state := actionToolFixture(t)
+	secondary, third := &secondToolHost{}, &thirdToolHost{}
+	secondary.toolResult = map[string]any{"status": "ok"}
+	third.toolResult = map[string]any{"status": "ok"}
+	h := CombineActionHosts(CombineActionHosts(primary, secondary, []string{"knowledge_read"}), third, []string{"reminder-list"})
+	e.SetActionHost(h)
+	for _, command := range []string{"customer", "knowledge_read", "reminder-list"} {
+		w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, fmt.Sprintf(`{"command":%q,"input":{}}`, command))
+		if w.Code != 200 {
+			t.Fatalf("%s: %s", command, w.Body.String())
+		}
+	}
+	if primary.toolCalls != 1 || secondary.toolCalls != 1 || third.toolCalls != 1 {
+		t.Fatal("cross-domain tool dispatch")
+	}
+	for _, leaf := range []ActionHost{primary, secondary, third} {
+		if actionHostForKind(h, leaf.Kind()) != leaf {
+			t.Fatal("nested card domain lost")
+		}
+	}
+}
+
+func TestActionCompositionRejectsNestedDuplicates(t *testing.T) {
+	_, primary, _, _ := actionToolFixture(t)
+	for _, h := range []ActionHost{
+		CombineActionHosts(CombineActionHosts(primary, &secondToolHost{}, []string{"knowledge_read"}), &secondToolHost{}, []string{"reminder-list"}),
+		CombineActionHosts(CombineActionHosts(primary, &secondToolHost{}, []string{"knowledge_read"}), &thirdToolHost{}, []string{"knowledge_read"}),
+		CombineActionHosts(primary, &thirdToolHost{}, []string{"customer"}),
+	} {
+		if ValidateActionHosts(h) == nil || actionHostForCommand(h, "customer") != nil || actionHostForKind(h, primary.Kind()) != nil {
+			t.Fatal("ambiguous routing accepted")
+		}
+		if _, err := h.SessionEnv("token"); err == nil {
+			t.Fatal("ambiguous session accepted")
+		}
+	}
+}
+
 func (h *secondToolHost) Kind() string                  { return "second.action.v1" }
 func (h *secondToolHost) Match(Event) (ActionRef, bool) { return ActionRef{}, false }
 

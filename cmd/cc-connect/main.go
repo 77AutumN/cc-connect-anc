@@ -21,6 +21,7 @@ import (
 
 	ccconnect "github.com/chenhg5/cc-connect"
 	"github.com/chenhg5/cc-connect/actionhost/crmfollowup"
+	"github.com/chenhg5/cc-connect/actionhost/reminders"
 	"github.com/chenhg5/cc-connect/actionhost/teambrain"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
@@ -235,6 +236,15 @@ var topLevelCommandHandlers = map[string]func([]string){
 }
 
 func main() {
+	reminderDBPath := os.Getenv("MYANC_REMINDER_DB")
+	_ = os.Unsetenv("MYANC_REMINDER_DB") // never inherited by model children
+	if len(os.Args) > 1 && os.Args[1] == "reminders-init" {
+		if len(os.Args) != 3 || reminders.Initialize(os.Args[2]) != nil {
+			slog.Error("reminder initialization refused")
+			os.Exit(1)
+		}
+		return
+	}
 	// Agy hooks require stdout to contain only the final JSON decision. Handle
 	// this internal command before update checks, logging, or normal CLI setup.
 	if len(os.Args) > 1 && os.Args[1] == "_agy-permission-hook" {
@@ -385,6 +395,8 @@ func main() {
 	var crmToolServer *core.ActionToolServer
 	var actionToolEngines []*core.Engine
 	knowledgeAttached := map[string]bool{}
+	reminderPlatforms := map[string]core.Platform{}
+	combinedHosts := map[string]core.ActionHost{}
 	crmToolErrors := make(chan error, 1)
 
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
@@ -493,6 +505,10 @@ func main() {
 		}
 		if combinedHost != nil {
 			engine.SetActionHost(combinedHost)
+		}
+		combinedHosts[proj.Name] = combinedHost
+		if len(platforms) == 1 {
+			reminderPlatforms[proj.Name] = platforms[0]
 		}
 		if toolsEnabled {
 			actionToolEngines = append(actionToolEngines, engine)
@@ -1045,6 +1061,51 @@ func main() {
 		engines = append(engines, engine)
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
+	var reminderHost *reminders.Host
+	if reminderDBPath != "" {
+		projects := map[string]bool{}
+		for name := range crmActionHosts {
+			projects[name] = true
+		}
+		routes, routeErr := reminderRoutes(cfg, projects)
+		if routeErr != nil {
+			slog.Error("reminders disabled", "code", "invalid_routes")
+		} else {
+			senders := map[string]reminders.Sender{}
+			for _, r := range routes {
+				if r.Chat == r.PrivateChat {
+					if sender, ok := reminderPlatforms[r.Project].(core.ReminderSender); ok {
+						senders[r.User] = sender
+					}
+				}
+			}
+			store, openErr := reminders.Open(reminderDBPath)
+			if openErr != nil {
+				slog.Error("reminders unavailable", "code", "storage_unavailable")
+			}
+			reminderHost, err = reminders.New(store, routes, senders)
+			if err != nil {
+				slog.Error("reminders disabled", "code", "invalid_sender")
+				if store != nil {
+					_ = store.Close()
+				}
+			} else {
+				if store != nil {
+					defer func() { _ = store.Close() }()
+				}
+				for i, p := range cfg.Projects {
+					if projects[p.Name] {
+						host := core.CombineActionHosts(combinedHosts[p.Name], reminderHost, reminders.Commands())
+						if core.ValidateActionHosts(host) != nil {
+							slog.Error("ambiguous action domains")
+							os.Exit(1)
+						}
+						engines[i].SetActionHost(host)
+					}
+				}
+			}
+		}
+	}
 	if knowledgeHost != nil && len(knowledgeAttached) != 6 {
 		slog.Error("not all six knowledge environments were found")
 		os.Exit(1)
@@ -1142,6 +1203,13 @@ func main() {
 		if err := cronSched.Start(); err != nil {
 			slog.Error("cron scheduler start failed", "error", err)
 		}
+	}
+	reminderCtx, stopReminders := context.WithCancel(context.Background())
+	reminderDone := make(chan struct{})
+	if reminderHost != nil {
+		go func() { defer close(reminderDone); reminderHost.Run(reminderCtx, core.Language(cfg.Language)) }()
+	} else {
+		close(reminderDone)
 	}
 
 	if timerSched != nil {
@@ -1439,6 +1507,8 @@ func main() {
 	}
 
 	slog.Info("shutting down...")
+	stopReminders()
+	<-reminderDone
 	if crmToolServer != nil {
 		if err := crmToolServer.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("CRM tool listener shutdown failed", "error", err)
@@ -1501,6 +1571,9 @@ func main() {
 		}
 		if knowledgeHost != nil {
 			restartEnv = knowledgeHost.RestartEnv(restartEnv)
+		}
+		if reminderDBPath != "" {
+			restartEnv = append(restartEnv, "MYANC_REMINDER_DB="+reminderDBPath)
 		}
 		if err := restartProcess(execPath, restartEnv); err != nil {
 			slog.Error("restart: failed", "error", err)
