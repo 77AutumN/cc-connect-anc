@@ -81,7 +81,7 @@ func TestSubprocessReceivesAuthenticatedPrincipalAndNoInheritedSecrets(t *testin
 	directory := t.TempDir()
 	capture := filepath.Join(directory, "request.json")
 	script := filepath.Join(directory, "host")
-	body := "#!/bin/sh\ncat > '" + capture + "'\nif [ -n \"$SYNTHETIC_SECRET\" ]; then exit 1; fi\nprintf '%s' '{\"status\":\"ok\"}'\n"
+	body := "#!/bin/sh\nif [ \"$PWD\" != '" + strings.ReplaceAll(directory, "'", "'\"'\"'") + "' ]; then exit 2; fi\ncat > '" + capture + "'\nif [ -n \"$SYNTHETIC_SECRET\" ]; then exit 1; fi\nprintf '%s' '{\"status\":\"ok\"}'\n"
 	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
