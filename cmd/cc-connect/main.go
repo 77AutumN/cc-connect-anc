@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -241,7 +242,7 @@ func main() {
 	}
 	// Capture and remove host-only CRM credentials before update checks,
 	// config helpers, run-as probes, or Agent construction can spawn a child.
-	crmActionHost, crmActionProject, err := crmfollowup.NewFromEnv()
+	crmActionHosts, err := crmfollowup.NewProjectHostsFromEnv()
 	if err != nil {
 		slog.Error("CRM action host configuration invalid", "error", err)
 		os.Exit(1)
@@ -354,6 +355,16 @@ func main() {
 	}
 
 	setupLogger(cfg.Log.Level, logWriter)
+	if err := validateCRMProjectSet(cfg, crmActionHosts); err != nil {
+		slog.Error("CRM project configuration invalid", "error", err)
+		os.Exit(1)
+	}
+	if len(crmActionHosts) > 1 {
+		if err := validatePartnerRuntimeAccounts(cfg, user.Lookup); err != nil {
+			slog.Error("CRM runtime account configuration invalid", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	// run_as_user preflight + isolation audit. MUST run before any engine
 	// or agent is constructed. If any project fails, abort startup
@@ -364,9 +375,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	crmActionHostAttached := false
+	crmActionHostAttached := make(map[string]bool)
 	var crmToolServer *core.ActionToolServer
-	var crmToolEngine *core.Engine
+	var crmToolEngines []*core.Engine
 	crmToolErrors := make(chan error, 1)
 
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
@@ -385,7 +396,11 @@ func main() {
 				proj.Agent.Options["run_as_env"] = proj.RunAsEnv
 			}
 		}
-		agent, err := core.CreateAgent(proj.Agent.Type, buildAgentOptions(cfg.DataDir, proj))
+		agentDataDir := cfg.DataDir
+		if len(crmActionHosts) > 1 {
+			agentDataDir = filepath.Join(cfg.DataDir, "environments", proj.Name)
+		}
+		agent, err := core.CreateAgent(proj.Agent.Type, buildAgentOptions(agentDataDir, proj))
 		if err != nil {
 			slog.Error("failed to create agent", "project", proj.Name, "error", err)
 			os.Exit(1)
@@ -401,6 +416,7 @@ func main() {
 			}
 			opts["cc_data_dir"] = cfg.DataDir
 			opts["cc_project"] = proj.Name
+			opts["cc_strict_routes"] = len(crmActionHosts) > 1
 			p, err := core.CreatePlatform(pc.Type, opts)
 			if err != nil {
 				slog.Error("failed to create platform", "project", proj.Name, "type", pc.Type, "error", err)
@@ -411,7 +427,10 @@ func main() {
 
 		workDir, _ := proj.Agent.Options["work_dir"].(string)
 		projectState := core.NewProjectStateStore(projectStatePath(cfg.DataDir, proj.Name))
-		effectiveWorkDir := applyProjectStateOverride(proj.Name, agent, workDir, projectState)
+		effectiveWorkDir := workDir
+		if len(crmActionHosts) <= 1 {
+			effectiveWorkDir = applyProjectStateOverride(proj.Name, agent, workDir, projectState)
+		}
 		startInitialRefreshIfReady(agent, providerWiring)
 		sessionFile := sessionStorePath(cfg.DataDir, proj.Name, effectiveWorkDir)
 
@@ -433,8 +452,8 @@ func main() {
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
-		if crmActionHost != nil && proj.Name == crmActionProject {
-			if crmActionHostAttached {
+		if crmActionHost := crmActionHosts[proj.Name]; crmActionHost != nil {
+			if crmActionHostAttached[proj.Name] {
 				slog.Error("CRM action host project must be unique")
 				os.Exit(1)
 			}
@@ -448,15 +467,9 @@ func main() {
 			}
 			engine.SetActionHost(crmActionHost)
 			if crmActionHost.ToolsEnabled() {
-				crmToolServer, err = core.ListenActionTools("127.0.0.1:18743", engine.ActionToolHandler())
-				if err != nil {
-					slog.Error("CRM tool listener startup failed", "error", err)
-					os.Exit(1)
-				}
-				crmToolEngine = engine
-				go func() { crmToolErrors <- crmToolServer.Serve() }()
+				crmToolEngines = append(crmToolEngines, engine)
 			}
-			crmActionHostAttached = true
+			crmActionHostAttached[proj.Name] = true
 		}
 		// Wire display settings including show_context_indicator and reply_footer
 		// Global [display] config can be overridden by project-level settings
@@ -1000,12 +1013,29 @@ func main() {
 			return fmt.Sprintf("http://localhost:%d", port)
 		})
 
+		if len(crmActionHosts) > 1 {
+			engine.SetConversationOnly()
+		}
 		engines = append(engines, engine)
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
-	if crmActionHost != nil && !crmActionHostAttached {
-		slog.Error("CRM action host project is not configured", "project", crmActionProject)
+	if len(crmActionHosts) != len(crmActionHostAttached) {
+		slog.Error("CRM action host project is not configured")
 		os.Exit(1)
+	}
+	for _, engine := range engines {
+		if err := engine.PreparePlatforms(); err != nil {
+			slog.Error("receiver registration failed before startup", "error", err)
+			os.Exit(1)
+		}
+	}
+	if len(crmToolEngines) > 0 {
+		crmToolServer, err = core.ListenActionTools("127.0.0.1:18743", core.ActionToolsHandler(crmToolEngines...))
+		if err != nil {
+			slog.Error("CRM tool listener startup failed", "error", err)
+			os.Exit(1)
+		}
+		go func() { crmToolErrors <- crmToolServer.Serve() }()
 	}
 
 	// Start cron scheduler
@@ -1061,8 +1091,10 @@ func main() {
 	var startErrors []error
 	for _, e := range engines {
 		if err := e.Start(); err != nil {
-			if e == crmToolEngine {
-				_ = crmToolServer.Close()
+			if len(crmActionHosts) > 0 {
+				if crmToolServer != nil {
+					_ = crmToolServer.Close()
+				}
 				slog.Error("CRM engine startup failed; tool listener closed", "error", err)
 				os.Exit(1)
 			}
@@ -1433,8 +1465,9 @@ func main() {
 		}
 		slog.Info("restarting...", "path", execPath, "args", os.Args)
 		restartEnv := os.Environ()
-		if crmActionHost != nil {
+		for _, crmActionHost := range crmActionHosts {
 			restartEnv = crmActionHost.RestartEnv(restartEnv)
+			break // All adapters captured the same supervisor credential.
 		}
 		if err := restartProcess(execPath, restartEnv); err != nil {
 			slog.Error("restart: failed", "error", err)
@@ -1443,6 +1476,113 @@ func main() {
 	}
 
 	slog.Info("bye")
+}
+
+func validateCRMProjectSet(cfg *config.Config, hosts map[string]*crmfollowup.Adapter) error {
+	if len(hosts) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	users, dirs, routes := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	appID, domain, credential := "", "", ""
+	senders, chats := map[string]int{}, map[string]int{}
+	var totalCapacity int64
+	for _, proj := range cfg.Projects {
+		if hosts[proj.Name] == nil {
+			if len(hosts) > 1 {
+				return errors.New("fixed CRM deployment cannot contain unregistered projects")
+			}
+			continue
+		}
+		if seen[proj.Name] {
+			return errors.New("CRM project names must be unique")
+		}
+		seen[proj.Name] = true
+		if err := validateCRMActionHostProject(proj); err != nil {
+			return err
+		}
+		if len(hosts) == 1 {
+			continue
+		}
+		workDir, _ := proj.Agent.Options["work_dir"].(string)
+		if !filepath.IsAbs(workDir) || users[proj.RunAsUser] || dirs[filepath.Clean(workDir)] {
+			return errors.New("fixed environments require distinct Unix users and absolute work directories")
+		}
+		for other := range dirs {
+			for _, pair := range [][2]string{{other, workDir}, {workDir, other}} {
+				rel, err := filepath.Rel(pair[0], pair[1])
+				if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return errors.New("fixed work directories cannot overlap")
+				}
+			}
+		}
+		users[proj.RunAsUser], dirs[filepath.Clean(workDir)] = true, true
+		capacity, err := core.ParseImageCacheCapacityMiB(proj.Agent.Options["image_cache_capacity_mib"])
+		if err != nil || capacity > 128 {
+			return errors.New("fixed environments require explicit image caches between 1 and 128 MiB")
+		}
+		totalCapacity += capacity
+		if totalCapacity > 512 {
+			return errors.New("fixed environment image caches cannot exceed 512 MiB in total")
+		}
+		opts := proj.Platforms[0].Options
+		sender, _ := opts["allow_from"].(string)
+		chat, _ := opts["allow_chat"].(string)
+		for _, value := range []string{sender, chat} {
+			if value == "" || strings.ContainsAny(value, "*, \t\r\n") {
+				return errors.New("fixed routes require one exact sender and actual chat ID")
+			}
+		}
+		route := sender + "\x00" + chat
+		if routes[route] {
+			return errors.New("duplicate fixed sender/chat route")
+		}
+		routes[route] = true
+		senders[sender]++
+		chats[chat]++
+		id, _ := opts["app_id"].(string)
+		secret, _ := opts["app_secret"].(string)
+		endpoint, _ := opts["domain"].(string)
+		endpoint = strings.TrimRight(strings.ToLower(strings.TrimSpace(endpoint)), "/")
+		if endpoint == "" {
+			endpoint = "https://open.feishu.cn"
+		}
+		if id == "" || secret == "" || (appID != "" && (id != appID || endpoint != domain || secret != credential)) {
+			return errors.New("fixed CRM environments must share one receiving app")
+		}
+		appID, domain, credential = id, endpoint, secret
+	}
+	if len(seen) != len(hosts) {
+		return errors.New("CRM host references an unconfigured project")
+	}
+	if len(hosts) > 1 && len(hosts) != 4 && len(hosts) != 6 {
+		return errors.New("partner deployment requires four or six fixed environments")
+	}
+	if len(hosts) > 1 {
+		people := len(hosts) / 2
+		if len(senders) != people || len(chats) != people+1 {
+			return errors.New("each authorized person requires a private chat and the same shared chat")
+		}
+		for _, count := range senders {
+			if count != 2 {
+				return errors.New("each sender requires one private and one group environment")
+			}
+		}
+		shared := 0
+		for _, count := range chats {
+			switch count {
+			case 1: // One private chat per person.
+			case people:
+				shared++
+			default:
+				return errors.New("private chats cannot be shared between fixed senders")
+			}
+		}
+		if shared != 1 {
+			return errors.New("fixed senders must have exactly one common shared chat")
+		}
+	}
+	return nil
 }
 
 func validateCRMActionHostProject(proj config.ProjectConfig) error {

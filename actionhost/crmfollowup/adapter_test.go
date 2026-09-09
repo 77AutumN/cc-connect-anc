@@ -48,6 +48,44 @@ func TestNewFromEnvToolsRequiresExplicitOptInAndHost(t *testing.T) {
 	}
 }
 
+func TestProjectHostsCaptureSecretOnceAndRejectAmbiguousConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		single, multiple string
+		want             int
+	}{
+		{"legacy", "", 1}, {"", "owner-private,owner-group,partner-private,partner-group", 4},
+		{"legacy", "partner", 0}, {"", "owner,owner", 0}, {"", "owner,,partner", 0},
+		{"", "../owner", 0}, {"", "", 0},
+	} {
+		t.Run(tc.single+"/"+tc.multiple, func(t *testing.T) {
+			t.Setenv(hostSecretEnv, strings.Repeat("s", minHostSecretLen))
+			t.Setenv(hostSecretFileEnv, "")
+			t.Setenv(toolsEnv, "1")
+			t.Setenv(commandEnv, markerCommand)
+			t.Setenv(projectEnv, tc.single)
+			t.Setenv(projectsEnv, tc.multiple)
+			hosts, err := NewProjectHostsFromEnv()
+			if tc.want == 0 {
+				if err == nil || len(hosts) != 0 {
+					t.Fatal("ambiguous or unsafe configuration accepted")
+				}
+			} else if err != nil || len(hosts) != tc.want {
+				t.Fatalf("hosts=%d error=%v", len(hosts), err)
+			}
+			seen := map[*Adapter]bool{}
+			for _, host := range hosts {
+				if seen[host] || host.hostSecret == "" || host.workDir != "" {
+					t.Fatal("mutable adapter shared or prebound")
+				}
+				seen[host] = true
+			}
+			if os.Getenv(hostSecretEnv) != "" {
+				t.Fatal("secret inherited by future subprocesses")
+			}
+		})
+	}
+}
+
 func TestRestartEnvRestoresOnlySupervisorCredentialsWithoutGlobalExposure(t *testing.T) {
 	for _, fileMode := range []bool{false, true} {
 		t.Run(fmt.Sprintf("file=%t", fileMode), func(t *testing.T) {

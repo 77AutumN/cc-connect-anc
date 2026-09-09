@@ -517,8 +517,14 @@ func TestCUJ_CRMIPC1_CustomerApprovalAndContinuedDiscussion(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate := click(planD, cardD, "sender-1", core.ActionApprove)
-	if duplicate.Complete != nil || duplicate.Card == nil || duplicate.Card.RenderText() != completed.Card.RenderText() {
-		t.Fatal("duplicate callback did not return the original receipt")
+	if duplicate.Complete != nil || duplicate.Card != nil || duplicate.Toast != completed.Card.Header.Title {
+		t.Fatal("duplicate callback must report the durable result without another card update")
+	}
+	p.mu.Lock()
+	retained := p.cards[cardD]
+	p.mu.Unlock()
+	if retained == nil || retained.RenderText() != completed.Card.RenderText() {
+		t.Fatal("duplicate callback replaced the published receipt")
 	}
 	verified := resultOf(planD)
 	expectStatus(verified, "verified")

@@ -22,6 +22,13 @@ type ActionToolHost interface {
 // must serve it on a separate local transport, never expose the privileged
 // cron/relay socket to an agent. No listener or service is started here.
 func (e *Engine) ActionToolHandler() http.Handler {
+	return ActionToolsHandler(e)
+}
+
+// ActionToolsHandler serves fixed environments on one local listener. Tokens
+// are matched against live host-owned sessions; ambiguity always fails closed.
+func ActionToolsHandler(engines ...*Engine) http.Handler {
+	engines = append([]*Engine(nil), engines...)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/tool" || r.URL.RawQuery != "" {
 			writeActionToolResult(w, http.StatusNotFound, map[string]any{"status": "blocked", "code": "unsupported_route"})
@@ -33,8 +40,25 @@ func (e *Engine) ActionToolHandler() http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(authorization[0], "Bearer ")
-		principal, platform, replyCtx, ok := e.actionToolSession(token)
-		if !ok {
+		var e *Engine
+		var principal ActionPrincipal
+		var platform Platform
+		var replyCtx any
+		for _, candidate := range engines {
+			if candidate == nil {
+				continue
+			}
+			p, transport, reply, valid := candidate.actionToolSession(token)
+			if !valid {
+				continue
+			}
+			if e != nil {
+				writeActionToolResult(w, http.StatusUnauthorized, map[string]any{"status": "blocked", "code": "invalid_session"})
+				return
+			}
+			e, principal, platform, replyCtx = candidate, p, transport, reply
+		}
+		if e == nil {
 			writeActionToolResult(w, http.StatusUnauthorized, map[string]any{"status": "blocked", "code": "invalid_session"})
 			return
 		}
@@ -140,7 +164,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" {
+	if command != "open" && command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])

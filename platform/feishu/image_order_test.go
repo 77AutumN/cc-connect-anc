@@ -89,6 +89,24 @@ func TestImageQuoteMetadataFailureRejectsWholeInput(t *testing.T) {
 	}
 }
 
+func TestFixedGroupQuoteCannotDownloadPrivateImage(t *testing.T) {
+	downloads := 0
+	p := imageReceiverFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/resources/") {
+			downloads++
+			return
+		}
+		writeJSON(t, w, map[string]any{"code": 0, "data": map[string]any{"items": []any{map[string]any{
+			"msg_type": "image", "chat_id": "private-chat", "body": map[string]string{"content": `{"image_key":"secret-image"}`},
+		}}}})
+	})
+	p.strictRoutes = true
+	quote := p.fetchQuotedMessage(context.Background(), "private-message", &imageReceiveBudget{chatID: "group-chat"})
+	if downloads != 0 || core.CheckImageBatch(quote.images) == nil || quote.text != "" {
+		t.Fatal("private reference escaped its chat")
+	}
+}
+
 func TestImageStickerAndThumbnailFailureIsNotSilent(t *testing.T) {
 	for _, kind := range []string{"sticker", "media"} {
 		t.Run(kind, func(t *testing.T) {

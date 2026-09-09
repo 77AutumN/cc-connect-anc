@@ -511,6 +511,7 @@ const (
 
 	MsgBannedWordBlocked MsgKey = "banned_word_blocked"
 	MsgCommandDisabled   MsgKey = "command_disabled"
+	MsgConversationHelp  MsgKey = "conversation_help"
 	MsgAdminRequired     MsgKey = "admin_required"
 	MsgRateLimited       MsgKey = "rate_limited"
 	MsgPsSent            MsgKey = "ps_sent"
@@ -729,6 +730,9 @@ const (
 	MsgCRMReceiptReplanBody               MsgKey = "crm_receipt_replan_body"
 	MsgCRMReceiptBlockedBody              MsgKey = "crm_receipt_blocked_body"
 	MsgCRMReceiptPrewriteBody             MsgKey = "crm_receipt_prewrite_body"
+	MsgCRMWriteCoordination               MsgKey = "crm_write_coordination"
+	MsgCRMWriteBusy                       MsgKey = "crm_write_busy"
+	MsgCRMWriteUnresolved                 MsgKey = "crm_write_unresolved"
 	MsgCRMUnset                           MsgKey = "crm_unset"
 	MsgCRMOwnerUnavailable                MsgKey = "crm_owner_unavailable"
 	MsgCRMNameSeparator                   MsgKey = "crm_name_separator"
@@ -3441,6 +3445,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "🚫 コマンド `%s` はこのプロジェクトで無効化されています。",
 		LangSpanish:            "🚫 El comando `%s` está deshabilitado para este proyecto.",
 	},
+	MsgConversationHelp: {
+		LangEnglish:            "Send text or images to continue. /new starts a new conversation; /stop stops the current turn. CRM changes require your own separate approvals.",
+		LangChinese:            "发送文字或图片继续当前会话。/new 新建会话；/stop 停止当前轮次。CRM 变更仍需由你本人逐笔批准。",
+		LangTraditionalChinese: "傳送文字或圖片繼續目前會話。/new 建立新會話；/stop 停止目前輪次。CRM 變更仍須由你本人逐筆批准。",
+		LangJapanese:           "テキストや画像で会話を続けます。/new で新しい会話、/stop で現在の処理を停止します。CRM の変更には本人の個別承認が必要です。",
+		LangSpanish:            "Envía texto o imágenes para continuar. /new inicia una conversación; /stop detiene el turno actual. Cada cambio de CRM requiere tu propia aprobación.",
+	},
 	MsgAdminRequired: {
 		LangEnglish:            "🔒 Command `%s` requires admin privilege. Set `admin_from` in config to authorize users.",
 		LangChinese:            "🔒 命令 `%s` 需要管理员权限。请在配置中设置 `admin_from` 来授权用户。",
@@ -4438,6 +4449,9 @@ var messages = map[MsgKey]map[Language]string{
 	MsgCRMApproveButton:            {LangEnglish: "Approve", LangChinese: "同意执行", LangTraditionalChinese: "同意執行", LangJapanese: "承認して実行", LangSpanish: "Aprobar"},
 	MsgCRMModifyButton:             {LangEnglish: "Modify plan", LangChinese: "修改方案", LangTraditionalChinese: "修改方案", LangJapanese: "プランを変更", LangSpanish: "Modificar plan"},
 	MsgCRMCancelButton:             {LangEnglish: "Cancel", LangChinese: "取消", LangTraditionalChinese: "取消", LangJapanese: "キャンセル", LangSpanish: "Cancelar"},
+	MsgCRMWriteCoordination:        {LangEnglish: "Checking execution conditions. If the same target is busy, wait up to 10 seconds before rechecking the approved snapshot. No need to click again.", LangChinese: "正在核验执行条件；如同一目标有其他操作，将最多等待 10 秒，再核对批准时的资料。无需重复点击。", LangTraditionalChinese: "正在核驗執行條件；如同一目標有其他操作，將最多等待 10 秒，再核對批准時的資料。無需重複點擊。", LangJapanese: "実行条件を確認中です。同じ対象が処理中の場合は最大10秒待ち、承認時の情報を再確認します。再クリックは不要です。", LangSpanish: "Comprobando condiciones. Si el mismo destino está ocupado, se esperará hasta 10 segundos y se comprobarán los datos aprobados. No vuelva a pulsar."},
+	MsgCRMWriteBusy:                {LangEnglish: "The target stayed busy for 10 seconds. This attempt made no write. Request a fresh preview and approve it again.", LangChinese: "同一目标等待 10 秒后仍忙，本次未写入。请重新预览当前资料并另行批准。", LangTraditionalChinese: "同一目標等待 10 秒後仍忙，本次未寫入。請重新預覽目前資料並另行批准。", LangJapanese: "同じ対象が10秒後も処理中でした。今回は書き込んでいません。最新のプレビューを取得して再承認してください。", LangSpanish: "El destino sigue ocupado después de 10 segundos. Este intento no escribió datos. Solicite una nueva vista previa y apruébela."},
+	MsgCRMWriteUnresolved:          {LangEnglish: "An earlier write on this target has an unresolved outcome. No new write was started. An operator must reconcile the actual result before this target can be changed again.", LangChinese: "同一目标有尚未核清的历史写入，本次未发起新写入。需管理员核对实际结果后，才能继续修改该目标。", LangTraditionalChinese: "同一目標有尚未核清的歷史寫入，本次未發起新寫入。需管理員核對實際結果後，才能繼續修改該目標。", LangJapanese: "同じ対象の過去の書き込み結果が未確定です。新たな書き込みは行っていません。管理者による実際の結果の確認が必要です。", LangSpanish: "Una escritura anterior en este destino tiene un resultado sin resolver. No se inició otra escritura. Un administrador debe comprobar el resultado real antes de continuar."},
 	MsgCRMReceiptFollowupHeading:   {LangEnglish: "**Actual follow-up record (read back)**", LangChinese: "**实际跟进记录（回读）**", LangTraditionalChinese: "**實際跟進記錄（回讀）**", LangJapanese: "**実際のフォローアップ記録（再読込）**", LangSpanish: "**Registro de seguimiento real (releído)**"},
 	MsgCRMReceiptCustomerHeading:   {LangEnglish: "**Current customer state (read back)**", LangChinese: "**客户当前状态（回读）**", LangTraditionalChinese: "**客戶目前狀態（回讀）**", LangJapanese: "**現在の顧客状態（再読込）**", LangSpanish: "**Estado actual del cliente (releído)**"},
 	MsgCRMOpenCustomer:             {LangEnglish: "Open customer record", LangChinese: "打开客户记录", LangTraditionalChinese: "開啟客戶記錄", LangJapanese: "顧客レコードを開く", LangSpanish: "Abrir registro del cliente"},

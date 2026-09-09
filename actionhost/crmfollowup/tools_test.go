@@ -105,3 +105,25 @@ func TestToolRefusesWritesAndMissingSessionBeforeHelper(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenToolReturnsHostLinkWithoutApprovalCard(t *testing.T) {
+	principal := core.ActionPrincipal{UserID: "sender", ChatID: "chat", Project: "fixed"}
+	a := &Adapter{toolsEnabled: true, hostSecret: strings.Repeat("s", 32), run: func(_ context.Context, _, command string, input []byte, _ []string) ([]byte, error) {
+		var payload struct {
+			Command   string               `json:"command"`
+			Request   map[string]any       `json:"request"`
+			Principal core.ActionPrincipal `json:"principal"`
+		}
+		if err := json.Unmarshal(input, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if command != "host-tool" || payload.Command != "open" || len(payload.Request) != 0 || payload.Principal != principal {
+			t.Fatalf("unexpected host request: %s", input)
+		}
+		return []byte(`{"status":"available","url":"https://example.invalid/base/fixture"}`), nil
+	}}
+	data, card, err := a.Tool(context.Background(), "open", json.RawMessage(`{}`), principal, strings.Repeat("t", 32), core.LangEnglish)
+	if err != nil || card != nil || data["url"] != "https://example.invalid/base/fixture" {
+		t.Fatalf("open did not return a read-only link: %v / %v", data, err)
+	}
+}

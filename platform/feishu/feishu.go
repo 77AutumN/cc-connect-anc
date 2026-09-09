@@ -127,6 +127,7 @@ type Platform struct {
 	doneEmoji                  string
 	allowFrom                  string
 	allowChat                  string
+	strictRoutes               bool // Set by the host for fixed multi-project routing.
 	groupOnly                  bool
 	groupReplyAll              bool
 	respondToAtEveryoneAndHere bool
@@ -164,6 +165,7 @@ type Platform struct {
 	// session key, enabling async card refreshes via the Patch API.
 	cardActionMsgMu  sync.Mutex
 	cardActionMsgIDs map[string]string // sessionKey → messageID
+	interactions     map[string]cardInteraction
 	// activeThreadSessions tracks thread sessionKeys that have already been
 	// accepted by the bot. In group chats with thread_isolation, once a thread
 	// has been engaged (the first @bot message), subsequent attachment-only
@@ -316,6 +318,10 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 	allowFrom, _ := opts["allow_from"].(string)
 	core.CheckAllowFrom(name, allowFrom)
 	allowChat, _ := opts["allow_chat"].(string)
+	strictRoutes, _ := opts["cc_strict_routes"].(bool)
+	if strictRoutes {
+		domain = strings.TrimRight(strings.ToLower(domain), "/")
+	}
 	groupOnly, _ := opts["group_only"].(bool)
 	groupReplyAll, _ := opts["group_reply_all"].(bool)
 	// require_mention = false is equivalent to group_reply_all = true:
@@ -412,6 +418,7 @@ func newPlatform(name, domain string, opts map[string]any) (core.Platform, error
 		doneEmoji:                  doneEmoji,
 		allowFrom:                  allowFrom,
 		allowChat:                  allowChat,
+		strictRoutes:               strictRoutes,
 		groupOnly:                  groupOnly,
 		groupReplyAll:              groupReplyAll,
 		respondToAtEveryoneAndHere: respondToAtEveryoneAndHere,
@@ -483,6 +490,9 @@ func (p *Platform) KeepPreviewOnFinish() bool {
 }
 
 func (p *Platform) Start(handler core.MessageHandler) error {
+	if err := p.Prepare(handler); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	p.handler = handler
 	p.mu.Unlock()
@@ -492,7 +502,26 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	// the same auth/bootstrap flow as the public SDK path, but the webhook server
 	// can still receive events and operate correctly. We therefore only attempt
 	// bot open_id discovery eagerly for WebSocket mode.
-	if !p.shouldUseWebhookMode() {
+	if p.strictRoutes {
+		if p.isWSPrimary {
+			openID, err := p.fetchBotOpenID()
+			if err != nil {
+				return fmt.Errorf("fixed receiver bot identity verification failed: %w", err)
+			}
+			if openID == "" {
+				return errors.New("fixed receiver bot identity is empty")
+			}
+			// Identity is shared by this receiving app. Publish it to every
+			// prepared route before opening the single connection.
+			for _, sibling := range p.sharedGroup.allPlatforms() {
+				sibling.mu.Lock()
+				sibling.botOpenID = openID
+				sibling.mu.Unlock()
+			}
+		} else if p.getBotOpenID() == "" {
+			return errors.New("fixed receiver must verify the primary bot before starting secondary routes")
+		}
+	} else if !p.shouldUseWebhookMode() {
 		if openID, err := p.fetchBotOpenID(); err != nil {
 			slog.Warn(p.platformName+": failed to get bot open_id, group chat filtering disabled", "error", err)
 		} else {
@@ -506,13 +535,10 @@ func (p *Platform) Start(handler core.MessageHandler) error {
 	// Register for shared WebSocket: multiple projects using the same app_id
 	// share a single WebSocket connection to avoid Feishu's server-side
 	// load-balancing which randomly routes messages across connections.
-	group, isPrimary := registerSharedWS(p)
-	p.sharedGroup = group
-	p.isWSPrimary = isPrimary
 
 	// Secondary platforms skip connection creation — the primary's connection
 	// fans out events to all platforms in the shared group.
-	if !isPrimary {
+	if !p.isWSPrimary {
 		return nil
 	}
 
@@ -674,7 +700,7 @@ func (p *Platform) webhookHandler(w http.ResponseWriter, r *http.Request) {
 //   - act:/xxx   — execute an action, then render and update the card in-place
 //   - cmd:/xxx   — legacy: dispatch as a user command (sends a new message)
 func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
-	if event.Event == nil || event.Event.Action == nil {
+	if event == nil || event.Event == nil || event.Event.Action == nil {
 		return nil, nil
 	}
 
@@ -716,6 +742,9 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 		chatID = event.Event.Context.OpenChatID
 		messageID = event.Event.Context.OpenMessageID
 	}
+	if !p.acceptFixedRoute(userID, chatID) || !core.AllowList(p.allowFrom, userID) {
+		return nil, nil
+	}
 	if chatID == "" {
 		chatID = userID
 	}
@@ -724,6 +753,20 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 
 	if response, handled := p.handleHostedCardAction(event.Event.Action.Value, userID, chatID, messageID, trustedSessionKey); handled {
 		return response, nil
+	}
+	if p.strictRoutes && !strings.HasPrefix(actionVal, "perm:") && !strings.HasPrefix(actionVal, "askq:") {
+		return nil, nil
+	}
+	interactionID := ""
+	if strings.HasPrefix(actionVal, "perm:") || strings.HasPrefix(actionVal, "askq:") {
+		id, values, bound := p.consumeInteraction(userID, chatID, messageID, trustedSessionKey, actionVal)
+		if p.strictRoutes && !bound {
+			return nil, nil
+		}
+		if bound {
+			interactionID, sessionKey = id, trustedSessionKey
+			event.Event.Action.Value = values
+		}
 	}
 
 	// nav: / act: — synchronous card update
@@ -814,6 +857,7 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 			Content:              responseText,
 			ReplyCtx:             rctx,
 			IsPermissionResponse: true,
+			InteractionRequestID: interactionID,
 		})
 
 		permLabel, _ := event.Event.Action.Value["perm_label"].(string)
@@ -838,13 +882,14 @@ func (p *Platform) onCardAction(event *callback.CardActionTriggerEvent) (*callba
 	if strings.HasPrefix(actionVal, "askq:") {
 		rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey}
 		go p.dispatchCoreMessage(&core.Message{
-			SessionKey: sessionKey,
-			Platform:   p.platformName,
-			UserID:     userID,
-			UserName:   p.resolveUserName(userID),
-			ChatName:   p.resolveChatName(chatID),
-			Content:    actionVal,
-			ReplyCtx:   rctx,
+			SessionKey:           sessionKey,
+			Platform:             p.platformName,
+			UserID:               userID,
+			UserName:             p.resolveUserName(userID),
+			ChatName:             p.resolveChatName(chatID),
+			Content:              actionVal,
+			InteractionRequestID: interactionID,
+			ReplyCtx:             rctx,
 		})
 
 		answerLabel, _ := event.Event.Action.Value["askq_label"].(string)
@@ -1484,6 +1529,9 @@ func (p *Platform) onMessageRecalled(_ context.Context, event *larkim.P2MessageR
 
 	messageID := stringValue(event.Event.MessageId)
 	chatID := stringValue(event.Event.ChatId)
+	if p.strictRoutes && chatID != p.allowChat {
+		return nil
+	}
 	if messageID == "" {
 		slog.Debug(p.tag()+": recall event without message id", "chat_id", chatID)
 		return nil
@@ -1514,6 +1562,9 @@ func (p *Platform) onMessageRecalled(_ context.Context, event *larkim.P2MessageR
 }
 
 func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	if event == nil || event.Event == nil || event.Event.Message == nil || event.Event.Sender == nil {
+		return nil
+	}
 	msg := event.Event.Message
 	sender := event.Event.Sender
 
@@ -1527,6 +1578,9 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		chatID = *msg.ChatId
 	}
 	userID := userIDFromEvent(sender.SenderId)
+	if !p.acceptFixedRoute(userID, chatID) {
+		return nil
+	}
 	// userName and chatName are resolved in dispatchMessage to avoid blocking
 	// the SDK dispatcher goroutine with synchronous HTTP calls.
 
@@ -1577,6 +1631,10 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	// Pre-compute sessionKey so the @bot filter below can consult the active
 	// thread set; sessionKey is also used downstream for dispatch.
 	sessionKey := p.makeSessionKey(msg, chatID, userID)
+	if p.strictRoutes && chatType == "group" &&
+		(p.getBotOpenID() == "" || !isBotMentioned(msg.Mentions, p.getBotOpenID())) {
+		return nil
+	}
 
 	if chatType == "group" && !p.groupReplyAll && p.getBotOpenID() != "" {
 		if !isBotMentioned(msg.Mentions, p.getBotOpenID()) {
@@ -1702,7 +1760,7 @@ func (p *Platform) dispatchMessageContent(ctx context.Context, msgType, content 
 	// (issue #764). The first accepted message in a pre-existing thread is the
 	// exception: earlier unmentioned messages were never dispatched to the
 	// agent, so bootstrap its context from the parent/root reply chain once.
-	budget := &imageReceiveBudget{}
+	budget := &imageReceiveBudget{chatID: rctx.chatID}
 	var quoted quotedMessage
 	if parentID != "" && (!p.threadIsolation || !isThreadSessionKey(sessionKey) || rctx.bootstrapThread) {
 		quoted = p.fetchQuotedMessage(ctx, parentID, budget)
@@ -2256,6 +2314,7 @@ func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string, bud
 		Data struct {
 			Items []struct {
 				MsgType  string `json:"msg_type"`
+				ChatID   string `json:"chat_id"`
 				ParentID string `json:"parent_id"`
 				Sender   struct {
 					ID         string `json:"id"`
@@ -2275,6 +2334,10 @@ func (p *Platform) fetchSingleMessage(ctx context.Context, messageID string, bud
 	}
 
 	item := resp.Data.Items[0]
+	if p.strictRoutes && (budget.chatID == "" || item.ChatID != budget.chatID) {
+		budget.failure = core.MsgImageReceiveFailed
+		return nil
+	}
 	content := item.Body.Content
 	if content == "" {
 		budget.failure = core.MsgImageReceiveFailed
@@ -5388,6 +5451,10 @@ func (p *Platform) extractPostParts(messageID string, post *postLang, budgets ..
 // This allows users to configure menu items in the Feishu developer
 // console with event_key set to commands like "/help", "/status", etc.
 func (p *Platform) onBotMenu(event *larkapplication.P2BotMenuV6) error {
+	// Menu events do not carry the verified chat needed for a fixed route.
+	if p.strictRoutes {
+		return nil
+	}
 	if event == nil || event.Event == nil || event.Event.EventKey == nil {
 		return nil
 	}

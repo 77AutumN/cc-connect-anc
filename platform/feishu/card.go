@@ -29,9 +29,17 @@ func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *cor
 		if rc.chatID == "" {
 			return fmt.Errorf("%s: chatID is empty, cannot send card", p.tag())
 		}
-		return p.createMessage(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
+		id, err := p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
+		if err == nil {
+			err = p.bindInteraction(id, rc, card)
+		}
+		return err
 	}
-	return p.replyMessage(ctx, rc, larkim.MsgTypeInteractive, cardJSON)
+	id, err := p.replyMessageWithID(ctx, rc, larkim.MsgTypeInteractive, cardJSON)
+	if err == nil {
+		err = p.bindInteraction(id, rc, card)
+	}
+	return err
 }
 
 // ReplyHostedActionPlaceholder sends a non-actionable approval placeholder and
@@ -66,7 +74,11 @@ func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core
 	}
 
 	cardJSON := renderCard(card, rc.sessionKey)
-	return p.createMessage(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
+	id, err := p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
+	if err == nil {
+		err = p.bindInteraction(id, rc, card)
+	}
+	return err
 }
 
 // RefreshCard updates a previously rendered card in-place using the Patch API.

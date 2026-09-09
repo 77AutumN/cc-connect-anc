@@ -53,10 +53,77 @@ func actionToolRequest(handler http.Handler, method, path, token, body string) *
 	return w
 }
 
+func TestActionToolsHandlerSelectsExactlyOneFixedEnvironment(t *testing.T) {
+	first, ownerHost, _, _ := actionToolFixture(t)
+	second, partnerHost, _, partner := actionToolFixture(t)
+	second.name = "partner-private"
+	partner.currentPrincipal.Project, partner.actionPrincipal.Project = second.name, second.name
+	partner.currentPrincipal.UserID, partner.actionPrincipal.UserID = "partner", "partner"
+	partner.actionToken = "partner-session-token"
+	handler := ActionToolsHandler(first, second)
+	body := `{"command":"customer","input":{}}`
+	w := actionToolRequest(handler, "POST", "/tool", partner.actionToken, body)
+	if w.Code != 200 || partnerHost.toolCalls != 1 || ownerHost.toolCalls != 0 || partnerHost.toolPrincipal.Project != second.name {
+		t.Fatalf("wrong environment selected: %d owner=%d partner=%d", w.Code, ownerHost.toolCalls, partnerHost.toolCalls)
+	}
+	partner.actionToken = "test-session-token"
+	w = actionToolRequest(handler, "POST", "/tool", partner.actionToken, body)
+	if w.Code != 401 || ownerHost.toolCalls != 0 || partnerHost.toolCalls != 1 {
+		t.Fatalf("ambiguous token must not fall back: %d", w.Code)
+	}
+	w = actionToolRequest(ActionToolsHandler(), "POST", "/tool", "unknown", body)
+	if w.Code != 401 {
+		t.Fatalf("unregistered token accepted: %d", w.Code)
+	}
+}
+
+func TestActionToolsHandlerThreePeopleSixEnvironments(t *testing.T) {
+	var engines []*Engine
+	var states []*interactiveState
+	var hosts []*actionToolHostStub
+	for _, actor := range []string{"owner", "partner", "test"} {
+		for _, chat := range []string{"private-" + actor, "group"} {
+			e, h, _, state := actionToolFixture(t)
+			delete(e.interactiveStates, state.currentPrincipal.SessionKey)
+			e.name = actor + "-" + chat
+			principal := ActionPrincipal{Platform: "test", UserID: actor, ChatID: chat, SessionKey: "test:" + chat + ":" + actor, Project: e.name, MessageID: "request"}
+			state.currentPrincipal, state.actionPrincipal = principal, principal
+			state.actionToken = "opaque-fixture-" + e.name
+			e.interactiveStates[principal.SessionKey] = state
+			h.toolResult = map[string]any{"environment": e.name}
+			engines, states, hosts = append(engines, e), append(states, state), append(hosts, h)
+		}
+	}
+	handler := ActionToolsHandler(engines...)
+	for index, state := range states {
+		w := actionToolRequest(handler, "POST", "/tool", state.actionToken, `{"command":"customer","input":{}}`)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), engines[index].name) || hosts[index].toolPrincipal != state.currentPrincipal {
+			t.Fatalf("wrong environment/principal: %d %s", w.Code, w.Body.String())
+		}
+	}
+	for _, body := range []string{
+		`{"command":"customer","input":{},"project":"owner-private"}`,
+		`{"command":"customer","input":{},"actor":"owner"}`,
+	} {
+		if w := actionToolRequest(handler, "POST", "/tool", states[5].actionToken, body); w.Code < 400 {
+			t.Fatal("caller-supplied identity accepted")
+		}
+	}
+	states[5].actionToken = states[0].actionToken
+	if w := actionToolRequest(handler, "POST", "/tool", states[0].actionToken, `{"command":"customer","input":{}}`); w.Code != 401 {
+		t.Fatal("ambiguous token selected an environment")
+	}
+	for _, host := range hosts {
+		if host.toolCalls != 1 {
+			t.Fatal("a rejected or foreign request reached this host")
+		}
+	}
+}
+
 func TestActionToolHandlerScopedReadsAndStrictBoundary(t *testing.T) {
 	e, h, _, _ := actionToolFixture(t)
 	handler := e.ActionToolHandler()
-	for _, command := range []string{"customer", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
+	for _, command := range []string{"open", "customer", "result", "assignee", "stage-customer-create", "stage-customer-update"} {
 		w := actionToolRequest(handler, "POST", "/tool", "test-session-token", `{"command":"`+command+`","input":{}}`)
 		if w.Code != 200 || !strings.Contains(w.Body.String(), `"customer":"fixture"`) {
 			t.Fatalf("valid %s = %d %s", command, w.Code, w.Body.String())
@@ -238,6 +305,10 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 		if strings.Contains(prompt, "result") {
 			command = "result"
 		}
+		if strings.Contains(prompt, "open CRM") {
+			command = "open"
+			h.toolResult = map[string]any{"status": "available", "url": "https://example.invalid/base/fixture"}
+		}
 		w := actionToolRequest(handler, "POST", "/tool", token, `{"command":"`+command+`","input":{}}`)
 		return w.Body.String()
 	}
@@ -252,6 +323,8 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 		{"owner", "result and discussion", `"customer":"fixture"`},
 		{"intruder", "customer history in accidentally shared session", `"code":"invalid_session"`},
 		{"owner", "customer history again", `"customer":"fixture"`},
+		{"owner", "open CRM", `"url":"https://example.invalid/base/fixture"`},
+		{"intruder", "open CRM in accidentally shared session", `"code":"invalid_session"`},
 	} {
 		p.clearSent()
 		e.ReceiveMessage(p, &Message{SessionKey: "test:chat:shared", Platform: "test", UserID: tc.user, ChannelID: "chat", MessageID: fmt.Sprintf("request-%d", i), Content: tc.content, ReplyCtx: "reply"})
@@ -263,7 +336,7 @@ func TestCUJ_ACTIONTOOL1_ReadStageResultContinueWithPinnedSender(t *testing.T) {
 	a.mu.Lock()
 	starts := len(a.sessions)
 	a.mu.Unlock()
-	if starts != 1 || h.toolCalls != 4 {
+	if starts != 1 || h.toolCalls != 5 {
 		t.Fatalf("unexpected restarts or unauthorized host call: starts=%d calls=%d", starts, h.toolCalls)
 	}
 }

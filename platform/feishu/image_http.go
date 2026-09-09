@@ -14,6 +14,7 @@ import (
 type imageBoundedHTTPClient struct{ client *http.Client }
 type imageDownloadLimitKey struct{}
 type imageReceiveBudget struct {
+	chatID       string // Actual receiving chat, for quoted-message privacy.
 	count, bytes int
 	failure      core.MsgKey
 }

@@ -392,10 +392,11 @@ type Engine struct {
 	bannedWords []string
 	bannedMu    sync.RWMutex
 
-	disabledCmds map[string]bool
-	adminFrom    string           // comma-separated user IDs for privileged commands; "*" = all allowed users; "" = deny
-	userRoles    *UserRoleManager // nil = legacy mode (no per-user policies)
-	userRolesMu  sync.RWMutex     // protects userRoles, disabledCmds, and adminFrom
+	disabledCmds     map[string]bool
+	conversationOnly bool             // Host-owned fixed-environment policy, not editable in chat.
+	adminFrom        string           // comma-separated user IDs for privileged commands; "*" = all allowed users; "" = deny
+	userRoles        *UserRoleManager // nil = legacy mode (no per-user policies)
+	userRolesMu      sync.RWMutex     // protects userRoles, disabledCmds, and adminFrom
 
 	rateLimiter      *RateLimiter
 	outgoingRL       *OutgoingRateLimiter
@@ -692,6 +693,8 @@ type modelSwitchState struct {
 
 // pendingPermission represents a permission request waiting for user response.
 type pendingPermission struct {
+	mu              sync.Mutex // Serialize replies, including text racing a card click.
+	Interaction     CardInteraction
 	RequestID       string
 	ToolName        string
 	ToolInput       map[string]any
@@ -1203,6 +1206,16 @@ func (e *Engine) SetDisabledCommands(cmds []string) {
 	e.userRolesMu.Lock()
 	defer e.userRolesMu.Unlock()
 	e.disabledCmds = resolveDisabledCmds(cmds)
+}
+
+func (e *Engine) SetConversationOnly() {
+	e.userRolesMu.Lock()
+	defer e.userRolesMu.Unlock()
+	e.conversationOnly = true
+	e.disabledCmds = resolveDisabledCmds([]string{"*"})
+	for _, cmd := range []string{"new", "stop", "help"} {
+		delete(e.disabledCmds, cmd)
+	}
 }
 
 // SetUserRoles configures per-user role-based policies. Pass nil to disable.
@@ -2306,6 +2319,27 @@ func (e *Engine) ExecuteHeartbeat(sessionKey, prompt string, silent bool) error 
 	return nil
 }
 
+// PreparePlatforms binds every handler before a shared transport can receive.
+// It opens no connection; the host calls this for all engines before Start.
+func (e *Engine) PreparePlatforms() error {
+	for _, p := range e.platforms {
+		if preparer, ok := p.(interface{ Prepare(MessageHandler) error }); ok {
+			if err := preparer.Prepare(e.handleMessage); err != nil {
+				return err
+			}
+		}
+		if nav, ok := p.(CardNavigable); ok {
+			nav.SetCardNavigationHandler(e.handleCardNav)
+		}
+		if nav, ok := p.(TrustedCardActionNavigable); ok {
+			nav.SetTrustedCardActionHandler(func(action TrustedCardAction) TrustedCardActionResponse {
+				return e.handleTrustedCardAction(p, action)
+			})
+		}
+	}
+	return nil
+}
+
 func (e *Engine) Start() error {
 	var startErrs []error
 	readyCount := 0
@@ -2886,6 +2920,20 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	// Resolve aliases on user text BEFORE merging ExtraContent, so reply
 	// quotes and platform context survive alias resolution (PR #420 fix).
 	content = e.resolveAlias(content)
+	e.userRolesMu.RLock()
+	conversationOnly := e.conversationOnly
+	e.userRolesMu.RUnlock()
+	if conversationOnly && (strings.HasPrefix(content, "/") || strings.HasPrefix(content, "!")) {
+		command := strings.Fields(content)[0]
+		if command != "/new" && command != "/stop" && command != "/help" {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgCommandDisabled), command))
+			return
+		}
+		if command == "/help" {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgConversationHelp))
+			return
+		}
+	}
 	if msg.ExtraContent != "" {
 		if content == "" {
 			msg.Content = msg.ExtraContent
@@ -2897,7 +2945,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	}
 
 	// Rate limit check (per-user role-based, then global fallback)
-	if !e.checkRateLimit(msg) {
+	if content != "/stop" && msg.InteractionRequestID == "" && !e.checkRateLimit(msg) {
 		slog.Info("message rate limited",
 			"session", msg.SessionKey, "user_id", msg.UserID, "user", msg.UserName)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgRateLimited))
@@ -3385,7 +3433,7 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 		// agent as user input (issue #826). Only applies to permission
 		// callbacks — plain text "allow"/"deny" from a real user falls
 		// through to the normal message handler below.
-		if msg.IsPermissionResponse {
+		if msg.IsPermissionResponse || msg.InteractionRequestID != "" {
 			slog.Debug("dropping stale permission callback (no interactive state)",
 				"session", msg.SessionKey, "content", content)
 			return true
@@ -3393,6 +3441,23 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 		return false
 	}
 found:
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	state.mu.Lock()
+	current := state.pending == pending && !state.stopped
+	state.mu.Unlock()
+	if !current {
+		return true
+	}
+	if msg.InteractionRequestID != "" {
+		expected := pending.Interaction.RequestID
+		if len(pending.Questions) > 0 {
+			expected += ":" + strconv.Itoa(pending.CurrentQuestion)
+		}
+		if expected != msg.InteractionRequestID || msg.UserID != pending.Interaction.Principal.UserID || msg.SessionKey != pending.Interaction.Principal.SessionKey {
+			return true
+		}
+	}
 
 	// AskUserQuestion: interpret user response as an answer, not a permission decision
 	if len(pending.Questions) > 0 {
@@ -3417,7 +3482,7 @@ found:
 		if curIdx+1 < len(pending.Questions) {
 			pending.CurrentQuestion = curIdx + 1
 			e.reply(p, msg.ReplyCtx, fmt.Sprintf("✅ %s: **%s**", q.Question, answer))
-			e.sendAskQuestionPrompt(p, msg.ReplyCtx, pending.Questions, curIdx+1)
+			e.sendAskQuestionPrompt(p, msg.ReplyCtx, pending.Questions, curIdx+1, pending.Interaction)
 			return true
 		}
 
@@ -5563,6 +5628,14 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				"tool", event.ToolName,
 			)
 
+			interactionID, err := newActionToken()
+			if err != nil {
+				slog.Warn("permission request binding failed", "error", err)
+				if denyErr := state.agentSession.RespondPermission(event.RequestID, PermissionResult{Behavior: "deny", Message: "Unable to bind permission request"}); denyErr != nil {
+					slog.Warn("unbound permission rejection failed", "error", denyErr)
+				}
+				continue
+			}
 			pending := &pendingPermission{
 				RequestID:    event.RequestID,
 				ToolName:     event.ToolName,
@@ -5572,11 +5645,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				Resolved:     make(chan struct{}),
 			}
 			state.mu.Lock()
+			pending.Interaction = CardInteraction{RequestID: interactionID, Principal: state.currentPrincipal}
 			state.pending = pending
 			state.mu.Unlock()
 
 			if isAskQuestion {
-				e.sendAskQuestionPrompt(p, replyCtx, event.Questions, 0)
+				e.sendAskQuestionPrompt(p, replyCtx, event.Questions, 0, pending.Interaction)
 			} else {
 				permLimit := e.display.ToolMaxLen
 				if permLimit > 0 {
@@ -5584,7 +5658,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 				toolInput := truncateIf(event.ToolInput, permLimit)
 				prompt := fmt.Sprintf(e.i18n.T(MsgPermissionPrompt), event.ToolName, toolInput)
-				e.sendPermissionPrompt(p, replyCtx, prompt, event.ToolName, toolInput)
+				e.sendPermissionPrompt(p, replyCtx, prompt, event.ToolName, toolInput, pending.Interaction)
 			}
 
 			// Stop idle timer while waiting for user permission response;
@@ -11596,7 +11670,7 @@ func (e *Engine) resolveOutboundSessionTarget(sessionKey string, hasAttachments 
 
 // sendPermissionPrompt sends a permission prompt with interactive buttons when
 // the platform supports them. Fallback chain: InlineButtonSender → CardSender → plain text.
-func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName, toolInput string) {
+func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName, toolInput string, binding ...CardInteraction) {
 	e.hooks.Emit(HookEvent{
 		Event:    HookEventPermissionRequested,
 		Platform: p.Name(),
@@ -11650,6 +11724,9 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 			Buttons(allowAllBtn).
 			Note(e.i18n.T(MsgPermCardNote)).
 			Build()
+		if len(binding) == 1 {
+			card.Interaction = &binding[0]
+		}
 		e.sendWithCard(p, replyCtx, card)
 		return
 	}
@@ -11659,7 +11736,7 @@ func (e *Engine) sendPermissionPrompt(p Platform, replyCtx any, prompt, toolName
 
 // sendAskQuestionPrompt renders one question (by index) from the AskUserQuestion list.
 // qIdx is the 0-based index of the question to display.
-func (e *Engine) sendAskQuestionPrompt(p Platform, replyCtx any, questions []UserQuestion, qIdx int) {
+func (e *Engine) sendAskQuestionPrompt(p Platform, replyCtx any, questions []UserQuestion, qIdx int, binding ...CardInteraction) {
 	if qIdx >= len(questions) {
 		return
 	}
@@ -11704,7 +11781,12 @@ func (e *Engine) sendAskQuestionPrompt(p Platform, replyCtx any, questions []Use
 			}
 			cb.Note(e.i18n.T(MsgAskQuestionNote))
 		}
-		e.sendWithCard(p, replyCtx, cb.Build())
+		card := cb.Build()
+		if len(binding) == 1 {
+			binding[0].RequestID += ":" + strconv.Itoa(qIdx)
+			card.Interaction = &binding[0]
+		}
+		e.sendWithCard(p, replyCtx, card)
 		return
 	}
 
@@ -11807,7 +11889,7 @@ func (e *Engine) renderCardForPlatformWorkspace(p Platform, card *Card, workspac
 	if card == nil {
 		return nil
 	}
-	out := &Card{}
+	out := &Card{SharedUpdate: card.SharedUpdate, Interaction: card.Interaction}
 	if card.Header != nil {
 		h := *card.Header
 		out.Header = &h

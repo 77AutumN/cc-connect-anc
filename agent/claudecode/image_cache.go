@@ -42,12 +42,23 @@ var imageCaches = struct {
 }{byDir: make(map[string]*imageCache)}
 
 func sessionImageCache(workDir string) *imageCache {
+	cache, _ := configuredImageCache(workDir, 0)
+	return cache
+}
+
+func configuredImageCache(workDir string, capacity int64) (*imageCache, error) {
 	dir := filepath.Join(workDir, ".cc-connect", "attachments", "images")
 	imageCaches.Lock()
 	defer imageCaches.Unlock()
 	cache := imageCaches.byDir[dir]
+	if cache != nil && capacity != 0 && cache.capacity != capacity {
+		return nil, fmt.Errorf("image cache capacity cannot change while registered")
+	}
 	if cache == nil {
-		cache = &imageCache{dir: dir, active: make(map[string]int), capacity: imageCacheCapacity, now: time.Now, freeSpace: imageDiskFree}
+		if capacity == 0 {
+			capacity = imageCacheCapacity
+		}
+		cache = &imageCache{dir: dir, active: make(map[string]int), capacity: capacity, now: time.Now, freeSpace: imageDiskFree}
 		imageCaches.byDir[dir] = cache
 	}
 	// One lightweight sweeper for all gateway-owned image caches, not a service.
@@ -66,7 +77,7 @@ func sessionImageCache(workDir string) *imageCache {
 			}
 		}()
 	})
-	return cache
+	return cache, nil
 }
 
 func (c *imageCache) open(create bool) (*os.Root, error) { return openImageCacheRoot(c.dir, create) }
