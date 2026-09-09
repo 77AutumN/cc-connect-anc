@@ -21,12 +21,12 @@ stopped or rebound sessions fail closed. Existing CRM tools and cards retain the
 adapter. Knowledge preview publication binds its own exact platform message ID.
 No separate listener, public endpoint, permission changes or deployment is added.
 
-Baseline warning: this integration starts from GitHub main
-`37299c18bc07585222cf738a2f68ef9f77da96fc`. The deployed September 9 gateway has
-additional six-environment/CRM navigation work not on that base. Do not deploy a
-binary from this older base over production. Reconcile that work in its owning
-maintenance task, then rebase this patch and repeat the combined regression gate.
-Do not copy unrelated local modifications into this PR.
+Baseline: the owning maintenance task merged deployed six-environment routing and
+CRM navigation in PR #4, main `7895bac`. This patch was replayed on that base,
+preserving CRM `open`, all six hosts, strict interaction routes, ConversationOnly
+and the single shared tool listener. Only knowledge changes are in this PR.
+Before activation, still compare the actual deployed binary and strategy hashes
+against the selected release manifest. No local maintenance changes are included.
 
 Tests include combined host tool/card routing, six-engine token isolation,
 unchanged existing-tool behavior, exact card binding, subprocess principal
