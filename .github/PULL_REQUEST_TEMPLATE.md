@@ -5,6 +5,14 @@ The reviewer will use the checklist at the bottom to gate merge.
 
 ## Summary
 
+For this private fork, follow the shared
+[release contract](https://github.com/77AutumN/myanc-crm/blob/main/ops/RELEASE.md).
+Report local, GitHub and online completion separately. Attach final head/base
+SHA-bound independent Spec and Standards review evidence, related CRM PR and
+explicit paired-test results. Subagent review is not GitHub human approval.
+After squash merge, exact merge-SHA push CI is still required; merging does not
+authorize VPS deployment. Mark missing evidence as incomplete.
+
 <!-- 1-3 sentences explaining WHAT this PR does and WHY. -->
 
 ## Type of change
