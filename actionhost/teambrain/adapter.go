@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,6 +127,7 @@ func (a *Adapter) call(ctx context.Context, operation string, principal core.Act
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, a.command)
+	cmd.Dir = filepath.Dir(a.command)
 	cmd.Stdin = bytes.NewReader(body)
 	// The wrapper uses absolute paths. Do not forward inherited credentials.
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "PYTHONIOENCODING=utf-8"}
