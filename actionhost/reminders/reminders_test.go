@@ -89,7 +89,7 @@ func fixture(t *testing.T) (*Host, *senderStub, *time.Time, string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	s := &senderStub{}
-	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}, {"a", "group", "ag", "pa"}, {"b", "pb", "bp", "pb"}, {"b", "group", "bg", "pb"}}, map[string]Sender{"a": s, "b": s})
+	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}, {"a", "group", "ag", "pa"}, {"b", "pb", "bp", "pb"}, {"b", "group", "bg", "pb"}, {"c", "pc", "cp", "pc"}, {"c", "group", "cg", "pc"}}, map[string]Sender{"a": s, "b": s, "c": s})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,12 @@ func principal(project, message string) core.ActionPrincipal {
 	}
 	if project == "bg" {
 		u, c = "b", "group"
+	}
+	if project == "cp" {
+		u, c = "c", "pc"
+	}
+	if project == "cg" {
+		u, c = "c", "group"
 	}
 	return core.ActionPrincipal{Platform: "feishu", UserID: u, ChatID: c, Project: project, SessionKey: "session", MessageID: message}
 }
@@ -144,7 +150,7 @@ func TestCreateReplayExplicitRepeatAndScopedVisibility(t *testing.T) {
 	if strings.Contains(string(data), "PRIVATE_CANARY") {
 		t.Fatal("private body reached group model")
 	}
-	for _, project := range []string{"ag", "bp", "bg"} {
+	for _, project := range []string{"ag", "bp", "bg", "cp", "cg"} {
 		r := call(t, h, "reminder-cancel", project, "cancel", map[string]any{"id": item(a)["id"], "version": 1})
 		if r["code"] != "not_found" {
 			t.Fatal("cross-scope cancel accepted")
@@ -351,6 +357,59 @@ func TestReminderProcessHelper(t *testing.T) {
 	}
 	h.now = func() time.Time { return time.Date(2026, 9, 9, 0, 0, 0, 0, beijing) }
 	create(t, h, "ap", "same-original-message", "same content")
+}
+
+func TestRestartAfterClaimRetriesFrozenUUID(t *testing.T) {
+	h, s, now, path := fixture(t)
+	create(t, h, "ag", "one", "restart canary")
+	*now = now.Add(time.Hour)
+	var frozen *Batch
+	if err := h.store.change(context.Background(), func(st *state) error {
+		h.collectDue(st, core.LangChinese)
+		frozen = h.claimBatch(st, core.LangChinese)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if frozen == nil {
+		t.Fatal("missing claim")
+	}
+	_ = h.store.Close()
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	h.store = store
+	*now = now.Add(time.Minute)
+	if err = h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.calls) != 1 || s.calls[0].id != frozen.UUID || s.calls[0].text != frozen.Text {
+		t.Fatal("restart lost frozen delivery")
+	}
+}
+
+func TestCancelOneOverdueBatchMemberNeverRetriesItsBody(t *testing.T) {
+	h, s, now, _ := fixture(t)
+	id := item(create(t, h, "ag", "one", "CANCEL_CANARY"))["id"]
+	create(t, h, "ag", "two", "KEEP_CANARY")
+	*now = now.Add(time.Hour)
+	s.err = errors.New("timeout")
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+		t.Fatal(err)
+	}
+	call(t, h, "reminder-cancel", "ag", "cancel", map[string]any{"id": id, "version": 1})
+	*now = now.Add(time.Minute)
+	s.err = nil
+	for i := 0; i < 2; i++ {
+		if err := h.Tick(context.Background(), core.LangChinese); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(s.calls) != 2 || strings.Contains(s.calls[1].text, "CANCEL_CANARY") || !strings.Contains(s.calls[1].text, "KEEP_CANARY") || !strings.Contains(s.calls[1].text, "可能重复") {
+		t.Fatal("cancelled member leaked into retry")
+	}
 }
 
 func TestInputTimeAndForgedFields(t *testing.T) {
