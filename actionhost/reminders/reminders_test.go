@@ -59,6 +59,58 @@ func TestUnwritableDatabaseDisablesReminderOperations(t *testing.T) {
 	}
 }
 
+func TestSourceRevocationRejectsExistingGroupTools(t *testing.T) {
+	h, _, _, _ := fixture(t)
+	created := create(t, h, "ag", "one", "group reminder")
+	h.sourceAuthorized = func(project, user string) bool { return project != "ag" }
+	id := item(created)["id"]
+	for command, input := range map[string]map[string]any{
+		"reminder-create": {"content": "denied", "at": h.now().Add(time.Hour).Format(time.RFC3339)},
+		"reminder-list":   {},
+		"reminder-update": {"id": id, "version": 1, "content": "denied"},
+		"reminder-cancel": {"id": id, "version": 1},
+	} {
+		if result := call(t, h, command, "ag", "old-session", input); result["code"] != "invalid_identity" {
+			t.Fatal("revoked source accepted tool", command, result)
+		}
+	}
+	if result := call(t, h, "reminder-cancel", "ap", "private-still-valid", map[string]any{"id": id, "version": 1}); result["status"] != "cancelled" {
+		t.Fatal("private management unexpectedly revoked", result)
+	}
+}
+
+func TestCancelledDatabaseRequestDoesNotPoisonScheduler(t *testing.T) {
+	h, sender, now, _ := fixture(t)
+	for _, duringTransaction := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		if !duringTransaction {
+			cancel()
+		}
+		err := h.store.change(ctx, func(st *state) error {
+			st.Requests["rolled-back"] = json.RawMessage(`{"status":"not_committed"}`)
+			cancel()
+			return nil
+		})
+		cancel()
+		if !errors.Is(err, context.Canceled) || h.store.failed {
+			t.Fatal("request cancellation poisoned store", err)
+		}
+		if err := h.store.change(context.Background(), func(st *state) error {
+			if st.Requests["rolled-back"] != nil {
+				t.Fatal("cancelled transaction was not rolled back")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal("healthy store did not recover", err)
+		}
+	}
+	create(t, h, "ap", "after-cancel", "still delivers")
+	*now = now.Add(time.Hour)
+	if err := h.Tick(context.Background(), core.LangChinese); err != nil || len(sender.calls) != 1 {
+		t.Fatal("scheduler did not survive cancelled tool request", err)
+	}
+}
+
 func (s *senderStub) SendReminder(_ context.Context, c, text, id string) (string, error) {
 	s.calls = append(s.calls, delivery{c, text, id})
 	if s.hook != nil {
@@ -89,7 +141,7 @@ func fixture(t *testing.T) (*Host, *senderStub, *time.Time, string) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	s := &senderStub{}
-	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}, {"a", "group", "ag", "pa"}, {"b", "pb", "bp", "pb"}, {"b", "group", "bg", "pb"}, {"c", "pc", "cp", "pc"}, {"c", "group", "cg", "pc"}}, map[string]Sender{"a": s, "b": s, "c": s})
+	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}, {"a", "group", "ag", "pa"}, {"b", "pb", "bp", "pb"}, {"b", "group", "bg", "pb"}, {"c", "pc", "cp", "pc"}, {"c", "group", "cg", "pc"}}, map[string]Sender{"a": s, "b": s, "c": s}, func(string, string) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +403,7 @@ func TestReminderProcessHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}}, map[string]Sender{"a": &senderStub{}})
+	h, err := New(store, []Route{{"a", "pa", "ap", "pa"}}, map[string]Sender{"a": &senderStub{}}, func(string, string) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}

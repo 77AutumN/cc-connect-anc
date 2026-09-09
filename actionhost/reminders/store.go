@@ -141,19 +141,20 @@ func (s *Store) change(ctx context.Context, fn func(*state) error) error {
 	}
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
-		s.failed = true
-		return ErrUnavailable
+		return s.storageError(ctx, err)
 	}
 	defer func() { _ = conn.Close() }()
 	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		s.failed = true
-		return ErrUnavailable
+		return s.storageError(ctx, err)
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }() // no-op after commit
 	var data []byte
 	var st state
 	err = conn.QueryRowContext(ctx, "SELECT payload FROM reminder_state WHERE id=1").Scan(&data)
-	if err != nil || json.Unmarshal(data, &st) != nil || !validState(st) {
+	if err != nil {
+		return s.storageError(ctx, err)
+	}
+	if json.Unmarshal(data, &st) != nil || !validState(st) {
 		s.failed = true
 		return ErrUnavailable
 	}
@@ -169,10 +170,23 @@ func (s *Store) change(ctx context.Context, fn func(*state) error) error {
 		_, err = conn.ExecContext(ctx, "COMMIT")
 	}
 	if err != nil {
-		s.failed = true
-		return ErrUnavailable
+		return s.storageError(ctx, err)
 	}
 	return nil
+}
+
+// A disconnected tool client must not poison the shared scheduler. SQLite
+// transactions are rolled back before releasing the connection; uncertain
+// commits remain safe to retry via the persisted request or delivery identity.
+func (s *Store) storageError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	s.failed = true
+	return ErrUnavailable
 }
 
 func validState(st state) bool {

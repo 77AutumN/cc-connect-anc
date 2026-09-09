@@ -2,6 +2,7 @@ package crmfollowup
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -51,7 +52,7 @@ func TestCUJ_REMINDERIPC1_CreateNewListCancel(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 	p := &reminderJourneyPlatform{toolJourneyPlatform: toolJourneyPlatform{cards: map[string]*core.Card{}}}
-	h, err := reminders.New(store, []reminders.Route{{User: "owner", Chat: "group", Project: "test", PrivateChat: "private"}}, map[string]reminders.Sender{"owner": p})
+	h, err := reminders.New(store, []reminders.Route{{User: "owner", Chat: "group", Project: "test", PrivateChat: "private"}}, map[string]reminders.Sender{"owner": p}, func(string, string) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestCUJ_REMINDERIPC1_CreateNewListCancel(t *testing.T) {
 		n++
 		e.ReceiveMessage(p, &core.Message{Platform: "feishu", SessionKey: "feishu:group:owner", UserID: "owner", ChannelID: "group", MessageID: fmt.Sprintf("request-%d", n), Content: text, ReplyCtx: "group", UserMessageTimeMs: time.Now().UnixMilli()})
 	}
-	wait := func(fragment string) {
+	wait := func(fragment string) string {
 		t.Helper()
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
@@ -86,14 +87,18 @@ func TestCUJ_REMINDERIPC1_CreateNewListCancel(t *testing.T) {
 			sent := strings.Join(p.sent, "\n")
 			p.mu.Unlock()
 			if strings.Contains(sent, fragment) {
-				return
+				return sent
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 		t.Fatal("missing user-visible result", fragment)
+		return ""
 	}
 	step := func(command string, input map[string]any) map[string]any {
 		t.Helper()
+		p.mu.Lock()
+		p.sent = nil
+		p.mu.Unlock()
 		a.steps <- toolJourneyStep{number: n + 1, command: command, input: input}
 		receive(command)
 		select {
@@ -101,30 +106,35 @@ func TestCUJ_REMINDERIPC1_CreateNewListCancel(t *testing.T) {
 			if reply.err != nil {
 				t.Fatal(reply.err)
 			}
-			wait(fmt.Sprintf("TURN-%d ", n))
-			return reply.data
+			prefix := fmt.Sprintf("TURN-%d ", n)
+			sent := wait(prefix)
+			var visible map[string]any
+			if err := json.NewDecoder(strings.NewReader(sent[strings.Index(sent, prefix)+len(prefix):])).Decode(&visible); err != nil {
+				t.Fatal("invalid user-visible reminder result", err)
+			}
+			return visible
 		case <-time.After(4 * time.Second):
 			t.Fatal("tool timeout")
 			return nil
 		}
 	}
 	created := step("reminder-create", map[string]any{"content": "CUJ_PRIVATE_REMINDER", "at": time.Now().Add(time.Hour).Format(time.RFC3339)})
-	if created["status"] != "created" {
+	if created["status"] != "created" || created["reminder"].(map[string]any)["content"] != "CUJ_PRIVATE_REMINDER" {
 		t.Fatal(created)
 	}
 	id := created["reminder"].(map[string]any)["id"]
 	receive("/new")
 	wait("New session")
 	listed := step("reminder-list", map[string]any{})
-	if len(listed["reminders"].([]any)) != 1 {
+	if len(listed["reminders"].([]any)) != 1 || listed["reminders"].([]any)[0].(map[string]any)["id"] != id || listed["reminders"].([]any)[0].(map[string]any)["content"] != "CUJ_PRIVATE_REMINDER" {
 		t.Fatal("new session lost reminder")
 	}
 	modified := step("reminder-update", map[string]any{"id": id, "version": 1, "content": "CUJ_CHANGED"})
-	if modified["status"] != "updated" {
+	if modified["status"] != "updated" || modified["reminder"].(map[string]any)["content"] != "CUJ_CHANGED" || modified["reminder"].(map[string]any)["version"] != float64(2) {
 		t.Fatal(modified)
 	}
 	cancelled := step("reminder-cancel", map[string]any{"id": id, "version": 2})
-	if cancelled["status"] != "cancelled" {
+	if cancelled["status"] != "cancelled" || cancelled["id"] != id || cancelled["version"] != float64(3) {
 		t.Fatal(cancelled)
 	}
 	if a.permissions.Load() != 0 {

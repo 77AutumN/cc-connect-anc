@@ -287,8 +287,16 @@ func (h *Host) Run(ctx context.Context, lang core.Language) {
 			return
 		case <-ticker.C:
 			if err := h.Tick(ctx, lang); err != nil {
-				slog.Error("reminders disabled", "code", "storage_unavailable")
-				return
+				if ctx.Err() != nil {
+					return
+				}
+				if errors.Is(err, ErrUnavailable) {
+					slog.Error("reminders disabled", "code", "storage_unavailable")
+					return
+				}
+				// An interrupted receipt write or a competing process leaves a
+				// durable claim. Its lease/UUID permits recovery on a later tick.
+				slog.Warn("reminder delivery deferred", "code", "claim_interrupted")
 			}
 		}
 	}

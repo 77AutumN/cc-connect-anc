@@ -1066,8 +1066,11 @@ func main() {
 	var reminderHost *reminders.Host
 	if reminderDBPath != "" {
 		projects := map[string]bool{}
-		for name := range crmActionHosts {
-			projects[name] = true
+		for name, host := range crmActionHosts {
+			// All six sources need the existing authenticated tool listener.
+			if host.ToolsEnabled() {
+				projects[name] = true
+			}
 		}
 		routes, routeErr := reminderRoutes(cfg, projects)
 		if routeErr != nil {
@@ -1085,7 +1088,10 @@ func main() {
 			if openErr != nil {
 				slog.Error("reminders unavailable", "code", "storage_unavailable")
 			}
-			reminderHost, err = reminders.New(store, routes, senders)
+			reminderHost, err = reminders.New(store, routes, senders, func(project, user string) bool {
+				engine := reminderEngines[project]
+				return engine != nil && engine.HostedUserAuthorized(user)
+			})
 			if err != nil {
 				slog.Error("reminders disabled", "code", "invalid_sender")
 				if store != nil {

@@ -23,14 +23,18 @@ type Sender interface {
 	SendReminder(context.Context, string, string, string) (string, error)
 }
 type Host struct {
-	store   *Store
-	routes  map[string]Route
-	senders map[string]Sender
-	now     func() time.Time
+	store            *Store
+	routes           map[string]Route
+	senders          map[string]Sender
+	now              func() time.Time
+	sourceAuthorized func(project, user string) bool
 }
 
-func New(store *Store, routes []Route, senders map[string]Sender) (*Host, error) {
-	h := &Host{store: store, routes: map[string]Route{}, senders: map[string]Sender{}, now: time.Now}
+func New(store *Store, routes []Route, senders map[string]Sender, sourceAuthorized func(project, user string) bool) (*Host, error) {
+	if sourceAuthorized == nil {
+		return nil, errors.New("missing source authorization")
+	}
+	h := &Host{store: store, routes: map[string]Route{}, senders: map[string]Sender{}, now: time.Now, sourceAuthorized: sourceAuthorized}
 	private := map[string]string{}
 	for _, r := range routes {
 		if r.User == "" || r.Chat == "" || r.Project == "" || r.PrivateChat == "" || h.routes[r.Project].Project != "" {
@@ -134,7 +138,7 @@ func blocked(code string) map[string]any { return map[string]any{"status": "bloc
 
 func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p core.ActionPrincipal, _ string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
 	r, ok := h.routes[p.Project]
-	if !ok || p.Platform != "feishu" || r.User != p.UserID || r.Chat != p.ChatID || p.MessageID == "" || !h.authorized(r.User) {
+	if !ok || p.Platform != "feishu" || r.User != p.UserID || r.Chat != p.ChatID || p.MessageID == "" || !h.authorized(r.User) || !h.sourceAuthorized(p.Project, p.UserID) {
 		return blocked("invalid_identity"), nil, nil
 	}
 	in, err := decode(raw)
