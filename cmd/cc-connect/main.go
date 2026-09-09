@@ -1499,6 +1499,9 @@ func main() {
 			restartEnv = crmActionHost.RestartEnv(restartEnv)
 			break // All adapters captured the same supervisor credential.
 		}
+		if knowledgeHost != nil {
+			restartEnv = knowledgeHost.RestartEnv(restartEnv)
+		}
 		if err := restartProcess(execPath, restartEnv); err != nil {
 			slog.Error("restart: failed", "error", err)
 			os.Exit(1)

@@ -32,6 +32,18 @@ func TestDisabledHostAndSessionEnvironmentExposeNoPrivateConfiguration(t *testin
 	}
 }
 
+func TestSupervisorRestartPreservesKnowledgeConfigurationWithoutDuplicateKeys(t *testing.T) {
+	a := &Adapter{command: "/protected/host", projects: map[string]bool{"second": true, "first": true}}
+	env := a.RestartEnv([]string{"PATH=/bin", "CC_TEAM_BRAIN_COMMAND=wrong", "CC_TEAM_BRAIN_PROJECTS=wrong"})
+	if len(env) != 3 || env[0] != "PATH=/bin" || env[1] != "CC_TEAM_BRAIN_COMMAND=/protected/host" || env[2] != "CC_TEAM_BRAIN_PROJECTS=first,second" {
+		t.Fatalf("invalid supervisor environment: %v", env)
+	}
+	model, err := a.SessionEnv("session")
+	if err != nil || len(model) != 1 || strings.Contains(model[0], "protected") {
+		t.Fatal("restart config leaked to model")
+	}
+}
+
 func TestPresentationHasCompletePreviewAndTrustedButtonsInFiveLanguages(t *testing.T) {
 	for _, lang := range []core.Language{core.LangEnglish, core.LangChinese, core.LangTraditionalChinese, core.LangJapanese, core.LangSpanish} {
 		result := present(map[string]any{"status": "pending", "approval_id": "bound-id", "preview": "Title: page one\nTarget: https://synthetic.feishu.cn/wiki/page1\nPrior: Old context\n- Old\n+ New ``` untrusted"}, lang)

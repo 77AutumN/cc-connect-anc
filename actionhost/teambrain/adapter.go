@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -83,7 +84,25 @@ func NewFromEnv() (*Adapter, error) {
 	return &Adapter{command: command, projects: configured}, nil
 }
 
-func (a *Adapter) Enabled(project string) bool             { return a != nil && a.projects[project] }
+func (a *Adapter) Enabled(project string) bool { return a != nil && a.projects[project] }
+
+// RestartEnv restores host configuration for supervisor self-exec, never for
+// model children. Duplicate inherited keys are replaced with the pinned values.
+func (a *Adapter) RestartEnv(environment []string) []string {
+	result := make([]string, 0, len(environment)+2)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, "CC_TEAM_BRAIN_COMMAND=") && !strings.HasPrefix(entry, "CC_TEAM_BRAIN_PROJECTS=") {
+			result = append(result, entry)
+		}
+	}
+	projects := make([]string, 0, len(a.projects))
+	for name := range a.projects {
+		projects = append(projects, name)
+	}
+	sort.Strings(projects)
+	return append(result, "CC_TEAM_BRAIN_COMMAND="+a.command, "CC_TEAM_BRAIN_PROJECTS="+strings.Join(projects, ","))
+}
+
 func (a *Adapter) Kind() string                            { return Kind }
 func (a *Adapter) Match(core.Event) (core.ActionRef, bool) { return core.ActionRef{}, false }
 func (a *Adapter) SessionEnv(token string) ([]string, error) {
