@@ -21,6 +21,7 @@ import (
 
 	ccconnect "github.com/chenhg5/cc-connect"
 	"github.com/chenhg5/cc-connect/actionhost/crmfollowup"
+	"github.com/chenhg5/cc-connect/actionhost/teambrain"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 	"github.com/chenhg5/cc-connect/daemon"
@@ -248,6 +249,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	knowledgeHost, err := teambrain.NewFromEnv()
+	if err != nil {
+		slog.Error("knowledge action host configuration invalid", "error", err)
+		os.Exit(1)
+	}
 	checkUpdateAsync()
 	// When started as a daemon (CC_LOG_FILE set), redirect logs to a rotating file.
 	// Log file setup happens before flag.Parse() so the rotating writer is in
@@ -377,7 +383,8 @@ func main() {
 
 	crmActionHostAttached := make(map[string]bool)
 	var crmToolServer *core.ActionToolServer
-	var crmToolEngines []*core.Engine
+	var actionToolEngines []*core.Engine
+	knowledgeAttached := map[string]bool{}
 	crmToolErrors := make(chan error, 1)
 
 	engines := make([]*core.Engine, 0, len(cfg.Projects))
@@ -452,6 +459,8 @@ func main() {
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
+		var combinedHost core.ActionHost
+		toolsEnabled := false
 		if crmActionHost := crmActionHosts[proj.Name]; crmActionHost != nil {
 			if crmActionHostAttached[proj.Name] {
 				slog.Error("CRM action host project must be unique")
@@ -465,11 +474,28 @@ func main() {
 				slog.Error("CRM action host work directory invalid", "project", proj.Name, "error", err)
 				os.Exit(1)
 			}
-			engine.SetActionHost(crmActionHost)
-			if crmActionHost.ToolsEnabled() {
-				crmToolEngines = append(crmToolEngines, engine)
-			}
+			combinedHost = crmActionHost
+			toolsEnabled = crmActionHost.ToolsEnabled()
 			crmActionHostAttached[proj.Name] = true
+		}
+		if knowledgeHost.Enabled(proj.Name) {
+			if knowledgeAttached[proj.Name] || proj.RunAsUser == "" || proj.RunAsUser == "root" || proj.Mode == "multi-workspace" {
+				slog.Error("knowledge host requires unique fixed projects and unprivileged agent accounts")
+				os.Exit(1)
+			}
+			if err := teambrain.ValidateAgentUser(proj.RunAsUser); err != nil {
+				slog.Error("knowledge agent account invalid", "error", err)
+				os.Exit(1)
+			}
+			knowledgeAttached[proj.Name] = true
+			combinedHost = core.CombineActionHosts(combinedHost, knowledgeHost, teambrain.Commands())
+			toolsEnabled = true
+		}
+		if combinedHost != nil {
+			engine.SetActionHost(combinedHost)
+		}
+		if toolsEnabled {
+			actionToolEngines = append(actionToolEngines, engine)
 		}
 		// Wire display settings including show_context_indicator and reply_footer
 		// Global [display] config can be overridden by project-level settings
@@ -1019,6 +1045,10 @@ func main() {
 		engines = append(engines, engine)
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
+	if knowledgeHost != nil && len(knowledgeAttached) != 6 {
+		slog.Error("not all six knowledge environments were found")
+		os.Exit(1)
+	}
 	if len(crmActionHosts) != len(crmActionHostAttached) {
 		slog.Error("CRM action host project is not configured")
 		os.Exit(1)
@@ -1029,8 +1059,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if len(crmToolEngines) > 0 {
-		crmToolServer, err = core.ListenActionTools("127.0.0.1:18743", core.ActionToolsHandler(crmToolEngines...))
+	if len(actionToolEngines) > 0 {
+		crmToolServer, err = core.ListenActionTools("127.0.0.1:18743", core.ActionToolsHandler(actionToolEngines...))
 		if err != nil {
 			slog.Error("CRM tool listener startup failed", "error", err)
 			os.Exit(1)
@@ -1091,7 +1121,7 @@ func main() {
 	var startErrors []error
 	for _, e := range engines {
 		if err := e.Start(); err != nil {
-			if len(crmActionHosts) > 0 {
+			if len(crmActionHosts) > 0 || knowledgeHost != nil {
 				if crmToolServer != nil {
 					_ = crmToolServer.Close()
 				}

@@ -109,7 +109,8 @@ func (e *Engine) prepareHostedAction(state *interactiveState, ref ActionRef) (Ac
 	e.actionMu.RLock()
 	host := e.actionHost
 	e.actionMu.RUnlock()
-	if host == nil || host.Kind() != ref.Kind {
+	host = actionHostForKind(host, ref.Kind)
+	if host == nil {
 		return nil, ActionHostResult{}, ActionPrincipal{}, false
 	}
 
@@ -213,7 +214,8 @@ func (e *Engine) handleTrustedCardAction(p Platform, action TrustedCardAction) T
 	e.actionMu.RLock()
 	host := e.actionHost
 	e.actionMu.RUnlock()
-	if host == nil || action.Kind != host.Kind() || action.ApprovalID == "" {
+	host = actionHostForKind(host, action.Kind)
+	if host == nil || action.ApprovalID == "" {
 		return TrustedCardActionResponse{Toast: e.i18n.T(MsgHostedActionInvalidToast), ToastType: "error"}
 	}
 	if action.Decision != ActionApprove && action.Decision != ActionModify && action.Decision != ActionCancel {
