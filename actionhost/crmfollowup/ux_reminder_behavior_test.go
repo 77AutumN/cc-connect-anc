@@ -39,18 +39,16 @@ func (h *observedUXReminders) Tool(ctx context.Context, command string, raw json
 
 // These are real multi-turn Engine/tool executions when explicitly opted in.
 // Fixture seeding changes only this test's newly initialized synthetic database.
-func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(string) []realCanaryObservation, find func([]realCanaryObservation, string, string) map[string]any, p *toolJourneyPlatform, e *core.Engine, key string, h *reminders.Host) {
+func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(string) []realCanaryObservation, find func([]realCanaryObservation, string, string) map[string]any, p *toolJourneyPlatform, key string, h *reminders.Host) {
 	t.Helper()
 	var evidence []map[string]any
-	reply := func() string {
-		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		if len(history) > 0 {
-			return history[0].Content
-		}
-		return ""
-	}
+	lastReply := ""
+	reply := func() string { return lastReply }
 	observe := func(message string) []realCanaryObservation {
 		t.Helper()
+		p.mu.Lock()
+		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
+		p.mu.Unlock()
 		calls := turn(message)
 		data := []map[string]any{}
 		for _, c := range calls {
@@ -59,7 +57,12 @@ func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(str
 				t.Errorf("unrequested business command: %s", c.command)
 			}
 		}
-		evidence = append(evidence, map[string]any{"user": message, "calls": data, "reply": reply()})
+		p.mu.Lock()
+		visible := append([]string(nil), p.sent[visibleBefore:]...)
+		questions := append([]string(nil), p.questionUI[questionsBefore:]...)
+		p.mu.Unlock()
+		lastReply = strings.Join(visible, "\n")
+		evidence = append(evidence, map[string]any{"user": message, "calls": data, "reply": lastReply, "visible_messages": visible, "questions": questions, "awaiting_user": len(questions) > 0})
 		return calls
 	}
 	t.Cleanup(func() {
@@ -145,8 +148,14 @@ func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(str
 		calls = observe("内容改成带上虚构演示稿")
 		changed := reminder(find(calls, "reminder-update", "updated"))
 		requireFreshRead(calls, created["id"])
-		if changed["at"] != updated["at"] || !strings.Contains(text(changed["content"]), "虚构演示稿") {
-			t.Fatal("content edit lost draft")
+		if changed["at"] != updated["at"] || changed["content"] != "带上虚构演示稿" {
+			t.Fatal("content replacement must be exact and preserve time, not append the previous content")
+		}
+		calls = observe("再补一句：带上虚构报价单")
+		appended := reminder(find(calls, "reminder-update", "updated"))
+		requireFreshRead(calls, created["id"])
+		if appended["at"] != updated["at"] || !strings.Contains(text(appended["content"]), "带上虚构演示稿") || !strings.Contains(text(appended["content"]), "带上虚构报价单") {
+			t.Fatal("explicit addition must retain existing content and time")
 		}
 		calls = observe("这条不要了")
 		cancelled := find(calls, "reminder-cancel", "cancelled")

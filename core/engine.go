@@ -321,14 +321,15 @@ var RestartCh = make(chan RestartRequest, 1)
 // DisplayCfg controls how intermediate messages are surfaced.
 // A value of -1 means "use default", 0 means "no truncation".
 type DisplayCfg struct {
-	Mode             string // "full" (default), "compact", or "quiet" — thinking/tool visibility
-	CardMode         string // "legacy" (default) or "rich" (Card 2.0 Feishu)
-	ThinkingMessages bool
-	ThinkingMaxLen   int // max runes for thinking preview; 0 = no truncation
-	ToolMaxLen       int // max runes for tool use preview; 0 = no truncation
-	ToolMessages     bool
-	HistoryMaxLen    *int // max runes for /history entries; nil = default, 0 = no truncation
-	HideAgentFooter  bool // strip model/token footer lines emitted as agent text
+	Mode              string // "full" (default), "compact", or "quiet" — thinking/tool visibility
+	CardMode          string // "legacy" (default) or "rich" (Card 2.0 Feishu)
+	ThinkingMessages  bool
+	ThinkingMaxLen    int // max runes for thinking preview; 0 = no truncation
+	ToolMaxLen        int // max runes for tool use preview; 0 = no truncation
+	ToolMessages      bool
+	HistoryMaxLen     *int // max runes for /history entries; nil = default, 0 = no truncation
+	HideAgentFooter   bool // strip model/token footer lines emitted as agent text
+	FinalResponseOnly bool // hold intermediate agent text; keep questions, errors and hosted cards visible
 }
 
 // InstantReplyCfg controls the immediate confirmation reply sent when a message
@@ -4675,6 +4676,8 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 
 	var textParts []string
 	var toolsUsed []string
+	var finalSegmentStart int
+	var display DisplayCfg
 
 	for {
 		select {
@@ -4696,7 +4699,14 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				}
 				state.mu.Lock()
 				state.eventsNeedResync = true
+				p, replyCtx := state.platform, state.replyCtx
 				state.mu.Unlock()
+				if turnActive && display.FinalResponseOnly && ctx.Err() == nil {
+					fullResponse := e.i18n.T(MsgResponseInterrupted)
+					session.AddHistory("assistant", fullResponse)
+					sessions.Save()
+					e.send(p, replyCtx, fullResponse)
+				}
 				return
 			}
 
@@ -4722,6 +4732,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			// Mark workspace active on first event.
 			if !turnActive {
 				turnActive = true
+				display = e.display
 				if workspaceDir != "" && e.workspacePool != nil {
 					if ws := e.workspacePool.Get(workspaceDir); ws != nil {
 						ws.BeginTurn()
@@ -4743,6 +4754,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				}
 
 			case EventToolUse:
+				finalSegmentStart = len(textParts)
 				// Record tool name so we can log or surface context if the
 				// channel closes before a clean EventResult. Output is
 				// delivered via EventResult; we intentionally do not relay
@@ -4760,9 +4772,26 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 					"status", event.ToolStatus)
 
 			case EventResult:
+				if display.FinalResponseOnly && !event.Done {
+					continue
+				}
 				fullResponse := event.Content
 				if fullResponse == "" && len(textParts) > 0 {
-					fullResponse = strings.Join(textParts, "")
+					start := 0
+					if display.FinalResponseOnly {
+						start = finalSegmentStart
+					}
+					fullResponse = strings.Join(textParts[start:], "")
+				}
+				if display.HideAgentFooter {
+					fullResponse = stripAgentFooterLines(fullResponse)
+				}
+				if display.FinalResponseOnly {
+					if fullResponse == "" {
+						fullResponse = e.i18n.T(MsgEmptyResponse)
+					} else if stripped, ok := stripTrailingSilent(fullResponse); ok {
+						fullResponse = stripped
+					}
 				}
 
 				if fullResponse != "" {
@@ -4784,6 +4813,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 				// Reset for potential subsequent unsolicited turn.
 				textParts = nil
 				toolsUsed = nil
+				finalSegmentStart = 0
 				turnActive = false
 				if workspaceDir != "" && e.workspacePool != nil {
 					if ws := e.workspacePool.Get(workspaceDir); ws != nil {
@@ -4809,6 +4839,7 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 					"response_len", len(fullResponse))
 
 			case EventPermissionRequest:
+				finalSegmentStart = len(textParts)
 				// If approveAll (/yolo) is set, grant the request. Otherwise
 				// deny — there is no active user turn to consult — and notify
 				// the user on the platform so a silently blocked background
@@ -4873,6 +4904,9 @@ var agentErrorHandlers = []agentErrorHandler{
 }
 
 func (e *Engine) processInteractiveEvents(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string, msgID string, turnStart time.Time, stopTypingFn func(), sendDone <-chan error, replyCtx any) {
+	// Keep one display policy for a whole turn, including all streaming paths.
+	// A queued turn picks up a fresh policy after a configuration reload.
+	finalResponseOnly := e.display.FinalResponseOnly
 	if msgID != "" {
 		state.mu.Lock()
 		state.currentMessageID = msgID
@@ -4880,8 +4914,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	}
 
 	var textParts []string
-	var segmentStart int // index into textParts: text before this has been sent/displayed
-	silentHold := false  // true while accumulated segment text could still resolve to a bare NO_REPLY marker
+	var segmentStart int      // index into textParts: text before this has been sent/displayed
+	var finalSegmentStart int // final-only fallback starts after the last tool or question
+	silentHold := false       // true while accumulated segment text could still resolve to a bare NO_REPLY marker
 	toolCount := 0
 	waitStart := time.Now()
 	firstEventLogged := false
@@ -4930,7 +4965,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 	var cardThinkingText string        // latest thinking text
 	var cardAnswerText strings.Builder // accumulated answer text
 
-	if scp, ok := state.platform.(StreamingCardPlatform); ok {
+	if scp, ok := state.platform.(StreamingCardPlatform); ok && !finalResponseOnly {
 		if sc, err := scp.CreateStreamingCard(e.ctx, state.replyCtx); err != nil {
 			slog.Warn("streaming card creation failed, falling back to normal messages", "error", err)
 		} else {
@@ -4938,7 +4973,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			slog.Info("streaming card created for turn", "session", sessionKey)
 		}
 	}
-	sp := newStreamPreview(e.streamPreview, state.platform, state.replyCtx, e.ctx, workspaceRenderer)
+	previewCfg := e.streamPreview
+	if finalResponseOnly {
+		previewCfg.Enabled = false
+	}
+	sp := newStreamPreview(previewCfg, state.platform, state.replyCtx, e.ctx, workspaceRenderer)
 	cp := newCompactProgressWriter(e.ctx, state.platform, state.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), workspaceRenderer)
 	state.mu.Unlock()
 
@@ -5112,7 +5151,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 		richCardSupporter, hasRichCard := p.(RichCardSupporter)
 		// Card 2.0 rich-card path is opt-in via [display] mode = "rich".
 		// Default "legacy" keeps upstream behavior for all platforms.
-		if e.display.CardMode != "rich" {
+		if e.display.CardMode != "rich" || (finalResponseOnly && event.Type != EventResult) {
 			hasRichCard = false
 		}
 		richMarkdownResolver, hasRichMarkdownResolver := p.(RichCardMarkdownResolver)
@@ -5128,6 +5167,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 		switch event.Type {
 		case EventThinking:
+			if finalResponseOnly {
+				break
+			}
 			if isEllipsisOnly(event.Content) {
 				break
 			}
@@ -5221,6 +5263,10 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 		case EventToolUse:
 			toolCount++
+			if finalResponseOnly {
+				finalSegmentStart = len(textParts)
+				break
+			}
 			if hasRichCard {
 				// When tool messages are suppressed, skip card updates on tool events.
 				if !e.display.ToolMessages {
@@ -5350,6 +5396,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			}
 
 		case EventToolResult:
+			if finalResponseOnly {
+				break
+			}
 			if e.display.ToolMessages {
 				result := strings.TrimSpace(event.ToolResult)
 				if result == "" {
@@ -5605,9 +5654,11 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				continue
 			}
 
-			// Flush accumulated text segment before permission prompt
+			// Questions and approvals stay visible; final-only withholds narration.
 			previewActive := sp.canPreview()
-			if len(textParts) > segmentStart {
+			if finalResponseOnly {
+				finalSegmentStart = len(textParts)
+			} else if len(textParts) > segmentStart {
 				if !previewActive {
 					segment := strings.Join(textParts[segmentStart:], "")
 					if segment != "" {
@@ -5728,16 +5779,22 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			state.mu.Unlock()
 
 			fullResponse := event.Content
-			if e.display.HideAgentFooter {
-				fullResponse = stripAgentFooterLines(fullResponse)
-			}
 			// When tool progress is hidden, segmentStart stays 0 and textParts
 			// contains ALL text across tool boundaries. Prefer the full accumulated
 			// text over event.Content which only contains the last assistant segment.
-			if len(textParts) > 0 && segmentStart == 0 && !e.display.ToolMessages {
+			if finalResponseOnly {
+				// A terminal answer is authoritative. Without one, use only text
+				// after the last tool/question, never a pre-action promise.
+				if strings.TrimSpace(fullResponse) == "" {
+					fullResponse = strings.Join(textParts[finalSegmentStart:], "")
+				}
+			} else if len(textParts) > 0 && segmentStart == 0 && !e.display.ToolMessages {
 				fullResponse = strings.Join(textParts, "")
 			} else if fullResponse == "" && len(textParts) > 0 {
 				fullResponse = strings.Join(textParts, "")
+			}
+			if e.display.HideAgentFooter {
+				fullResponse = stripAgentFooterLines(fullResponse)
 			}
 			if fullResponse == "" {
 				fullResponse = e.i18n.T(MsgEmptyResponse)
@@ -6129,9 +6186,15 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				e.i18n.DetectAndSet(queued.content)
 
 				// Reset per-turn state for the next turn
+				finalResponseOnly = e.display.FinalResponseOnly
+				previewCfg = e.streamPreview
+				if finalResponseOnly {
+					previewCfg.Enabled = false
+				}
 				msgID = queued.messageID
 				textParts = nil
 				segmentStart = 0
+				finalSegmentStart = 0
 				toolCount = 0
 				turnStart = time.Now()
 				firstEventLogged = false
@@ -6155,7 +6218,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				queuedRenderer := func(content string) string {
 					return e.renderOutgoingContentForWorkspace(queued.platform, content, workspaceDir)
 				}
-				sp = newStreamPreview(e.streamPreview, queued.platform, queued.replyCtx, e.ctx, queuedRenderer)
+				sp = newStreamPreview(previewCfg, queued.platform, queued.replyCtx, e.ctx, queuedRenderer)
 				cp = newCompactProgressWriter(e.ctx, queued.platform, queued.replyCtx, e.agent.Name(), e.i18n.CurrentLang(), queuedRenderer)
 
 				// Reset streaming card state for the next turn
@@ -6165,7 +6228,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				cardAnswerText.Reset()
 
 				// Try to create a new streaming card for the queued turn
-				if scp, ok := queued.platform.(StreamingCardPlatform); ok {
+				if scp, ok := queued.platform.(StreamingCardPlatform); ok && !finalResponseOnly {
 					if sc, err := scp.CreateStreamingCard(e.ctx, queued.replyCtx); err != nil {
 						slog.Warn("streaming card creation failed for queued turn", "error", err)
 					} else {
@@ -6271,6 +6334,20 @@ channelClosed:
 	state.mu.Unlock()
 	e.notifyDroppedQueuedMessages(state, fmt.Errorf("agent process exited"))
 	e.cleanupInteractiveState(sessionKey, state)
+
+	if finalResponseOnly {
+		// Buffered narration is not proof of an action's outcome. In particular,
+		// never promote a pre-tool promise to a result after a process crash.
+		sp.discard()
+		fullResponse := e.i18n.T(MsgResponseInterrupted)
+		session.AddHistory("assistant", fullResponse)
+		sessions.Save()
+		state.mu.Lock()
+		p := state.platform
+		state.mu.Unlock()
+		sendWorkspace(p, replyCtx, fullResponse)
+		return
+	}
 
 	if len(textParts) > 0 {
 		state.mu.Lock()

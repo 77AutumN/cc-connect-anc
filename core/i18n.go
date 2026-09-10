@@ -185,6 +185,7 @@ const (
 	MsgFailedToStartAgentSession MsgKey = "failed_to_start_agent_session"
 	MsgFailedToDeleteSession     MsgKey = "failed_to_delete_session"
 	MsgEmptyResponse             MsgKey = "empty_response"
+	MsgResponseInterrupted       MsgKey = "response_interrupted"
 	MsgPermissionPrompt          MsgKey = "permission_prompt"
 	MsgPermissionAllowed         MsgKey = "permission_allowed"
 	MsgPermissionApproveAll      MsgKey = "permission_approve_all"
@@ -1012,6 +1013,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "(空回應)",
 		LangJapanese:           "（空のレスポンス）",
 		LangSpanish:            "(respuesta vacía)",
+	},
+	MsgResponseInterrupted: {
+		LangEnglish:            "The reply was interrupted; the operation result is not verified. Check its current status before repeating the action.",
+		LangChinese:            "回复中断，操作结果尚未核实。请先查询当前状态，不要直接重复操作。",
+		LangTraditionalChinese: "回覆中斷，操作結果尚未核實。請先查詢目前狀態，不要直接重複操作。",
+		LangJapanese:           "応答が中断され、操作結果は未確認です。操作を繰り返す前に現在の状態を確認してください。",
+		LangSpanish:            "La respuesta se interrumpió; el resultado de la operación no está verificado. Comprueba su estado actual antes de repetirla.",
 	},
 	MsgPermissionPrompt: {
 		LangEnglish:            "⚠️ **Permission Request**\n\nAgent wants to use **%s**:\n\n```\n%s\n```\n\nReply **allow** / **deny** / **allow all** (skip all future prompts this session).",
