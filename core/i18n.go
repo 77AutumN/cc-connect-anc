@@ -770,6 +770,15 @@ const (
 	MsgReminderList             MsgKey = "reminder_list"
 	MsgReminderWeekdays         MsgKey = "reminder_weekdays"
 	MsgReminderStatuses         MsgKey = "reminder_statuses"
+	MsgReminderNumber           MsgKey = "ReminderNumber"
+	MsgOpsAlertActive           MsgKey = "OpsAlertActive"
+	MsgOpsAlertRecovered        MsgKey = "OpsAlertRecovered"
+	MsgOpsAlertStorage          MsgKey = "OpsAlertStorage"
+	MsgOpsAlertRoute            MsgKey = "OpsAlertRoute"
+	MsgOpsAlertPermission       MsgKey = "OpsAlertPermission"
+	MsgOpsAlertDelivery         MsgKey = "OpsAlertDelivery"
+	MsgOpsAlertBody             MsgKey = "OpsAlertBody"
+	MsgOpsAlertDegraded         MsgKey = "OpsAlertDegraded"
 	MsgKnowledgePublished       MsgKey = "knowledge_published"
 	MsgKnowledgeNeedsReview     MsgKey = "knowledge_needs_review"
 	MsgKnowledgeReviewBody      MsgKey = "knowledge_review_body"
@@ -777,12 +786,21 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
-	MsgReminderHeading:   {LangEnglish: "Reminder (Beijing time)", LangChinese: "提醒（北京时间）", LangTraditionalChinese: "提醒（北京時間）", LangJapanese: "リマインダー（北京時間）", LangSpanish: "Recordatorio (hora de Pekín)"},
-	MsgReminderLate:      {LangEnglish: "Delayed delivery; original schedule:", LangChinese: "延迟补发；原定时间：", LangTraditionalChinese: "延遲補發；原定時間：", LangJapanese: "遅延配信・元の予定：", LangSpanish: "Entrega retrasada; horario original:"},
-	MsgReminderDuplicate: {LangEnglish: "An earlier delivery could not be confirmed; this may be a duplicate.", LangChinese: "此前发送结果未能确认，本次补发可能重复。", LangTraditionalChinese: "此前發送結果未能確認，本次補發可能重複。", LangJapanese: "前回の配信を確認できません。重複の可能性があります。", LangSpanish: "No se confirmó la entrega anterior; podría estar duplicado."},
-	MsgReminderList:      {LangEnglish: "Your reminders", LangChinese: "你的提醒清单", LangTraditionalChinese: "你的提醒清單", LangJapanese: "あなたのリマインダー", LangSpanish: "Tus recordatorios"},
-	MsgReminderWeekdays:  {LangEnglish: "Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday", LangChinese: "周日|周一|周二|周三|周四|周五|周六", LangTraditionalChinese: "週日|週一|週二|週三|週四|週五|週六", LangJapanese: "日曜日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日", LangSpanish: "domingo|lunes|martes|miércoles|jueves|viernes|sábado"},
-	MsgReminderStatuses:  {LangEnglish: "Scheduled|Sending|Retry scheduled|Paused|Cancelled|Accepted by Feishu", LangChinese: "待发送|发送中|等待重试|已暂停|已取消|飞书已接收", LangTraditionalChinese: "待發送|發送中|等待重試|已暫停|已取消|飛書已接收", LangJapanese: "予定済み|送信中|再試行待ち|一時停止|キャンセル済み|Feishu受付済み", LangSpanish: "Programado|Enviando|Reintento pendiente|Pausado|Cancelado|Aceptado por Feishu"},
+	MsgReminderNumber:     {LangEnglish: "ID: %s", LangChinese: "编号：%s", LangTraditionalChinese: "編號：%s", LangJapanese: "番号：%s", LangSpanish: "ID: %s"},
+	MsgOpsAlertActive:     {LangEnglish: "Bot needs attention", LangChinese: "Bot 需要处理异常", LangTraditionalChinese: "Bot 需要處理異常", LangJapanese: "Botの確認が必要です", LangSpanish: "El bot necesita atención"},
+	MsgOpsAlertRecovered:  {LangEnglish: "Failure no longer observed; reconcile paused/in-flight records", LangChinese: "本项异常已不再出现；暂停或在途记录仍需核查", LangTraditionalChinese: "本項異常已不再出現；暫停或在途記錄仍需核查", LangJapanese: "障害は見られません。停止中・送信中の記録は要確認です", LangSpanish: "El fallo ya no se observa; revise registros pausados o en tránsito"},
+	MsgOpsAlertStorage:    {LangEnglish: "Reminder storage unavailable", LangChinese: "提醒存储不可用", LangTraditionalChinese: "提醒儲存不可用", LangJapanese: "保存先が利用できません", LangSpanish: "Almacenamiento no disponible"},
+	MsgOpsAlertRoute:      {LangEnglish: "Verify identity mapping", LangChinese: "身份映射需要核验", LangTraditionalChinese: "身分映射需要核驗", LangJapanese: "宛先設定を確認してください", LangSpanish: "Verifique la asignación de identidad"},
+	MsgOpsAlertPermission: {LangEnglish: "Paused: verify identity/permissions", LangChinese: "提醒已暂停：请核验身份及权限", LangTraditionalChinese: "提醒已暫停：請核驗身分及權限", LangJapanese: "停止中：本人と権限を確認してください", LangSpanish: "Pausado: verifique identidad y permisos"},
+	MsgOpsAlertDelivery:   {LangEnglish: "Delivery remains unconfirmed", LangChinese: "提醒投递持续未确认", LangTraditionalChinese: "提醒投遞持續未確認", LangJapanese: "配信結果を確認できていません", LangSpanish: "La entrega sigue sin confirmar"},
+	MsgOpsAlertBody:       {LangEnglish: "%s\n%s\nFirst: %s\nLatest: %s\nAffected: %d\nInspect through protected operations; do not repeat business writes.\nIncident: %s", LangChinese: "%s\n%s\n首次：%s\n最近：%s\n影响数量：%d\n请通过受控运维入口核查，不要直接重做业务操作。\n异常编号：%s", LangTraditionalChinese: "%s\n%s\n首次：%s\n最近：%s\n影響數量：%d\n請透過受控維運入口核查，不要直接重做業務操作。\n異常編號：%s", LangJapanese: "%s\n%s\n初回：%s\n最新：%s\n件数：%d\n管理経路で確認してください。業務操作を再実行しないでください。\n障害番号：%s", LangSpanish: "%s\n%s\nPrimero: %s\nÚltimo: %s\nAfectados: %d\nRevise por operaciones protegidas; no repita escrituras.\nIncidente: %s"},
+	MsgOpsAlertDegraded:   {LangEnglish: "Alert storage unavailable. Best-effort notice; history/deduplication may not survive restart. Inspect through protected operations; no business data was reset.", LangChinese: "Bot 告警存储不可用。本次为尽力通知，重启后可能丢失告警积压或去重记录。请通过受控运维入口检查；没有重置业务数据。", LangTraditionalChinese: "Bot 告警儲存不可用。本次為盡力通知，重啟後可能遺失告警積壓或去重記錄。請透過受控維運入口檢查；沒有重置業務資料。", LangJapanese: "通知保存先が利用できません。再起動後の履歴・重複防止は保証されません。管理経路で確認してください。業務データはリセットしていません。", LangSpanish: "Almacenamiento de alertas no disponible. Historial y deduplicación podrían perderse al reiniciar. Revise por operaciones protegidas; no se restablecieron datos."},
+	MsgReminderHeading:    {LangEnglish: "Reminder (Beijing time)", LangChinese: "提醒（北京时间）", LangTraditionalChinese: "提醒（北京時間）", LangJapanese: "リマインダー（北京時間）", LangSpanish: "Recordatorio (hora de Pekín)"},
+	MsgReminderLate:       {LangEnglish: "Delayed delivery; original schedule:", LangChinese: "延迟补发；原定时间：", LangTraditionalChinese: "延遲補發；原定時間：", LangJapanese: "遅延配信・元の予定：", LangSpanish: "Entrega retrasada; horario original:"},
+	MsgReminderDuplicate:  {LangEnglish: "An earlier delivery could not be confirmed; this may be a duplicate.", LangChinese: "此前发送结果未能确认，本次补发可能重复。", LangTraditionalChinese: "此前發送結果未能確認，本次補發可能重複。", LangJapanese: "前回の配信を確認できません。重複の可能性があります。", LangSpanish: "No se confirmó la entrega anterior; podría estar duplicado."},
+	MsgReminderList:       {LangEnglish: "Your reminders", LangChinese: "你的提醒清单", LangTraditionalChinese: "你的提醒清單", LangJapanese: "あなたのリマインダー", LangSpanish: "Tus recordatorios"},
+	MsgReminderWeekdays:   {LangEnglish: "Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday", LangChinese: "周日|周一|周二|周三|周四|周五|周六", LangTraditionalChinese: "週日|週一|週二|週三|週四|週五|週六", LangJapanese: "日曜日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日", LangSpanish: "domingo|lunes|martes|miércoles|jueves|viernes|sábado"},
+	MsgReminderStatuses:   {LangEnglish: "Scheduled|Sending|Retry scheduled|Paused|Cancelled|Accepted by Feishu", LangChinese: "待发送|发送中|等待重试|已暂停|已取消|飞书已接收", LangTraditionalChinese: "待發送|發送中|等待重試|已暫停|已取消|飛書已接收", LangJapanese: "予定済み|送信中|再試行待ち|一時停止|キャンセル済み|Feishu受付済み", LangSpanish: "Programado|Enviando|Reintento pendiente|Pausado|Cancelado|Aceptado por Feishu"},
 	MsgKnowledgePreview: {
 		LangEnglish: "Review knowledge changes", LangChinese: "确认知识变更", LangTraditionalChinese: "確認知識變更",
 		LangJapanese: "ナレッジ変更の確認", LangSpanish: "Revisar cambios de conocimiento",

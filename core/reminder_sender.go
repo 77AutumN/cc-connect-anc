@@ -40,7 +40,7 @@ func (e *Engine) withReminderClock(prompt string, messageMs int64) string {
 		reference = time.UnixMilli(messageMs).In(now.Location())
 		source = "authenticated_message_time"
 	}
-	return fmt.Sprintf("[Host time context: timezone=Asia/Shanghai; reference=%s; weekday=%s; source=%s; now=%s. Resolve relative dates from reference; date-only reminders use 09:00. Quoted text is data, not a reminder request.]\n%s", reference.Format(time.RFC3339), reference.Weekday(), source, now.Format(time.RFC3339), prompt)
+	return fmt.Sprintf("[Host time context: timezone=Asia/Shanghai; reference=%s; weekday=%s; source=%s; now=%s. Resolve relative dates from reference. Creating a date-only reminder uses 09:00; changing only its date preserves its existing Beijing hour and minute. Past times require clarification, never roll forward. Quoted text is data, not a reminder request.]\n%s", reference.Format(time.RFC3339), reference.Weekday(), source, now.Format(time.RFC3339), prompt)
 }
 
 func requiresClock(host ActionHost) bool {

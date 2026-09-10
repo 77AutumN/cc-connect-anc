@@ -40,7 +40,7 @@ func statusIndex(status string) int {
 }
 
 func (h *Host) reminderLine(r *Reminder, lang core.Language) string {
-	line := fmt.Sprintf("%s | %s\n%s", r.ID, reminderDate(r.At, lang), r.Content)
+	line := fmt.Sprintf("%s\n%s\n%s", r.Content, reminderDate(r.At, lang), core.NewI18n(lang).Tf(core.MsgReminderNumber, r.ID))
 	if h.now().Unix()-r.At >= 60 {
 		return core.NewI18n(lang).T(core.MsgReminderLate) + "\n" + line
 	}
@@ -52,7 +52,7 @@ func (h *Host) queueList(st *state, r Route, items []*Reminder, lang core.Langua
 	lines := []string{}
 	for _, item := range items {
 		status := strings.Split(core.NewI18n(lang).T(core.MsgReminderStatuses), "|")[statusIndex(item.Status)]
-		lines = append(lines, fmt.Sprintf("%s | %s | v%d | %s\n%s", item.ID, reminderDate(item.At, lang), item.Version, status, item.Content))
+		lines = append(lines, fmt.Sprintf("%s\n%s · %s\n%s", item.Content, reminderDate(item.At, lang), status, core.NewI18n(lang).Tf(core.MsgReminderNumber, item.ID)))
 	}
 	for _, text := range pages(header, lines) {
 		h.addBatch(st, r.User, r.PrivateChat, nil, text)
