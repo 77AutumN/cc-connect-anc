@@ -250,9 +250,10 @@ func TestCUJ_CRMREAL1_ClaudeClarifiesApprovesAndDiscusses(t *testing.T) {
 		}
 		if customerCase {
 			seed := "customer-trial"
-			if behaviorCase == "customer-roster-first" {
+			switch behaviorCase {
+			case "customer-roster-first":
 				seed = "customer-roster"
-			} else if behaviorCase == "customer-roster-ambiguous" {
+			case "customer-roster-ambiguous":
 				seed = behaviorCase
 			}
 			command.Env = append(command.Env, "MYANC_SPIKE_SEED="+seed)
