@@ -46,23 +46,16 @@ func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(str
 	reply := func() string { return lastReply }
 	observe := func(message string) []realCanaryObservation {
 		t.Helper()
-		p.mu.Lock()
-		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
-		p.mu.Unlock()
-		calls := turn(message)
-		data := []map[string]any{}
+		calls, shown := captureNativeTurn(p, message, turn, &evidence)
 		for _, c := range calls {
-			data = append(data, map[string]any{"command": c.command, "input": c.input, "result": c.data})
 			if !strings.HasPrefix(c.command, "reminder-") {
 				t.Errorf("unrequested business command: %s", c.command)
 			}
 		}
-		p.mu.Lock()
-		visible := append([]string(nil), p.sent[visibleBefore:]...)
-		questions := append([]string(nil), p.questionUI[questionsBefore:]...)
-		p.mu.Unlock()
-		lastReply = strings.Join(visible, "\n")
-		evidence = append(evidence, map[string]any{"user": message, "calls": data, "reply": lastReply, "visible_messages": visible, "questions": questions, "awaiting_user": len(questions) > 0})
+		lastReply = text(shown["reply"])
+		if nativeReplySmokeIssue(lastReply) {
+			t.Error("ordinary reminder reply exposed internal bookkeeping; inspect visible evidence")
+		}
 		return calls
 	}
 	t.Cleanup(func() {

@@ -33,17 +33,7 @@ func runPartnerBehaviorCase(t *testing.T, name, scratch, policy string,
 	c := partnerBehaviorCases[name]
 	var evidence []map[string]any
 	observe := func(message string) []realCanaryObservation {
-		out := turn(message)
-		calls := make([]map[string]any, 0, len(out))
-		for _, o := range out {
-			calls = append(calls, map[string]any{"command": o.command, "input": o.input})
-		}
-		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		reply := ""
-		if len(history) > 0 {
-			reply = history[0].Content
-		}
-		evidence = append(evidence, map[string]any{"user": message, "reply": reply, "calls": calls})
+		out, _ := captureNativeTurn(p, message, turn, &evidence)
 		return out
 	}
 	t.Cleanup(func() {
@@ -68,12 +58,22 @@ func runPartnerBehaviorCase(t *testing.T, name, scratch, policy string,
 	}
 	out := observe(c.message)
 	if name == "crm-open-link" || name == "crm-open-no-permission-change" {
-		find(out, "open", "available")
-		for _, o := range out {
-			if o.command != "open" || len(o.input) != 0 || o.data["url"] != "https://example.invalid/base/fixture" {
-				t.Fatal("CRM navigation must use only the fixed host link")
+		checkLink := func(calls []realCanaryObservation) {
+			t.Helper()
+			find(calls, "open", "available")
+			for _, o := range calls {
+				if o.command != "open" || len(o.input) != 0 || o.data["url"] != "https://example.invalid/base/fixture" {
+					t.Fatal("CRM navigation must use only the fixed host link")
+				}
+			}
+			reply := text(evidence[len(evidence)-1]["reply"])
+			if !nativeReplyHasLink(reply, "https://example.invalid/base/fixture") || nativeReplySmokeIssue(reply) {
+				t.Fatal("actual navigation reply omitted the exact clickable link or exposed internal fields")
 			}
 		}
+		checkLink(out)
+		checkLink(observe("再给我一次当前表格入口，我要在手机打开。不修改权限。"))
+		checkLink(observe("给我当前链接就行，权限问题我找管理员处理。"))
 	}
 	if name == "partner-own-stage" {
 		find(out, "stage", "pending")

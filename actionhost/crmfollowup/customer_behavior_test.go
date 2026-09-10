@@ -179,28 +179,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	precondition := map[string]any{"fixture": "customer-trial", "source": "host-injected synthetic backend/ledger, not model turns"}
 	observe := func(message string) []realCanaryObservation {
 		t.Helper()
-		p.mu.Lock()
-		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
-		p.mu.Unlock()
-		outcomes := turn(message)
-		calls := make([]map[string]any, 0, len(outcomes))
-		for _, outcome := range outcomes {
-			calls = append(calls, map[string]any{"command": outcome.command, "input": outcome.input, "result": outcome.data})
-		}
-		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		reply := ""
-		if len(history) != 0 && history[0].Role == "assistant" {
-			reply = history[0].Content
-		}
-		p.mu.Lock()
-		visible := append([]string(nil), p.sent[visibleBefore:]...)
-		questions := append([]string(nil), p.questionUI[questionsBefore:]...)
-		p.mu.Unlock()
-		awaitingUser := len(questions) > 0
-		if awaitingUser {
-			reply = strings.Join(visible, "\n")
-		}
-		evidence = append(evidence, map[string]any{"user": message, "calls": calls, "reply": reply, "visible_messages": visible, "questions": questions, "awaiting_user": awaitingUser})
+		outcomes, _ := captureNativeTurn(p, message, turn, &evidence)
 		return outcomes
 	}
 	t.Cleanup(func() {
