@@ -1,8 +1,10 @@
 package opsalerts
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -289,5 +291,32 @@ func TestCorruptOutboxFailsClosed(t *testing.T) {
 	b, _ := os.ReadFile(path)
 	if string(b) != "corrupt" {
 		t.Fatal("corruption overwritten")
+	}
+}
+
+func TestDelayedAcceptanceStartsHourlyCooldownAndFailuresAreRedacted(t *testing.T) {
+	h, now, sender, _, _ := durableFixture(t)
+	var log bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+	defer slog.SetDefault(previous)
+	sender.err = errors.New("SECRET-PRIVATE-ERROR")
+	h.Tick(context.Background())
+	if !strings.Contains(log.String(), "alert_acceptance_unconfirmed") || strings.Contains(log.String(), "SECRET-PRIVATE-ERROR") || strings.Contains(log.String(), "private-fixture") {
+		t.Fatal("failure missing or not redacted")
+	}
+	*now = now.Add(59 * time.Minute)
+	sender.err = nil
+	h.Tick(context.Background())
+	*now = now.Add(time.Minute)
+	h.Tick(context.Background())
+	if len(sender.calls) != 2 {
+		t.Fatal("queue deadline ignored actual acceptance cooldown")
+	}
+	*now = now.Add(59 * time.Minute)
+	sender.err = core.ErrReminderPermission
+	h.Tick(context.Background())
+	if len(sender.calls) != 3 || !strings.Contains(log.String(), "alert_permission_denied") {
+		t.Fatal("hourly summary or pause log missing")
 	}
 }

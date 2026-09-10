@@ -225,10 +225,17 @@ func (h *Host) Tick(ctx context.Context) {
 		current.Lease = 0
 		if sendErr == nil && receipt != "" {
 			current.Receipt = receipt
+			for _, e := range st.Events {
+				if e.ID == current.Event && e.Next < h.now().Unix()+3600 {
+					e.Next = h.now().Unix() + 3600
+				}
+			}
 		} else if errors.Is(sendErr, core.ErrReminderPermission) {
 			current.Blocked = true
+			slog.Warn("operations alert paused", "code", "alert_permission_denied", "incident", current.Event)
 		} else {
 			current.Next = h.now().Add(retryDelay(m.Attempts)).Unix()
+			slog.Warn("operations alert deferred", "code", "alert_acceptance_unconfirmed", "incident", current.Event)
 		}
 		return nil
 	})

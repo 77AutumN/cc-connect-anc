@@ -1081,41 +1081,52 @@ func main() {
 	}
 	if reminderDBPath != "" {
 		projects := map[string]bool{}
+		verifiedProjects := map[string]bool{}
 		for name, host := range crmActionHosts {
+			verifiedProjects[name] = true
 			// All six sources need the existing authenticated tool listener.
 			if host.ToolsEnabled() {
 				projects[name] = true
 			}
 		}
+		// Transport identities were validated independently of tool availability.
+		// A missing non-Owner tool host must not disable the Owner alert channel.
+		identityRoutes, identityErr := reminderRoutes(cfg, verifiedProjects)
+		if identityErr != nil {
+			slog.Error("operations identity routes unavailable", "code", "invalid_verified_routes")
+		}
+		senders := map[string]reminders.Sender{}
+		for _, r := range identityRoutes {
+			if r.Chat == r.PrivateChat {
+				if sender, ok := reminderPlatforms[r.Project].(core.ReminderSender); ok {
+					senders[r.User] = authorizedReminderSender{engine: reminderEngines[r.Project], user: r.User, sender: sender}
+				}
+			}
+		}
+		initializationFailed := true
+		if alertDBPath != "" {
+			recipient := operationsRecipient(alertOwnerProject, identityRoutes, senders)
+			if recipient().Binding == "" {
+				slog.Error("operations alerts cannot deliver", "code", "unverified_owner_private_project")
+			}
+			alertStore, alertErr := opsalerts.Open(alertDBPath)
+			if alertErr != nil {
+				slog.Error("operations outbox unavailable", "code", "alert_storage_unavailable")
+			}
+			if alertStore != nil {
+				defer func() { _ = alertStore.Close() }()
+			}
+			alertHost = opsalerts.New(alertStore, recipient, func(ctx context.Context) opsalerts.Snapshot {
+				if initializationFailed {
+					return opsalerts.Snapshot{Faults: []opsalerts.Fault{{Category: opsalerts.Route, Scope: opsalerts.Scope("reminder-initialization"), Count: 1}}}
+				}
+				return reminderHost.HealthSnapshot(ctx)
+			}, core.Language(cfg.Language))
+		}
 		routes, routeErr := reminderRoutes(cfg, projects)
 		if routeErr != nil {
 			slog.Error("reminders disabled", "code", "invalid_routes")
 		} else {
-			senders := map[string]reminders.Sender{}
-			for _, r := range routes {
-				if r.Chat == r.PrivateChat {
-					if sender, ok := reminderPlatforms[r.Project].(core.ReminderSender); ok {
-						senders[r.User] = authorizedReminderSender{engine: reminderEngines[r.Project], user: r.User, sender: sender}
-					}
-				}
-			}
-			// Establish alert storage independently, before opening reminder state.
-			if alertDBPath != "" {
-				recipient := operationsRecipient(alertOwnerProject, routes, senders)
-				if recipient().Binding == "" {
-					slog.Error("operations alerts cannot deliver", "code", "unverified_owner_private_project")
-				}
-				alertStore, alertErr := opsalerts.Open(alertDBPath)
-				if alertErr != nil {
-					slog.Error("operations outbox unavailable", "code", "alert_storage_unavailable")
-				}
-				if alertStore != nil {
-					defer func() { _ = alertStore.Close() }()
-				}
-				alertHost = opsalerts.New(alertStore, recipient, func(ctx context.Context) opsalerts.Snapshot {
-					return reminderHost.HealthSnapshot(ctx)
-				}, core.Language(cfg.Language))
-			}
 			store, openErr := reminders.Open(reminderDBPath)
 			if openErr != nil {
 				slog.Error("reminders unavailable", "code", "storage_unavailable")
@@ -1130,6 +1141,7 @@ func main() {
 					_ = store.Close()
 				}
 			} else {
+				initializationFailed = false
 				if store != nil {
 					defer func() { _ = store.Close() }()
 				}

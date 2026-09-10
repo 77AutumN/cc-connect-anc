@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/chenhg5/cc-connect/actionhost/reminders"
+	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -12,6 +13,38 @@ type opsTestSender struct{}
 
 func (opsTestSender) SendReminder(context.Context, string, string, string) (string, error) {
 	return "fixture", nil
+}
+
+func TestOperationsRouteSurvivesUnavailableNonOwnerToolHost(t *testing.T) {
+	cfg := &config.Config{}
+	verified := map[string]bool{}
+	availableTools := map[string]bool{}
+	for _, user := range []string{"owner", "test", "member"} {
+		for _, kind := range []string{"private", "group"} {
+			name := user + "-" + kind
+			chat := "group"
+			if kind == "private" {
+				chat = user + "-private-chat"
+			}
+			cfg.Projects = append(cfg.Projects, config.ProjectConfig{Name: name, Platforms: []config.PlatformConfig{{Type: "feishu", Options: map[string]any{"allow_chat": chat, "allow_from": user}}}})
+			verified[name] = true
+			if name != "test-group" {
+				availableTools[name] = true
+			}
+		}
+	}
+	if _, err := reminderRoutes(cfg, availableTools); err == nil {
+		t.Fatal("incomplete reminder tools accepted")
+	}
+	identityRoutes, err := reminderRoutes(cfg, verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senders := map[string]reminders.Sender{"owner": authorizedReminderSender{engine: &core.Engine{}, user: "owner", sender: opsTestSender{}}}
+	recipient := operationsRecipient("owner-private", identityRoutes, senders)()
+	if recipient.Sender == nil || recipient.Chat != "owner-private-chat" {
+		t.Fatal("source tool failure disabled verified Owner alert destination")
+	}
 }
 
 func TestOperationsRecipientRequiresUniqueVerifiedPrivateProject(t *testing.T) {
