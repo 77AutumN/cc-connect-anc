@@ -981,6 +981,9 @@ func TestLark_GroupReplyAllWithThreadIsolationUsesRootSessionKeyWithoutMention(t
 		t.Fatalf("newPlatform(lark) error = %v", err)
 	}
 	ip := p.(*interactivePlatform)
+	// Routing is under test, not real Contact/Chat API latency.
+	ip.userNameCache.Store("ou_test", "Fixture user")
+	ip.chatNameCache.Store("oc_test", "Fixture group")
 
 	messageID := "om_root"
 	chatID := "oc_test"
@@ -1908,6 +1911,8 @@ func TestAllowChat_FiltersGroupMessages(t *testing.T) {
 				t.Fatalf("newPlatform() error = %v", err)
 			}
 			ip := p.(*interactivePlatform)
+			ip.userNameCache.Store("ou_test", "Fixture user")
+			ip.chatNameCache.Store(tt.chatID, "Fixture chat")
 
 			messageID := "om_test_" + tt.name
 			openID := "ou_test"
