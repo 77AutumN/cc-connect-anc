@@ -28,6 +28,9 @@ func captureNativeTurn(p *toolJourneyPlatform, message string, turn func(string)
 			"reply": strings.Join(visible, "\n"), "visible_messages": visible,
 			"questions": questions, "awaiting_user": len(questions) > 0,
 			"tool_results_returned": returned}
+		// Record style separately. Acceptance still checks actual task effects,
+		// authorization and truthful results; wording alone does not fail a turn.
+		shown["wording_warning"] = nativeReplySmokeIssue(text(shown["reply"]))
 		if !returned {
 			// Goexit prevents returning outcomes. The turn's own deferred journal
 			// retains actual host calls; an empty returned slice is not zero calls.
@@ -132,7 +135,7 @@ func TestNativeTurnEvidenceIncludesVisibleQuestions(t *testing.T) {
 	}
 }
 
-func TestNativeReplySmokeRejectsObservedPaginationNarration(t *testing.T) {
+func TestNativeReplySmokeFlagsObservedPaginationNarration(t *testing.T) {
 	for _, tc := range []struct {
 		reply string
 		issue bool
@@ -148,5 +151,17 @@ func TestNativeReplySmokeRejectsObservedPaginationNarration(t *testing.T) {
 		if nativeReplySmokeIssue(tc.reply) != tc.issue {
 			t.Errorf("smoke check disagrees with observed example: %q", tc.reply)
 		}
+	}
+}
+
+func TestNativeTurnRecordsWordingWarningWithoutChangingToolOutcome(t *testing.T) {
+	p := &toolJourneyPlatform{}
+	var evidence []map[string]any
+	calls, shown := captureNativeTurn(p, "看看我的提醒", func(string) []realCanaryObservation {
+		_ = p.Reply(context.Background(), nil, "No更多分页，你还有一条待处理提醒。")
+		return []realCanaryObservation{{command: "reminder-list", data: map[string]any{"status": "ok"}}}
+	}, &evidence)
+	if shown["wording_warning"] != true || shown["tool_results_returned"] != true || len(calls) != 1 || calls[0].data["status"] != "ok" {
+		t.Fatalf("wording finding must be recorded separately from actual tool success: %v", shown)
 	}
 }

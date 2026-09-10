@@ -156,6 +156,9 @@ type realCanaryObservation struct {
 }
 
 func canaryAllowsNativeQuestion(name string, turn int) bool {
+	if name == "customer-roster-ambiguous" {
+		return turn == 2
+	}
 	if slices.Contains(uxReminderCases, name) {
 		return true
 	}
@@ -246,7 +249,13 @@ func TestCUJ_CRMREAL1_ClaudeClarifiesApprovesAndDiscusses(t *testing.T) {
 			command.Env = append(command.Env, "MYANC_SPIKE_SEED="+behaviorCase)
 		}
 		if customerCase {
-			command.Env = append(command.Env, "MYANC_SPIKE_SEED=customer-trial")
+			seed := "customer-trial"
+			if behaviorCase == "customer-roster-first" {
+				seed = "customer-roster"
+			} else if behaviorCase == "customer-roster-ambiguous" {
+				seed = behaviorCase
+			}
+			command.Env = append(command.Env, "MYANC_SPIKE_SEED="+seed)
 		}
 		command.Stdin = bytes.NewReader(input)
 		output, runErr := command.Output()

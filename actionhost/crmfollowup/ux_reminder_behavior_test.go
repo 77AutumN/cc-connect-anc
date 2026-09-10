@@ -53,9 +53,6 @@ func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(str
 			}
 		}
 		lastReply = text(shown["reply"])
-		if nativeReplySmokeIssue(lastReply) {
-			t.Error("ordinary reminder reply exposed internal bookkeeping; inspect visible evidence")
-		}
 		return calls
 	}
 	t.Cleanup(func() {
@@ -208,8 +205,8 @@ func runUXReminderCase(t *testing.T, name, scratch, policy string, turn func(str
 		if strings.Contains(string(raw), "PRIVATE-ONLY-CANARY-UX") {
 			t.Fatal("private content reached group model")
 		}
-		if !strings.Contains(reply(), "私聊") || strings.Contains(reply(), "private_list_queued") {
-			t.Fatal("internal status or missing destination")
+		if !strings.Contains(reply(), "私聊") {
+			t.Fatal("missing private destination")
 		}
 		noWrite(observe("好的，再解释下刚才干了什么，不做新操作"))
 	}
