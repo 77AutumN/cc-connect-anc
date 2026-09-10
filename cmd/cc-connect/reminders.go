@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/chenhg5/cc-connect/actionhost/opsalerts"
 	"github.com/chenhg5/cc-connect/actionhost/reminders"
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
@@ -12,6 +13,33 @@ type authorizedReminderSender struct {
 	engine *core.Engine
 	user   string
 	sender core.ReminderSender
+}
+
+// An administrator selects the already verified Owner private project, never an
+// arbitrary recipient. Frozen batch bindings also include the sender and chat.
+func operationsRecipient(project string, routes []reminders.Route, senders map[string]reminders.Sender) func() opsalerts.Recipient {
+	var chosen reminders.Route
+	matches := 0
+	for _, r := range routes {
+		if r.Project == project && r.Chat == r.PrivateChat {
+			chosen = r
+			matches++
+		}
+	}
+	return func() opsalerts.Recipient {
+		if matches != 1 {
+			return opsalerts.Recipient{}
+		}
+		sender, ok := senders[chosen.User].(authorizedReminderSender)
+		if !ok {
+			return opsalerts.Recipient{}
+		}
+		result := opsalerts.Recipient{Binding: opsalerts.Scope(chosen.Project + "\x00" + chosen.User + "\x00" + chosen.PrivateChat), Chat: chosen.PrivateChat}
+		if sender.ReminderAuthorized() {
+			result.Sender = sender
+		}
+		return result
+	}
 }
 
 func (s authorizedReminderSender) ReminderAuthorized() bool {

@@ -21,6 +21,7 @@ import (
 
 	ccconnect "github.com/chenhg5/cc-connect"
 	"github.com/chenhg5/cc-connect/actionhost/crmfollowup"
+	"github.com/chenhg5/cc-connect/actionhost/opsalerts"
 	"github.com/chenhg5/cc-connect/actionhost/reminders"
 	"github.com/chenhg5/cc-connect/actionhost/teambrain"
 	"github.com/chenhg5/cc-connect/config"
@@ -236,6 +237,16 @@ var topLevelCommandHandlers = map[string]func([]string){
 }
 
 func main() {
+	alertDBPath, alertOwnerProject := os.Getenv("MYANC_OPS_ALERT_DB"), os.Getenv("MYANC_OPS_ALERT_OWNER_PROJECT")
+	_ = os.Unsetenv("MYANC_OPS_ALERT_DB")
+	_ = os.Unsetenv("MYANC_OPS_ALERT_OWNER_PROJECT")
+	if len(os.Args) > 1 && os.Args[1] == "ops-alerts-init" {
+		if len(os.Args) != 3 || opsalerts.Initialize(os.Args[2]) != nil {
+			slog.Error("operations outbox initialization refused")
+			os.Exit(1)
+		}
+		return
+	}
 	reminderDBPath := os.Getenv("MYANC_REMINDER_DB")
 	_ = os.Unsetenv("MYANC_REMINDER_DB") // never inherited by model children
 	if len(os.Args) > 1 && os.Args[1] == "reminders-init" {
@@ -1064,6 +1075,10 @@ func main() {
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
 	var reminderHost *reminders.Host
+	var alertHost *opsalerts.Host
+	if alertDBPath != "" && reminderDBPath == "" {
+		slog.Error("operations alerts inactive", "code", "reminder_configuration_missing")
+	}
 	if reminderDBPath != "" {
 		projects := map[string]bool{}
 		for name, host := range crmActionHosts {
@@ -1083,6 +1098,23 @@ func main() {
 						senders[r.User] = authorizedReminderSender{engine: reminderEngines[r.Project], user: r.User, sender: sender}
 					}
 				}
+			}
+			// Establish alert storage independently, before opening reminder state.
+			if alertDBPath != "" {
+				recipient := operationsRecipient(alertOwnerProject, routes, senders)
+				if recipient().Binding == "" {
+					slog.Error("operations alerts cannot deliver", "code", "unverified_owner_private_project")
+				}
+				alertStore, alertErr := opsalerts.Open(alertDBPath)
+				if alertErr != nil {
+					slog.Error("operations outbox unavailable", "code", "alert_storage_unavailable")
+				}
+				if alertStore != nil {
+					defer func() { _ = alertStore.Close() }()
+				}
+				alertHost = opsalerts.New(alertStore, recipient, func(ctx context.Context) opsalerts.Snapshot {
+					return reminderHost.HealthSnapshot(ctx)
+				}, core.Language(cfg.Language))
 			}
 			store, openErr := reminders.Open(reminderDBPath)
 			if openErr != nil {
@@ -1214,6 +1246,12 @@ func main() {
 	}
 	reminderCtx, stopReminders := context.WithCancel(context.Background())
 	reminderDone := make(chan struct{})
+	alertDone := make(chan struct{})
+	if alertHost != nil {
+		go func() { defer close(alertDone); alertHost.Run(reminderCtx) }()
+	} else {
+		close(alertDone)
+	}
 	if reminderHost != nil {
 		go func() { defer close(reminderDone); reminderHost.Run(reminderCtx, core.Language(cfg.Language)) }()
 	} else {
@@ -1517,6 +1555,7 @@ func main() {
 	slog.Info("shutting down...")
 	stopReminders()
 	<-reminderDone
+	<-alertDone
 	if crmToolServer != nil {
 		if err := crmToolServer.Close(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("CRM tool listener shutdown failed", "error", err)
@@ -1582,6 +1621,9 @@ func main() {
 		}
 		if reminderDBPath != "" {
 			restartEnv = append(restartEnv, "MYANC_REMINDER_DB="+reminderDBPath)
+		}
+		if alertDBPath != "" {
+			restartEnv = append(restartEnv, "MYANC_OPS_ALERT_DB="+alertDBPath, "MYANC_OPS_ALERT_OWNER_PROJECT="+alertOwnerProject)
 		}
 		if err := restartProcess(execPath, restartEnv); err != nil {
 			slog.Error("restart: failed", "error", err)
