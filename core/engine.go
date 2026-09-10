@@ -3897,6 +3897,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	}
 
 	promptContent := e.buildSenderPrompt(msg.Content, msg.UserID, msg.UserName, msg.Platform, msg.SessionKey, msg.ChannelKey)
+	promptContent = e.withReminderClock(promptContent, msg.UserMessageTimeMs)
 
 	sendStart := time.Now()
 	state.mu.Lock()
@@ -6107,6 +6108,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				}
 
 				queuedPrompt := e.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey, queued.channelKey)
+				queuedPrompt = e.withReminderClock(queuedPrompt, queued.userMessageTimeMs)
 
 				state.mu.Lock()
 				as := state.agentSession // capture under lock to avoid race with cleanup
@@ -6427,6 +6429,7 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 
 		e.i18n.DetectAndSet(queued.content)
 		prompt := e.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey, queued.channelKey)
+		prompt = e.withReminderClock(prompt, queued.userMessageTimeMs)
 
 		state.mu.Lock()
 		as := state.agentSession // capture under lock to avoid race with cleanup (mirrors #1436)

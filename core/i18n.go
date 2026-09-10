@@ -764,6 +764,12 @@ const (
 
 const (
 	MsgKnowledgePreview         MsgKey = "knowledge_preview"
+	MsgReminderHeading          MsgKey = "reminder_heading"
+	MsgReminderLate             MsgKey = "reminder_late"
+	MsgReminderDuplicate        MsgKey = "reminder_duplicate"
+	MsgReminderList             MsgKey = "reminder_list"
+	MsgReminderWeekdays         MsgKey = "reminder_weekdays"
+	MsgReminderStatuses         MsgKey = "reminder_statuses"
 	MsgKnowledgePublished       MsgKey = "knowledge_published"
 	MsgKnowledgeNeedsReview     MsgKey = "knowledge_needs_review"
 	MsgKnowledgeReviewBody      MsgKey = "knowledge_review_body"
@@ -771,6 +777,12 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgReminderHeading:   {LangEnglish: "Reminder (Beijing time)", LangChinese: "提醒（北京时间）", LangTraditionalChinese: "提醒（北京時間）", LangJapanese: "リマインダー（北京時間）", LangSpanish: "Recordatorio (hora de Pekín)"},
+	MsgReminderLate:      {LangEnglish: "Delayed delivery; original schedule:", LangChinese: "延迟补发；原定时间：", LangTraditionalChinese: "延遲補發；原定時間：", LangJapanese: "遅延配信・元の予定：", LangSpanish: "Entrega retrasada; horario original:"},
+	MsgReminderDuplicate: {LangEnglish: "An earlier delivery could not be confirmed; this may be a duplicate.", LangChinese: "此前发送结果未能确认，本次补发可能重复。", LangTraditionalChinese: "此前發送結果未能確認，本次補發可能重複。", LangJapanese: "前回の配信を確認できません。重複の可能性があります。", LangSpanish: "No se confirmó la entrega anterior; podría estar duplicado."},
+	MsgReminderList:      {LangEnglish: "Your reminders", LangChinese: "你的提醒清单", LangTraditionalChinese: "你的提醒清單", LangJapanese: "あなたのリマインダー", LangSpanish: "Tus recordatorios"},
+	MsgReminderWeekdays:  {LangEnglish: "Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday", LangChinese: "周日|周一|周二|周三|周四|周五|周六", LangTraditionalChinese: "週日|週一|週二|週三|週四|週五|週六", LangJapanese: "日曜日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日", LangSpanish: "domingo|lunes|martes|miércoles|jueves|viernes|sábado"},
+	MsgReminderStatuses:  {LangEnglish: "Scheduled|Sending|Retry scheduled|Paused|Cancelled|Accepted by Feishu", LangChinese: "待发送|发送中|等待重试|已暂停|已取消|飞书已接收", LangTraditionalChinese: "待發送|發送中|等待重試|已暫停|已取消|飛書已接收", LangJapanese: "予定済み|送信中|再試行待ち|一時停止|キャンセル済み|Feishu受付済み", LangSpanish: "Programado|Enviando|Reintento pendiente|Pausado|Cancelado|Aceptado por Feishu"},
 	MsgKnowledgePreview: {
 		LangEnglish: "Review knowledge changes", LangChinese: "确认知识变更", LangTraditionalChinese: "確認知識變更",
 		LangJapanese: "ナレッジ変更の確認", LangSpanish: "Revisar cambios de conocimiento",
