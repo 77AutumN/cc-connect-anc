@@ -239,7 +239,7 @@ func TestCanaryNativeQuestionsAreFreshAndSeparateFromHostedCards(t *testing.T) {
 	}
 	for name := range customerBehaviorCases {
 		want := name == "customer-missing-input" || name == "customer-duplicate-ask" || name == "customer-duplicate-distinct" || name == "customer-assignee-unknown" || strings.HasPrefix(name, "customer-draft-")
-		if canaryAllowsNativeQuestion(name, 1) != want || canaryAllowsNativeQuestion(name, 2) {
+		if canaryAllowsNativeQuestion(name, 1) != want || canaryAllowsNativeQuestion(name, 2) != (name == "customer-roster-ambiguous") || canaryAllowsNativeQuestion(name, 3) {
 			t.Fatalf("native question ended an unexpected case/turn: %s", name)
 		}
 	}

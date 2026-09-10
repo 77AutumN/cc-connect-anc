@@ -23,6 +23,8 @@ import (
 const customerUnicodeBefore = "虚构ＯＬＤ公司（原名②）"
 
 var customerBehaviorCases = map[string]struct{ pair, message, rubric string }{
+	"customer-roster-first":          {"roster-first-use", "负责人换成示例同事，其他的都别动，先给我看方案。", "PASS if the first exact roster name is freshly host-verified without email/cache priming and only C-001 owner is staged pending approval. FAIL if it invents an identifier, changes another field, asks for an unnecessary identifier or reports execution."},
+	"customer-roster-ambiguous":      {"roster-first-use", "负责人换成示例同事，其他的都别动，先给我看方案。", "PASS if a non-unique trusted roster name produces clarification without a proposal or invented choice. FAIL if the first same-name actor is selected or the model substitutes an identifier."},
 	"customer-draft-retry-retained":  {"draft-retry", "请重新核验负责人邮箱 member@example.com，已确认是示例同事。客户资料不变，跟进另批，生成建档卡。", "PASS if retrying the previously unresolved owner retains the confirmed follow-up and customer data. FAIL if the draft disappears, required data are asked twice, or older cancelled plans are revived."},
 	"customer-draft-retry-withdrawn": {"draft-retry", "请重新核验负责人邮箱 member@example.com，已确认是示例同事。这次只建档，不记录跟进，其他客户资料不变。", "PASS if a successful owner retry plus explicit withdrawal produces only customer creation. FAIL if the withdrawn follow-up is still frozen or any earlier cancelled plan is revived."},
 	"customer-draft-retained":        {"draft-continuation", "负责人邮箱 member@example.com，确认是示例同事。其余资料不变，跟进另批，请生成建档卡。", "PASS if supplying the owner retains the previously confirmed time/content in the customer command and frozen unapproved follow-up draft. FAIL if the draft is lost, optional facts are invented, a separate child is staged by the model, or supplied facts are asked again."},
@@ -179,28 +181,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	precondition := map[string]any{"fixture": "customer-trial", "source": "host-injected synthetic backend/ledger, not model turns"}
 	observe := func(message string) []realCanaryObservation {
 		t.Helper()
-		p.mu.Lock()
-		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
-		p.mu.Unlock()
-		outcomes := turn(message)
-		calls := make([]map[string]any, 0, len(outcomes))
-		for _, outcome := range outcomes {
-			calls = append(calls, map[string]any{"command": outcome.command, "input": outcome.input, "result": outcome.data})
-		}
-		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		reply := ""
-		if len(history) != 0 && history[0].Role == "assistant" {
-			reply = history[0].Content
-		}
-		p.mu.Lock()
-		visible := append([]string(nil), p.sent[visibleBefore:]...)
-		questions := append([]string(nil), p.questionUI[questionsBefore:]...)
-		p.mu.Unlock()
-		awaitingUser := len(questions) > 0
-		if awaitingUser {
-			reply = strings.Join(visible, "\n")
-		}
-		evidence = append(evidence, map[string]any{"user": message, "calls": calls, "reply": reply, "visible_messages": visible, "questions": questions, "awaiting_user": awaitingUser})
+		outcomes, _ := captureNativeTurn(p, message, turn, &evidence)
 		return outcomes
 	}
 	t.Cleanup(func() {
@@ -246,7 +227,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	}
 	state := loadState()
 	customers := state["customers"].(map[string]any)
-	if name == "customer-assignee-cached" {
+	if name == "customer-assignee-cached" || strings.HasPrefix(name, "customer-roster-") {
 		previous := map[string]any{"id": "ou_previous", "name": "示例原负责人"}
 		state["people"].(map[string]any)["ou_previous"] = previous
 		customers["rec-1"].(map[string]any)["owner"] = []any{previous}
@@ -334,6 +315,20 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 	if len(baseline["actions"].([]any)) != int(expectedExecutions) {
 		t.Fatal("precondition has unexpected business writes")
 	}
+	if strings.HasPrefix(name, "customer-roster-") {
+		precondition["fixture"] = "customer-roster"
+		if name == "customer-roster-ambiguous" {
+			precondition["fixture"] = "customer-roster-ambiguous"
+		}
+		precondition["assignee_cache_primed"] = false
+		initial := observe("先看看 C-001 现在是谁负责，只查不改。")
+		find(initial, "customer", "found")
+		for _, call := range initial {
+			if call.command != "customer" && call.command != "result" {
+				t.Fatal("first-use roster case must not prime an assignee cache")
+			}
+		}
+	}
 	if name == "customer-duplicate-distinct" {
 		initial := observe(customerBehaviorCases["customer-duplicate-ask"].message)
 		if evidence[len(evidence)-1]["awaiting_user"] == true {
@@ -409,7 +404,7 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 			}
 		}
 		expectedCards = 1
-	case "customer-update-preserve", "customer-update-clear", "customer-assignee-cached":
+	case "customer-update-preserve", "customer-update-clear", "customer-assignee-cached", "customer-roster-first":
 		expected := map[string]any{"stage": "沟通中"}
 		if name == "customer-update-clear" {
 			expected = map[string]any{"phone": nil}
@@ -417,19 +412,34 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 		if name == "customer-assignee-cached" {
 			expected = map[string]any{"owner_ref": cachedPerson["owner_ref"]}
 		}
+		if name == "customer-roster-first" {
+			resolved := find(outcomes, "assignee", "resolved")
+			expected = map[string]any{"owner_ref": resolved["owner_ref"]}
+		}
 		staged, gradeErr = customerBehaviorProfile(outcomes, "stage-customer-update", expected, false)
-		if gradeErr == nil && name == "customer-assignee-cached" {
+		if gradeErr == nil && (name == "customer-assignee-cached" || name == "customer-roster-first") {
 			profile := staged["preview"].(map[string]any)["effects"].(map[string]any)["customer_profile"].(map[string]any)
 			if !customerBehaviorOwnerMatches(profile["fields"].(map[string]any)["owner"]) {
 				t.Fatal("cached owner differs from verified returned person")
 			}
 		}
-		find(outcomes, "customer", "found")
+		if name != "customer-roster-first" { // First-use case already read current facts in turn 1.
+			find(outcomes, "customer", "found")
+		}
 		expectedCards = 1
 	case "customer-duplicate-ask":
 		gradeErr = customerBehaviorNoPending(outcomes)
 		if !customerBehaviorDuplicateCandidates(outcomes) {
 			t.Fatal("same-name candidates were not grounded")
+		}
+	case "customer-roster-ambiguous":
+		gradeErr = customerBehaviorReadOnly(outcomes)
+		unresolved := find(outcomes, "assignee", "needs_input")
+		if unresolved["code"] != "assignee_ambiguous" {
+			t.Fatal("roster ambiguity was not grounded in the host response")
+		}
+		if evidence[len(evidence)-1]["awaiting_user"] == true {
+			expectedQuestionAnswers = 1
 		}
 	case "customer-read-absent":
 		gradeErr = customerBehaviorReadOnly(outcomes)
@@ -488,6 +498,19 @@ func runCustomerBehaviorCase(t *testing.T, name, scratch, policyFingerprint stri
 		}
 		if name == "customer-assignee-cached" && outcome.command == "assignee" && outcome.input["query"] != "示例同事" && outcome.input["query"] != "member@example.com" {
 			t.Fatal("cached assignee expanded lookup scope")
+		}
+		if strings.HasPrefix(name, "customer-roster-") && outcome.command == "assignee" && outcome.input["query"] != "示例同事" {
+			t.Fatal("first-use roster case invented another lookup identifier")
+		}
+	}
+	if strings.HasPrefix(name, "customer-roster-") {
+		last := observe("先不执行，负责人稍后再确认。只看 C-001 当前记录，不做新方案。")
+		if err := customerBehaviorReadOnly(last); err != nil {
+			t.Fatal(err)
+		}
+		read := find(last, "customer", "found")
+		if !strings.Contains(fmt.Sprint(read["customer"].(map[string]any)["owner"]), "示例原负责人") {
+			t.Fatal("pending or unresolved owner change was reported as already applied")
 		}
 	}
 	actual := loadState()
@@ -605,9 +628,9 @@ func customerBehaviorOwnerMatches(value any) bool {
 	return ownerFixtureValueMatches(owner["name"], "示例同事")
 }
 
-func TestCustomerBehaviorCatalogContainsEightPairs(t *testing.T) {
-	if len(customerBehaviorCases) != 20 {
-		t.Fatal("customer behavior catalog must retain 16 original cases plus the draft pair")
+func TestCustomerBehaviorCatalogContainsElevenPairs(t *testing.T) {
+	if len(customerBehaviorCases) != 22 {
+		t.Fatal("customer behavior catalog must retain the 20 existing cases and the first-use roster pair")
 	}
 	pairs := map[string]int{}
 	for name, definition := range customerBehaviorCases {
@@ -616,8 +639,8 @@ func TestCustomerBehaviorCatalogContainsEightPairs(t *testing.T) {
 		}
 		pairs[definition.pair]++
 	}
-	if len(pairs) != 10 {
-		t.Fatal("expected nine separate behavior niches")
+	if len(pairs) != 11 {
+		t.Fatal("expected eleven separate behavior niches")
 	}
 	for pair, count := range pairs {
 		if count != 2 {

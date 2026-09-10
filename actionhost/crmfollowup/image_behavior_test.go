@@ -54,25 +54,7 @@ func runImageBehaviorCase(t *testing.T, name, scratch, workspace, policy string,
 	}
 	var evidence []map[string]any
 	observe := func(message string) []realCanaryObservation {
-		p.mu.Lock()
-		visibleBefore, questionsBefore := len(p.sent), len(p.questionUI)
-		p.mu.Unlock()
-		out := turn(message)
-		history := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		reply := ""
-		if len(history) > 0 && history[0].Role == "assistant" {
-			reply = history[0].Content
-		}
-		p.mu.Lock()
-		if len(p.questionUI) > questionsBefore {
-			reply = strings.Join(append(append([]string(nil), p.sent[visibleBefore:]...), p.questionUI[questionsBefore:]...), "\n")
-		}
-		p.mu.Unlock()
-		calls := []map[string]any{}
-		for _, o := range out {
-			calls = append(calls, map[string]any{"command": o.command, "input": o.input, "result": o.data})
-		}
-		evidence = append(evidence, map[string]any{"user": message, "reply": reply, "calls": calls})
+		out, _ := captureNativeTurn(p, message, turn, &evidence)
 		return out
 	}
 	t.Cleanup(func() {

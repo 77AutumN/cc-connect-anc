@@ -202,6 +202,7 @@ type DisplayConfig struct {
 	ShowContextIndicator *bool   `toml:"show_context_indicator"` // whether [ctx: ~N%] suffix is shown; default true
 	ReplyFooter          *bool   `toml:"reply_footer"`           // whether Codex-like footer is shown; default true
 	HideAgentFooter      *bool   `toml:"hide_agent_footer"`      // strip agent-emitted model/token footer lines; default false
+	FinalResponseOnly    *bool   `toml:"final_response_only"`    // suppress intermediate agent text/streaming; default false
 }
 
 // StreamPreviewConfig controls real-time streaming preview in IM.
@@ -924,6 +925,15 @@ func EffectiveDisplay(cfg *Config, proj *ProjectConfig) (mode string, thinkingMe
 	)
 
 	return
+}
+
+// EffectiveFinalResponseOnly is opt-in, with project display overriding global.
+// Questions, errors and business cards are not intermediate agent narration.
+func EffectiveFinalResponseOnly(cfg *Config, proj *ProjectConfig) bool {
+	if proj != nil && proj.Display != nil && proj.Display.FinalResponseOnly != nil {
+		return *proj.Display.FinalResponseOnly
+	}
+	return cfg != nil && cfg.Display.FinalResponseOnly != nil && *cfg.Display.FinalResponseOnly
 }
 
 // EffectiveHistoryMaxLen returns the per-entry /history truncation length.

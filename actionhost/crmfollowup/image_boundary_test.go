@@ -96,22 +96,22 @@ func syntheticBoundaryImages(t *testing.T) []core.ImageAttachment {
 func runImageBoundaryResume(t *testing.T, scratch string, turn func(string) []realCanaryObservation, p *toolJourneyPlatform, e *core.Engine, key string, agent *realCanaryAgent, executes *atomic.Int32) {
 	t.Helper()
 	var replies []string
+	var evidence []map[string]any
 	t.Cleanup(func() {
-		data, _ := json.MarshalIndent(map[string]any{"case": "image-boundary-resume", "trial": os.Getenv("MYANC_REAL_CLAUDE_TRIAL"), "model": os.Getenv("MYANC_REAL_CLAUDE_MODEL"), "formats": []string{"PNG", "JPEG", "animated GIF first frame", "WebP"}, "cache_reads": agent.cacheReads.Load(), "raw_batch_bytes": core.MaxImageBatchBytes, "raw_largest_bytes": core.MaxImageBytes, "raw_count": 4, "replies": replies, "starts": agent.starts.Load(), "host_executions": executes.Load(), "code_grader_passed": !t.Failed(), "semantic_review": "pending independent review", "rubric": "Four images reach native input at exact byte limits. Third GIF is red, not its later blue frame; fourth WebP is green. Reference PIC-4827 remains readable after native process restart and from cached original; no business mutation."}, "", "  ")
+		data, _ := json.MarshalIndent(map[string]any{"case": "image-boundary-resume", "trial": os.Getenv("MYANC_REAL_CLAUDE_TRIAL"), "model": os.Getenv("MYANC_REAL_CLAUDE_MODEL"), "formats": []string{"PNG", "JPEG", "animated GIF first frame", "WebP"}, "cache_reads": agent.cacheReads.Load(), "raw_batch_bytes": core.MaxImageBatchBytes, "raw_largest_bytes": core.MaxImageBytes, "raw_count": 4, "replies": replies, "turns": evidence, "starts": agent.starts.Load(), "host_executions": executes.Load(), "code_grader_passed": !t.Failed(), "semantic_review": "pending independent review", "rubric": "Four images reach native input at exact byte limits. Third GIF is red, not its later blue frame; fourth WebP is green. Reference PIC-4827 remains readable after native process restart and from cached original; no business mutation."}, "", "  ")
 		if err := os.WriteFile(filepath.Join(scratch, "behavior-evidence.json"), data, 0600); err != nil {
 			t.Error(err)
 		}
 	})
 	observe := func(prompt string) string {
-		out := turn(prompt)
+		out, shown := captureNativeTurn(p, prompt, turn, &evidence)
 		if err := customerBehaviorReadOnly(out); err != nil {
 			t.Fatal(err)
 		}
-		h := e.GetSessions().GetOrCreateActive(key).GetHistory(1)
-		if len(h) == 0 {
+		reply := text(shown["reply"])
+		if reply == "" {
 			t.Fatal("missing native reply")
 		}
-		reply := h[0].Content
 		replies = append(replies, reply)
 		return reply
 	}

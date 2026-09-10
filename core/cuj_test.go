@@ -2197,6 +2197,81 @@ func TestCUJ_I3_DisplayModesLinkedToIntegration(t *testing.T) {
 	t.Log("CUJ-I3: covered by release-gate TestCC_DISPLAY_01..06 (6 modes)")
 }
 
+// Regression: hidden tool progress used to concatenate process narration into
+// the final answer (and stream it before completion). Final-only is opt-in.
+func TestCUJ_I3_FinalResponseOnlyHidesIntermediateText(t *testing.T) {
+	env := newCUJStreamingEnv(t)
+	t.Cleanup(func() { _ = env.engine.Stop() })
+	env.engine.SetDisplayConfig(DisplayCfg{Mode: "quiet", FinalResponseOnly: true})
+	env.engine.SetReplyFooterEnabled(false)
+	for index, answer := range []string{"已设置，到时私聊提醒你。", "已修改内容，时间不变。", "已取消，可能已有在途消息。"} {
+		events := []Event{
+			{Type: EventText, Content: "Version confirmed. Proceeding with next_id."},
+			{Type: EventToolUse, ToolName: "Bash", ToolInput: "synthetic tool"},
+			{Type: EventToolResult, ToolName: "Bash", ToolResult: "synthetic result"},
+			{Type: EventText, Content: answer},
+			{Type: EventResult, Content: answer, Done: true},
+		}
+		if index == 0 {
+			env.agent.setNextSessionEvents(events, 0)
+		} else {
+			env.agent.mu.Lock()
+			s := env.agent.sessions[0]
+			env.agent.mu.Unlock()
+			s.mu.Lock()
+			s.pendingEvents = events
+			s.mu.Unlock()
+		}
+		key := env.sendStreaming("owner", fmt.Sprintf("user action %d", index))
+		env.waitFor(answer, 2*time.Second, func() bool {
+			return env.sentContains(answer) && !env.engine.GetSessions().GetOrCreateActive(key).Busy()
+		})
+		if got := env.plat.getSent(); len(got) != index+1 || got[index] != answer {
+			t.Fatalf("user saw process text instead of final result: %q", got)
+		}
+		if len(env.streamingPlat().getPreviewOpens()) != 0 || len(env.streamingPlat().getPreviewUpdates()) != 0 {
+			t.Fatal("intermediate agent text was streamed before the final response")
+		}
+	}
+}
+
+func TestCUJ_I3_FinalOnlyPreservesEmptyFallbackErrorsAndQuestions(t *testing.T) {
+	env := newCUJEnv(t)
+	t.Cleanup(func() { _ = env.engine.Stop() })
+	env.engine.SetDisplayConfig(DisplayCfg{Mode: "quiet", FinalResponseOnly: true})
+	env.engine.SetReplyFooterEnabled(false)
+	empty := env.engine.i18n.T(MsgEmptyResponse)
+	for i, tc := range []struct {
+		events []Event
+		want   string
+	}{
+		{[]Event{{Type: EventText, Content: "已取消，可能仍有在途消息。"}, {Type: EventResult, Done: true}}, "已取消，可能仍有在途消息。"},
+		{[]Event{{Type: EventText, Content: "I will create it."}, {Type: EventToolUse, ToolName: "Bash"}, {Type: EventResult, Done: true}}, empty},
+		{[]Event{{Type: EventText, Content: "Internal diagnostic commentary"}, {Type: EventError, Error: errors.New("delivery outcome unknown"), Done: true}}, "delivery outcome unknown"},
+	} {
+		env.agent.setNextSessionEvents(tc.events, 0)
+		// Different conversations exercise a fresh event stream even after an error.
+		key := env.userSends(fmt.Sprintf("owner-%d", i), "please handle my request")
+		env.waitFor(tc.want, 2*time.Second, func() bool {
+			return env.sentContains(tc.want) && !env.engine.GetSessions().GetOrCreateActive(key).Busy()
+		})
+	}
+	env.agent.setNextSessionEvents([]Event{
+		{Type: EventText, Content: "Internal clarification bookkeeping"},
+		{Type: EventPermissionRequest, RequestID: "question-1", ToolName: "AskUserQuestion", Questions: []UserQuestion{{Question: "Which future time?", Options: []UserQuestionOption{{Label: "Tomorrow", Description: "09:00"}, {Label: "Cancel", Description: "keep unchanged"}}}}},
+		{Type: EventResult, Content: "已记录你的选择。", Done: true},
+	}, 0)
+	env.userSends("clarify", "please clarify the expired time")
+	env.waitFor("visible question", 2*time.Second, func() bool { return env.sentContains("Which future time?") })
+	env.userSends("clarify", "Tomorrow")
+	env.waitFor("answer after clarification", 2*time.Second, func() bool { return env.sentContains("已记录你的选择。") })
+	for _, message := range env.plat.getSent() {
+		if strings.Contains(message, "Internal") || strings.Contains(message, "I will create") {
+			t.Fatalf("intermediate text leaked: %q", message)
+		}
+	}
+}
+
 // CUJ-I4 · Streaming preview can be toggled on/off and takes effect
 // for the next message.
 func TestCUJ_I4_StreamingToggleLinkedToIntegration(t *testing.T) {
@@ -2680,6 +2755,14 @@ func (p *cujHostedCardPlatform) RefreshCardMessage(ctx context.Context, messageI
 // This exercises the real ReceiveMessage entrypoint while the adapter/helper
 // boundary remains mocked.
 func TestCUJ_ACTION1_ThreeHostedHandoffsStayVisibleAndQuiet(t *testing.T) {
+	for _, finalOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("final_only_%t", finalOnly), func(t *testing.T) {
+			runCUJThreeHostedHandoffs(t, finalOnly)
+		})
+	}
+}
+
+func runCUJThreeHostedHandoffs(t *testing.T, finalOnly bool) {
 	agent := &hostedHandoffAgent{started: make(chan *hostedHandoffSession, 1)}
 	platform := &cujHostedCardPlatform{hostedCardPlatform: hostedCardPlatform{stubPlatformEngine: stubPlatformEngine{n: "test-platform"}}}
 	host := &actionHostStub{beginResult: ActionHostResult{
@@ -2687,6 +2770,8 @@ func TestCUJ_ACTION1_ThreeHostedHandoffsStayVisibleAndQuiet(t *testing.T) {
 		ChangeID: "chg_Abcdefgh12345678", Card: NewCard().Title("Approval pending", "blue").Build(),
 	}}
 	engine := NewEngine("test-project", agent, []Platform{platform}, "", LangEnglish)
+	engine.SetDisplayConfig(DisplayCfg{Mode: "quiet", FinalResponseOnly: finalOnly})
+	t.Cleanup(func() { _ = engine.Stop() })
 	engine.SetActionHost(host)
 
 	for i := 1; i <= 3; i++ {

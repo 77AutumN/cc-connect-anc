@@ -521,6 +521,25 @@ func TestEffectiveDisplayHideAgentFooter(t *testing.T) {
 	}
 }
 
+func TestEffectiveFinalResponseOnly(t *testing.T) {
+	tru, fal := true, false
+	if EffectiveFinalResponseOnly(nil, nil) || EffectiveFinalResponseOnly(&Config{}, &ProjectConfig{}) {
+		t.Fatal("existing configurations must preserve intermediate output")
+	}
+	cfg := &Config{Display: DisplayConfig{FinalResponseOnly: &tru}}
+	if !EffectiveFinalResponseOnly(cfg, nil) {
+		t.Fatal("global final-only setting ignored")
+	}
+	proj := &ProjectConfig{Display: &DisplayConfig{FinalResponseOnly: &fal}}
+	if EffectiveFinalResponseOnly(cfg, proj) {
+		t.Fatal("explicit project false must override global true")
+	}
+	proj.Display.FinalResponseOnly = &tru
+	if !EffectiveFinalResponseOnly(&Config{}, proj) {
+		t.Fatal("project opt-in ignored")
+	}
+}
+
 func TestValidateProjectDisplayConfig(t *testing.T) {
 	mode := "verbose"
 	cardMode := "modern"
