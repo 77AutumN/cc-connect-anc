@@ -17,15 +17,15 @@ func TestThreeActionDomainsTraverseNestedToolsAndCards(t *testing.T) {
 	secondary, third := &secondToolHost{}, &thirdToolHost{}
 	secondary.toolResult = map[string]any{"status": "ok"}
 	third.toolResult = map[string]any{"status": "ok"}
-	h := CombineActionHosts(CombineActionHosts(primary, secondary, []string{"knowledge_read"}), third, []string{"reminder-list"})
+	h := CombineActionHosts(CombineActionHosts(primary, secondary, []string{"knowledge_catalog", "knowledge_read"}), third, []string{"reminder-list"})
 	e.SetActionHost(h)
-	for _, command := range []string{"customer", "knowledge_read", "reminder-list"} {
+	for _, command := range []string{"customer", "knowledge_catalog", "knowledge_read", "reminder-list"} {
 		w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, fmt.Sprintf(`{"command":%q,"input":{}}`, command))
 		if w.Code != 200 {
 			t.Fatalf("%s: %s", command, w.Body.String())
 		}
 	}
-	if primary.toolCalls != 1 || secondary.toolCalls != 1 || third.toolCalls != 1 {
+	if primary.toolCalls != 1 || secondary.toolCalls != 2 || third.toolCalls != 1 {
 		t.Fatal("cross-domain tool dispatch")
 	}
 	for _, leaf := range []ActionHost{primary, secondary, third} {
