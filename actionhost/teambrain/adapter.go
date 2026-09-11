@@ -22,7 +22,9 @@ import (
 
 const Kind = "knowledge"
 
-func Commands() []string { return []string{"knowledge_search", "knowledge_read", "knowledge_propose"} }
+func Commands() []string {
+	return []string{"knowledge_catalog", "knowledge_search", "knowledge_read", "knowledge_propose"}
+}
 
 type Adapter struct {
 	command  string

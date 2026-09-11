@@ -40,6 +40,11 @@ def main():
     page.update(node_token="syntheticqingsong", url=api.url("syntheticqingsong"),
                 unsupported_blocks=[{"block_type": 27, "reason": "table_not_parsed"}])
     api.pages["syntheticqingsong"] = page
+    node = api.create_node("虚构初访方法")["node_token"]
+    api.append(node, [paragraph("先询问最近一笔业务从开始到结束的过程，再确认返工或等待发生的位置；最后问什么结果能证明改善有效。")], "fixture-method")
+    method = api.pages.pop(node)
+    method.update(node_token="syntheticmethod", url=api.url("syntheticmethod"))
+    api.pages["syntheticmethod"] = method
     principals = [Principal("feishu", "sender-1", "group-1", "feishu:group-1:sender-1", "test")]
     principals.append(Principal("feishu", "sender-1", "private-0", "private-session-0", "kb-private-0"))
     principals += [Principal("feishu", "fixture-" + str(i), kind + "-" + str(i),
@@ -50,6 +55,8 @@ def main():
         with journal.transaction():
             journal.register("syntheticqingsong", "演示·青松B")
             journal.baseline("syntheticqingsong", bodyprint(api.snapshot("syntheticqingsong")))
+            journal.register("syntheticmethod", "team")
+            journal.baseline("syntheticmethod", bodyprint(api.snapshot("syntheticmethod")))
         writes = api.writes
         result = dispatch(Brain(journal, api, principals), strict_json(sys.stdin.read(65537)))
         if api.writes != writes:
