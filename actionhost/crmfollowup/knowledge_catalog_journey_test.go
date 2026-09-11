@@ -87,13 +87,19 @@ func TestCUJ_KNOWLEDGEIPC2_CatalogReadFollowupAndScope(t *testing.T) {
 				t.Fatal(result.err)
 			}
 			deadline := time.Now().Add(5 * time.Second)
-			for !strings.Contains(p.transcript(), fmt.Sprintf("TURN-%d ", turn)) {
+			prefix := fmt.Sprintf("TURN-%d ", turn)
+			for !strings.Contains(p.transcript(), prefix) {
 				if time.Now().After(deadline) {
 					t.Fatal("missing user-visible result")
 				}
 				time.Sleep(5 * time.Millisecond)
 			}
-			return result.data
+			sent := p.transcript()
+			var visible map[string]any
+			if err := json.NewDecoder(strings.NewReader(sent[strings.Index(sent, prefix)+len(prefix):])).Decode(&visible); err != nil {
+				t.Fatal("invalid user-visible knowledge result", err)
+			}
+			return visible
 		case <-time.After(12 * time.Second):
 			t.Fatal("knowledge tool timeout")
 			return nil
