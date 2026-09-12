@@ -165,6 +165,13 @@ func (e *Engine) publishHostedActionContext(ctx context.Context, host ActionHost
 		slog.Error("platform cannot bind an exact hosted approval card", "platform", p.Name(), "action_kind", result.Kind)
 		return errors.New("hosted approval cards unsupported")
 	}
+	if validator, ok := p.(CardValidator); ok {
+		if err := validator.ValidateCard(hostedSharedCard(result.Card), principal.SessionKey); err != nil {
+			return err
+		}
+	} else if result.Card.MaxBytes > 0 {
+		return errors.New("platform cannot validate complete hosted approval size")
+	}
 
 	placeholder := NewCard().
 		Title(e.i18n.T(MsgHostedActionPreparingTitle), "blue").

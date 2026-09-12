@@ -764,6 +764,21 @@ const (
 )
 
 const (
+	MsgKnowledgeCancelled       MsgKey = "knowledge_ux_cancelled"
+	MsgKnowledgeRevision        MsgKey = "knowledge_ux_revision"
+	MsgKnowledgeExpired         MsgKey = "knowledge_ux_expired"
+	MsgKnowledgeConflict        MsgKey = "knowledge_ux_conflict"
+	MsgKnowledgeUncertain       MsgKey = "knowledge_ux_uncertain"
+	MsgKnowledgeReviewMeta      MsgKey = "knowledge_ux_reviewmeta"
+	MsgKnowledgeCreate          MsgKey = "knowledge_ux_create"
+	MsgKnowledgeAppend          MsgKey = "knowledge_ux_append"
+	MsgKnowledgeReplace         MsgKey = "knowledge_ux_replace"
+	MsgKnowledgeBefore          MsgKey = "knowledge_ux_before"
+	MsgKnowledgeAfter           MsgKey = "knowledge_ux_after"
+	MsgKnowledgeAdded           MsgKey = "knowledge_ux_added"
+	MsgKnowledgeDestination     MsgKey = "knowledge_ux_destination"
+	MsgKnowledgeDone            MsgKey = "knowledge_ux_done"
+	MsgKnowledgeTooLarge        MsgKey = "knowledge_ux_too_large"
 	MsgKnowledgePreview         MsgKey = "knowledge_preview"
 	MsgReminderHeading          MsgKey = "reminder_heading"
 	MsgReminderLate             MsgKey = "reminder_late"
@@ -787,21 +802,36 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
-	MsgReminderNumber:     {LangEnglish: "ID: %s", LangChinese: "编号：%s", LangTraditionalChinese: "編號：%s", LangJapanese: "番号：%s", LangSpanish: "ID: %s"},
-	MsgOpsAlertActive:     {LangEnglish: "Bot needs attention", LangChinese: "Bot 需要处理异常", LangTraditionalChinese: "Bot 需要處理異常", LangJapanese: "Botの確認が必要です", LangSpanish: "El bot necesita atención"},
-	MsgOpsAlertRecovered:  {LangEnglish: "Failure no longer observed; reconcile paused/in-flight records", LangChinese: "本项异常已不再出现；暂停或在途记录仍需核查", LangTraditionalChinese: "本項異常已不再出現；暫停或在途記錄仍需核查", LangJapanese: "障害は見られません。停止中・送信中の記録は要確認です", LangSpanish: "El fallo ya no se observa; revise registros pausados o en tránsito"},
-	MsgOpsAlertStorage:    {LangEnglish: "Reminder storage unavailable", LangChinese: "提醒存储不可用", LangTraditionalChinese: "提醒儲存不可用", LangJapanese: "保存先が利用できません", LangSpanish: "Almacenamiento no disponible"},
-	MsgOpsAlertRoute:      {LangEnglish: "Verify identity mapping", LangChinese: "身份映射需要核验", LangTraditionalChinese: "身分映射需要核驗", LangJapanese: "宛先設定を確認してください", LangSpanish: "Verifique la asignación de identidad"},
-	MsgOpsAlertPermission: {LangEnglish: "Paused: verify identity/permissions", LangChinese: "提醒已暂停：请核验身份及权限", LangTraditionalChinese: "提醒已暫停：請核驗身分及權限", LangJapanese: "停止中：本人と権限を確認してください", LangSpanish: "Pausado: verifique identidad y permisos"},
-	MsgOpsAlertDelivery:   {LangEnglish: "Delivery remains unconfirmed", LangChinese: "提醒投递持续未确认", LangTraditionalChinese: "提醒投遞持續未確認", LangJapanese: "配信結果を確認できていません", LangSpanish: "La entrega sigue sin confirmar"},
-	MsgOpsAlertBody:       {LangEnglish: "%s\n%s\nFirst: %s\nLatest: %s\nAffected: %d\nInspect through protected operations; do not repeat business writes.\nIncident: %s", LangChinese: "%s\n%s\n首次：%s\n最近：%s\n影响数量：%d\n请通过受控运维入口核查，不要直接重做业务操作。\n异常编号：%s", LangTraditionalChinese: "%s\n%s\n首次：%s\n最近：%s\n影響數量：%d\n請透過受控維運入口核查，不要直接重做業務操作。\n異常編號：%s", LangJapanese: "%s\n%s\n初回：%s\n最新：%s\n件数：%d\n管理経路で確認してください。業務操作を再実行しないでください。\n障害番号：%s", LangSpanish: "%s\n%s\nPrimero: %s\nÚltimo: %s\nAfectados: %d\nRevise por operaciones protegidas; no repita escrituras.\nIncidente: %s"},
-	MsgOpsAlertDegraded:   {LangEnglish: "Alert storage unavailable. Best-effort notice; history/deduplication may not survive restart. Inspect through protected operations; no business data was reset.", LangChinese: "Bot 告警存储不可用。本次为尽力通知，重启后可能丢失告警积压或去重记录。请通过受控运维入口检查；没有重置业务数据。", LangTraditionalChinese: "Bot 告警儲存不可用。本次為盡力通知，重啟後可能遺失告警積壓或去重記錄。請透過受控維運入口檢查；沒有重置業務資料。", LangJapanese: "通知保存先が利用できません。再起動後の履歴・重複防止は保証されません。管理経路で確認してください。業務データはリセットしていません。", LangSpanish: "Almacenamiento de alertas no disponible. Historial y deduplicación podrían perderse al reiniciar. Revise por operaciones protegidas; no se restablecieron datos."},
-	MsgReminderHeading:    {LangEnglish: "Reminder (Beijing time)", LangChinese: "提醒（北京时间）", LangTraditionalChinese: "提醒（北京時間）", LangJapanese: "リマインダー（北京時間）", LangSpanish: "Recordatorio (hora de Pekín)"},
-	MsgReminderLate:       {LangEnglish: "Delayed delivery; original schedule:", LangChinese: "延迟补发；原定时间：", LangTraditionalChinese: "延遲補發；原定時間：", LangJapanese: "遅延配信・元の予定：", LangSpanish: "Entrega retrasada; horario original:"},
-	MsgReminderDuplicate:  {LangEnglish: "An earlier delivery could not be confirmed; this may be a duplicate.", LangChinese: "此前发送结果未能确认，本次补发可能重复。", LangTraditionalChinese: "此前發送結果未能確認，本次補發可能重複。", LangJapanese: "前回の配信を確認できません。重複の可能性があります。", LangSpanish: "No se confirmó la entrega anterior; podría estar duplicado."},
-	MsgReminderList:       {LangEnglish: "Your reminders", LangChinese: "你的提醒清单", LangTraditionalChinese: "你的提醒清單", LangJapanese: "あなたのリマインダー", LangSpanish: "Tus recordatorios"},
-	MsgReminderWeekdays:   {LangEnglish: "Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday", LangChinese: "周日|周一|周二|周三|周四|周五|周六", LangTraditionalChinese: "週日|週一|週二|週三|週四|週五|週六", LangJapanese: "日曜日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日", LangSpanish: "domingo|lunes|martes|miércoles|jueves|viernes|sábado"},
-	MsgReminderStatuses:   {LangEnglish: "Scheduled|Sending|Retry scheduled|Paused|Cancelled|Accepted by Feishu", LangChinese: "待发送|发送中|等待重试|已暂停|已取消|飞书已接收", LangTraditionalChinese: "待發送|發送中|等待重試|已暫停|已取消|飛書已接收", LangJapanese: "予定済み|送信中|再試行待ち|一時停止|キャンセル済み|Feishu受付済み", LangSpanish: "Programado|Enviando|Reintento pendiente|Pausado|Cancelado|Aceptado por Feishu"},
+	MsgReminderNumber:       {LangEnglish: "ID: %s", LangChinese: "编号：%s", LangTraditionalChinese: "編號：%s", LangJapanese: "番号：%s", LangSpanish: "ID: %s"},
+	MsgOpsAlertActive:       {LangEnglish: "Bot needs attention", LangChinese: "Bot 需要处理异常", LangTraditionalChinese: "Bot 需要處理異常", LangJapanese: "Botの確認が必要です", LangSpanish: "El bot necesita atención"},
+	MsgOpsAlertRecovered:    {LangEnglish: "Failure no longer observed; reconcile paused/in-flight records", LangChinese: "本项异常已不再出现；暂停或在途记录仍需核查", LangTraditionalChinese: "本項異常已不再出現；暫停或在途記錄仍需核查", LangJapanese: "障害は見られません。停止中・送信中の記録は要確認です", LangSpanish: "El fallo ya no se observa; revise registros pausados o en tránsito"},
+	MsgOpsAlertStorage:      {LangEnglish: "Reminder storage unavailable", LangChinese: "提醒存储不可用", LangTraditionalChinese: "提醒儲存不可用", LangJapanese: "保存先が利用できません", LangSpanish: "Almacenamiento no disponible"},
+	MsgOpsAlertRoute:        {LangEnglish: "Verify identity mapping", LangChinese: "身份映射需要核验", LangTraditionalChinese: "身分映射需要核驗", LangJapanese: "宛先設定を確認してください", LangSpanish: "Verifique la asignación de identidad"},
+	MsgOpsAlertPermission:   {LangEnglish: "Paused: verify identity/permissions", LangChinese: "提醒已暂停：请核验身份及权限", LangTraditionalChinese: "提醒已暫停：請核驗身分及權限", LangJapanese: "停止中：本人と権限を確認してください", LangSpanish: "Pausado: verifique identidad y permisos"},
+	MsgOpsAlertDelivery:     {LangEnglish: "Delivery remains unconfirmed", LangChinese: "提醒投递持续未确认", LangTraditionalChinese: "提醒投遞持續未確認", LangJapanese: "配信結果を確認できていません", LangSpanish: "La entrega sigue sin confirmar"},
+	MsgOpsAlertBody:         {LangEnglish: "%s\n%s\nFirst: %s\nLatest: %s\nAffected: %d\nInspect through protected operations; do not repeat business writes.\nIncident: %s", LangChinese: "%s\n%s\n首次：%s\n最近：%s\n影响数量：%d\n请通过受控运维入口核查，不要直接重做业务操作。\n异常编号：%s", LangTraditionalChinese: "%s\n%s\n首次：%s\n最近：%s\n影響數量：%d\n請透過受控維運入口核查，不要直接重做業務操作。\n異常編號：%s", LangJapanese: "%s\n%s\n初回：%s\n最新：%s\n件数：%d\n管理経路で確認してください。業務操作を再実行しないでください。\n障害番号：%s", LangSpanish: "%s\n%s\nPrimero: %s\nÚltimo: %s\nAfectados: %d\nRevise por operaciones protegidas; no repita escrituras.\nIncidente: %s"},
+	MsgOpsAlertDegraded:     {LangEnglish: "Alert storage unavailable. Best-effort notice; history/deduplication may not survive restart. Inspect through protected operations; no business data was reset.", LangChinese: "Bot 告警存储不可用。本次为尽力通知，重启后可能丢失告警积压或去重记录。请通过受控运维入口检查；没有重置业务数据。", LangTraditionalChinese: "Bot 告警儲存不可用。本次為盡力通知，重啟後可能遺失告警積壓或去重記錄。請透過受控維運入口檢查；沒有重置業務資料。", LangJapanese: "通知保存先が利用できません。再起動後の履歴・重複防止は保証されません。管理経路で確認してください。業務データはリセットしていません。", LangSpanish: "Almacenamiento de alertas no disponible. Historial y deduplicación podrían perderse al reiniciar. Revise por operaciones protegidas; no se restablecieron datos."},
+	MsgReminderHeading:      {LangEnglish: "Reminder (Beijing time)", LangChinese: "提醒（北京时间）", LangTraditionalChinese: "提醒（北京時間）", LangJapanese: "リマインダー（北京時間）", LangSpanish: "Recordatorio (hora de Pekín)"},
+	MsgReminderLate:         {LangEnglish: "Delayed delivery; original schedule:", LangChinese: "延迟补发；原定时间：", LangTraditionalChinese: "延遲補發；原定時間：", LangJapanese: "遅延配信・元の予定：", LangSpanish: "Entrega retrasada; horario original:"},
+	MsgReminderDuplicate:    {LangEnglish: "An earlier delivery could not be confirmed; this may be a duplicate.", LangChinese: "此前发送结果未能确认，本次补发可能重复。", LangTraditionalChinese: "此前發送結果未能確認，本次補發可能重複。", LangJapanese: "前回の配信を確認できません。重複の可能性があります。", LangSpanish: "No se confirmó la entrega anterior; podría estar duplicado."},
+	MsgReminderList:         {LangEnglish: "Your reminders", LangChinese: "你的提醒清单", LangTraditionalChinese: "你的提醒清單", LangJapanese: "あなたのリマインダー", LangSpanish: "Tus recordatorios"},
+	MsgReminderWeekdays:     {LangEnglish: "Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday", LangChinese: "周日|周一|周二|周三|周四|周五|周六", LangTraditionalChinese: "週日|週一|週二|週三|週四|週五|週六", LangJapanese: "日曜日|月曜日|火曜日|水曜日|木曜日|金曜日|土曜日", LangSpanish: "domingo|lunes|martes|miércoles|jueves|viernes|sábado"},
+	MsgReminderStatuses:     {LangEnglish: "Scheduled|Sending|Retry scheduled|Paused|Cancelled|Accepted by Feishu", LangChinese: "待发送|发送中|等待重试|已暂停|已取消|飞书已接收", LangTraditionalChinese: "待發送|發送中|等待重試|已暫停|已取消|飛書已接收", LangJapanese: "予定済み|送信中|再試行待ち|一時停止|キャンセル済み|Feishu受付済み", LangSpanish: "Programado|Enviando|Reintento pendiente|Pausado|Cancelado|Aceptado por Feishu"},
+	MsgKnowledgeCancelled:   {LangEnglish: "Cancelled; will not publish", LangChinese: "已取消，不会发布", LangTraditionalChinese: "已取消，不會發佈", LangJapanese: "キャンセル済み・公開されません", LangSpanish: "Cancelado; no se publicará"},
+	MsgKnowledgeRevision:    {LangEnglish: "Revise the draft and submit it for a new confirmation.", LangChinese: "请修改草稿后重新提交确认；本提案不会发布。", LangTraditionalChinese: "請修改草稿後重新提交確認；本提案不會發佈。", LangJapanese: "下書きを修正して再確認してください。この提案は公開されません。", LangSpanish: "Revise el borrador y vuelva a confirmarlo; esta propuesta no se publicará."},
+	MsgKnowledgeExpired:     {LangEnglish: "Expired; reread the page before submitting a new draft.", LangChinese: "已过期；请重读当前页面后提交新草稿。", LangTraditionalChinese: "已過期；請重讀目前頁面後提交新草稿。", LangJapanese: "期限切れです。現在のページを読み直して新しい下書きを提出してください。", LangSpanish: "Caducado; relea la página antes de enviar otro borrador."},
+	MsgKnowledgeConflict:    {LangEnglish: "The page changed; this change was not written. Reread and review a new draft.", LangChinese: "页面内容已变化，本次变更未写入。请重读后重新审阅草稿。", LangTraditionalChinese: "頁面內容已變化，本次變更未寫入。請重讀後重新審閱草稿。", LangJapanese: "ページが変更されました。今回は未書き込みです。読み直して再確認してください。", LangSpanish: "La página cambió; este cambio no se escribió. Relea y revise otro borrador."},
+	MsgKnowledgeUncertain:   {LangEnglish: "Publication may have completed partly or fully. Ask an administrator to verify the result; do not resubmit.", LangChinese: "发布可能已部分或全部完成，请管理员核对结果；不要重复提交。", LangTraditionalChinese: "發佈可能已部分或全部完成，請管理員核對結果；不要重複提交。", LangJapanese: "一部または全部が公開済みの可能性があります。管理者が結果を確認するまで再提出しないでください。", LangSpanish: "La publicación podría haberse completado parcial o totalmente. Pida verificación; no vuelva a enviarla."},
+	MsgKnowledgeReviewMeta:  {LangEnglish: "Operation: %s\nTitle: %s", LangChinese: "操作：%s\n页面标题：%s", LangTraditionalChinese: "操作：%s\n頁面標題：%s", LangJapanese: "操作：%s\nタイトル：%s", LangSpanish: "Operación: %s\nTítulo: %s"},
+	MsgKnowledgeCreate:      {LangEnglish: "Create page", LangChinese: "新建页面", LangTraditionalChinese: "新增頁面", LangJapanese: "ページ作成", LangSpanish: "Crear página"},
+	MsgKnowledgeAppend:      {LangEnglish: "Append to page", LangChinese: "追加到已有页面", LangTraditionalChinese: "追加至現有頁面", LangJapanese: "ページに追記", LangSpanish: "Añadir a página"},
+	MsgKnowledgeReplace:     {LangEnglish: "Replace selected paragraph", LangChinese: "替换选中段落", LangTraditionalChinese: "替換選中段落", LangJapanese: "選択した段落を置換", LangSpanish: "Sustituir párrafo seleccionado"},
+	MsgKnowledgeBefore:      {LangEnglish: "Existing content at review", LangChinese: "审核时既有内容", LangTraditionalChinese: "審閱時既有內容", LangJapanese: "確認時の既存内容", LangSpanish: "Contenido existente al revisar"},
+	MsgKnowledgeAfter:       {LangEnglish: "Content to write", LangChinese: "实际待写内容", LangTraditionalChinese: "實際待寫內容", LangJapanese: "書き込む内容", LangSpanish: "Contenido que se escribirá"},
+	MsgKnowledgeAdded:       {LangEnglish: "Content to append", LangChinese: "新增内容", LangTraditionalChinese: "新增內容", LangJapanese: "追記する内容", LangSpanish: "Contenido que se añadirá"},
+	MsgKnowledgeDestination: {LangEnglish: "Target page / parent", LangChinese: "目标页面／新建父节点", LangTraditionalChinese: "目標頁面／新增父節點", LangJapanese: "対象ページ／親ページ", LangSpanish: "Página de destino / superior"},
+	MsgKnowledgeDone:        {LangEnglish: "Change verified: %s", LangChinese: "已完成并核对：%s", LangTraditionalChinese: "已完成並核對：%s", LangJapanese: "完了・照合済み：%s", LangSpanish: "Cambio verificado: %s"},
+	MsgKnowledgeTooLarge:    {LangEnglish: "The complete review is too large. Split the draft before confirmation.", LangChinese: "完整审阅内容过长，请拆分草稿后重新确认。", LangTraditionalChinese: "完整審閱內容過長，請拆分草稿後重新確認。", LangJapanese: "確認内容が長すぎます。下書きを分割して再確認してください。", LangSpanish: "La revisión completa es demasiado grande. Divida el borrador antes de confirmar."},
 	MsgKnowledgePreview: {
 		LangEnglish: "Review knowledge changes", LangChinese: "确认知识变更", LangTraditionalChinese: "確認知識變更",
 		LangJapanese: "ナレッジ変更の確認", LangSpanish: "Revisar cambios de conocimiento",

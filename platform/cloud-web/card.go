@@ -1,6 +1,23 @@
 package cloudweb
 
-import "github.com/chenhg5/cc-connect/core"
+import (
+	"encoding/json"
+	"github.com/chenhg5/cc-connect/core"
+)
+
+func (p *Platform) ValidateCard(card *core.Card, _ string) error {
+	if card == nil || card.MaxBytes == 0 {
+		return nil
+	}
+	body, err := json.Marshal(serializeCard(card))
+	if err != nil {
+		return err
+	}
+	if len(body) > card.MaxBytes {
+		return core.ErrCardTooLarge
+	}
+	return nil
+}
 
 func serializeCard(c *core.Card) map[string]any {
 	result := make(map[string]any)
@@ -13,6 +30,8 @@ func serializeCard(c *core.Card) map[string]any {
 	var elements []map[string]any
 	for _, elem := range c.Elements {
 		switch e := elem.(type) {
+		case core.CardPlainText:
+			elements = append(elements, map[string]any{"type": "plain_text", "content": e.Content})
 		case core.CardMarkdown:
 			elements = append(elements, map[string]any{"type": "markdown", "content": e.Content})
 		case core.CardDivider:

@@ -70,6 +70,7 @@ function CardContent({ card, onAction }: { card: any; onAction?: (v: string) => 
 }
 
 function ElementRenderer({ el, onAction }: { el: any; onAction?: (v: string) => void }) {
+  if (el.type === 'plain_text') return <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{el.content}</div>;
   if (el.type === 'markdown') {
     return <Prose>{el.content}</Prose>;
   }

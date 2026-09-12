@@ -991,7 +991,7 @@ func (p *Platform) handleHostedCardAction(value map[string]any, userID, chatID, 
 				Toast: &callback.Toast{Type: "info", Content: core.NewI18n(lang).T(core.MsgHostedActionProcessingToast)},
 			}, true
 		}
-		return renderHostedActionResponse(result, trustedSessionKey), true
+		return renderHostedActionResponse(result, trustedSessionKey, lang), true
 	case <-timer.C:
 		go p.refreshHostedActionWhenReady(done, action)
 		return &callback.CardActionTriggerResponse{
@@ -1019,8 +1019,13 @@ func (p *Platform) refreshHostedActionCard(ctx context.Context, messageID, sessi
 	return refresher.RefreshCardMessage(ctx, messageID, sessionKey, card)
 }
 
-func renderHostedActionResponse(result core.TrustedCardActionResponse, sessionKey string) *callback.CardActionTriggerResponse {
+func renderHostedActionResponse(result core.TrustedCardActionResponse, sessionKey string, lang core.Language) *callback.CardActionTriggerResponse {
 	response := &callback.CardActionTriggerResponse{}
+	if err := validateCardSize(result.Card, sessionKey); err != nil {
+		i18n := core.NewI18n(lang)
+		card := core.NewCard().Title(i18n.T(core.MsgKnowledgeNeedsReview), "orange").PlainText(i18n.T(core.MsgKnowledgeTooLarge)).Build()
+		return &callback.CardActionTriggerResponse{Card: &callback.Card{Type: "raw", Data: renderCardMap(card, sessionKey)}}
+	}
 	if result.Card != nil {
 		response.Card = &callback.Card{Type: "raw", Data: renderCardMap(result.Card, sessionKey)}
 	}

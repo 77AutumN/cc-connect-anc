@@ -17,6 +17,17 @@ func plainText(content string) map[string]any {
 	return map[string]any{"tag": "plain_text", "content": content}
 }
 
+func (p *interactivePlatform) ValidateCard(card *core.Card, sessionKey string) error {
+	return validateCardSize(card, sessionKey)
+}
+
+func validateCardSize(card *core.Card, sessionKey string) error {
+	if card != nil && card.MaxBytes > 0 && len(renderCard(card, sessionKey)) > card.MaxBytes {
+		return core.ErrCardTooLarge
+	}
+	return nil
+}
+
 // ReplyCard sends a structured card as a reply to the original message.
 func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *core.Card) error {
 	rc, ok := rctx.(replyContext)
@@ -25,6 +36,9 @@ func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *cor
 	}
 
 	cardJSON := renderCard(card, rc.sessionKey)
+	if err := p.ValidateCard(card, rc.sessionKey); err != nil {
+		return err
+	}
 	if !p.shouldUseThreadOrReplyAPI(rc) {
 		if rc.chatID == "" {
 			return fmt.Errorf("%s: chatID is empty, cannot send card", p.tag())
@@ -74,6 +88,9 @@ func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core
 	}
 
 	cardJSON := renderCard(card, rc.sessionKey)
+	if err := p.ValidateCard(card, rc.sessionKey); err != nil {
+		return err
+	}
 	id, err := p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
 	if err == nil {
 		err = p.bindInteraction(id, rc, card)
@@ -104,6 +121,9 @@ func (p *interactivePlatform) RefreshCardMessage(ctx context.Context, msgID, ses
 	}
 
 	cardJSON := renderCard(card, sessionKey)
+	if err := p.ValidateCard(card, sessionKey); err != nil {
+		return err
+	}
 	req := larkim.NewPatchMessageReqBuilder().
 		MessageId(msgID).
 		Body(larkim.NewPatchMessageReqBodyBuilder().
@@ -163,6 +183,8 @@ func renderCardMap(card *core.Card, sessionKey string) map[string]any {
 	var elements []map[string]any
 	for _, elem := range card.Elements {
 		switch e := elem.(type) {
+		case core.CardPlainText:
+			elements = append(elements, map[string]any{"tag": "div", "text": plainText(e.Content)})
 		case core.CardMarkdown:
 			elements = append(elements, map[string]any{
 				"tag":     "markdown",
@@ -373,7 +395,7 @@ func renderDeleteModeCheckerCard(card *core.Card, base map[string]any) (map[stri
 			if len(remaining) > 0 {
 				navRows = append(navRows, core.CardActions{Buttons: remaining, Layout: e.Layout})
 			}
-		case core.CardMarkdown, core.CardDivider, core.CardSelect:
+		case core.CardMarkdown, core.CardPlainText, core.CardDivider, core.CardSelect:
 			return nil, false
 		}
 	}
