@@ -169,7 +169,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if command != "open" && command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
+	if command != "open" && command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])

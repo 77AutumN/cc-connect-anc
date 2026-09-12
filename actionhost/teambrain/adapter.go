@@ -23,7 +23,7 @@ import (
 const Kind = "knowledge"
 
 func Commands() []string {
-	return []string{"knowledge_catalog", "knowledge_search", "knowledge_read", "knowledge_propose"}
+	return []string{"knowledge_catalog", "knowledge_search", "knowledge_read", "knowledge_propose", "knowledge_status"}
 }
 
 type Adapter struct {
