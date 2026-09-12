@@ -147,6 +147,7 @@ function CardBlock({ card, onAction }: { card: any; onAction: (v: string) => voi
 }
 
 function CardElement({ el, onAction }: { el: any; onAction: (v: string) => void }) {
+  if (el.type === 'plain_text') return <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{el.content}</div>;
   if (el.type === 'markdown') return <RenderMarkdown content={el.content} />;
   if (el.type === 'divider') return <div className="border-t border-gray-200/60 dark:border-gray-700/40" />;
   if (el.type === 'note') return <p className="text-[11px] text-gray-400 dark:text-gray-500">{el.text}</p>;

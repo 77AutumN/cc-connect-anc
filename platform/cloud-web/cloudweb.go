@@ -22,8 +22,8 @@ type Platform struct {
 	project string
 	token   string
 
-	transportKind string
-	allowFrom     string
+	transportKind  string
+	allowFrom      string
 	shareInChannel bool
 	groupReplyAll  bool
 
@@ -498,6 +498,9 @@ func (p *Platform) SendWithButtons(ctx context.Context, replyCtx any, content st
 }
 
 func (p *Platform) SendCard(ctx context.Context, replyCtx any, card *core.Card) error {
+	if err := p.ValidateCard(card, ""); err != nil {
+		return err
+	}
 	rc, err := parseReplyCtx(replyCtx)
 	if err != nil {
 		return err
@@ -518,6 +521,9 @@ func (p *Platform) ReplyCard(ctx context.Context, replyCtx any, card *core.Card)
 }
 
 func (p *Platform) RefreshCard(ctx context.Context, sessionKey string, card *core.Card) error {
+	if err := p.ValidateCard(card, sessionKey); err != nil {
+		return err
+	}
 	replyCtx, ok := p.lookupReplyCtx(sessionKey)
 	if !ok {
 		return fmt.Errorf("cloud_web: no reply context for session %q", sessionKey)

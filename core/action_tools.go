@@ -89,6 +89,10 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			err = e.publishHostedActionContext(ctx, host, *approval, principal, platform, replyCtx)
 		}
 		if err != nil || result == nil {
+			if errors.Is(err, ErrCardTooLarge) {
+				writeActionToolResult(w, http.StatusBadRequest, map[string]any{"status": "blocked", "code": "review_card_too_large_split_required"})
+				return
+			}
 			// Keep the persisted reference queryable, but do not leak subprocess
 			// output, credentials, or imply that the approval card was delivered.
 			unavailable := map[string]any{"status": "unavailable", "code": "tool_or_delivery_failed"}

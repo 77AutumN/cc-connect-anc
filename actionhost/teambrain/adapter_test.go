@@ -74,6 +74,51 @@ func TestPresentationHasCompletePreviewAndTrustedButtonsInFiveLanguages(t *testi
 	}
 }
 
+func TestKnowledgeReviewWrapsLiteralSourceAndDistinguishesTerminalStates(t *testing.T) {
+	const source = "**客户** <at id=all> [同意](fake) ```\n完整中文正文🧪"
+	for _, operation := range []string{"create", "append", "replace"} {
+		data := map[string]any{"status": "pending", "approval_id": "fixture", "preview": "legacy", "review": map[string]any{
+			"operation": operation, "title": "虚构页面", "destination": "https://synthetic.feishu.cn/wiki/node", "before": "旧正文", "after": source}}
+		card := present(data, core.LangChinese).Card
+		found := false
+		for _, element := range card.Elements {
+			if body, ok := element.(core.CardPlainText); ok && body.Content == source {
+				found = true
+			}
+			if body, ok := element.(core.CardMarkdown); ok && strings.Contains(body.Content, "<at") {
+				t.Fatal("source parsed as markup")
+			}
+		}
+		if !found || card.MaxBytes != 24000 || strings.Contains(card.RenderText(), "legacy") {
+			t.Fatal("incomplete structured review")
+		}
+		if operation != "create" && !strings.Contains(card.RenderText(), "旧正文") {
+			t.Fatal("before omitted")
+		}
+	}
+	for status, expected := range map[string]string{
+		"cancelled": "已取消，不会发布", "needs_revision": "请修改草稿", "expired": "已过期",
+		"conflict": "页面内容已变化", "unknown": "可能已部分或全部完成", "unrecognized": "可能已部分或全部完成",
+	} {
+		card := present(map[string]any{"status": status}, core.LangChinese).Card
+		if card.HasButtons() || !strings.Contains(card.RenderText(), expected) {
+			t.Fatalf("incorrect %s card", status)
+		}
+		if status == "unknown" && strings.Contains(card.RenderText(), "未发布") {
+			t.Fatal("uncertain result claimed not published")
+		}
+	}
+	card := present(map[string]any{"status": "verified", "title": "虚构页面", "receipt": map[string]any{
+		"url": "https://synthetic.feishu.cn/wiki/node", "summary": strings.Repeat("巨大差异", 1000)}}, core.LangChinese).Card
+	if card.HasButtons() || strings.Contains(card.RenderText(), "巨大差异") || !strings.Contains(card.RenderText(), "虚构页面") {
+		t.Fatal("success repeats diff or loses summary")
+	}
+	legacy := present(map[string]any{"status": "pending", "approval_id": "old", "preview": source}, core.LangChinese).Card
+	if !strings.Contains(legacy.RenderText(), source) {
+		t.Fatal("legacy preview mutated")
+	}
+}
+
 func TestSubprocessReceivesAuthenticatedPrincipalAndNoInheritedSecrets(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("production adapter is POSIX only")

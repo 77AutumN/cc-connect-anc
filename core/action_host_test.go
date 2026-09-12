@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -239,6 +240,17 @@ type hostedCardPlatform struct {
 	placeholders []*Card
 	refreshes    []*Card
 	publishErr   error
+}
+
+func (p *hostedCardPlatform) ValidateCard(card *Card, _ string) error {
+	body, err := json.Marshal(card)
+	if err != nil {
+		return err
+	}
+	if card.MaxBytes > 0 && len(body) > card.MaxBytes {
+		return ErrCardTooLarge
+	}
+	return nil
 }
 
 func (p *hostedCardPlatform) ReplyCard(ctx context.Context, replyCtx any, card *Card) error {

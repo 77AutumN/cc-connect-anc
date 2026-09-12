@@ -1,9 +1,12 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+var ErrCardTooLarge = errors.New("review_card_too_large_split_required")
 
 // Card represents a structured rich message that can be rendered as
 // platform-specific cards (Feishu Interactive Card, Telegram message, etc.)
@@ -16,6 +19,13 @@ type Card struct {
 	SharedUpdate bool
 	// Interaction is host metadata, never serialized into button values.
 	Interaction *CardInteraction
+	// MaxBytes limits the final platform-serialized card; zero preserves legacy behavior.
+	MaxBytes int
+}
+
+// CardValidator checks the final rendering before a hosted approval is bound.
+type CardValidator interface {
+	ValidateCard(*Card, string) error
 }
 
 type CardInteraction struct {
@@ -36,6 +46,9 @@ type CardElement interface {
 
 // CardMarkdown renders markdown-formatted text.
 type CardMarkdown struct{ Content string }
+
+// CardPlainText displays source data literally, with wrapping and no markup parsing.
+type CardPlainText struct{ Content string }
 
 // CardDivider renders a horizontal rule.
 type CardDivider struct{}
@@ -78,12 +91,13 @@ type CardSelectOption struct {
 	Value string
 }
 
-func (CardMarkdown) cardElement() {}
-func (CardDivider) cardElement()  {}
-func (CardActions) cardElement()  {}
-func (CardNote) cardElement()     {}
-func (CardListItem) cardElement() {}
-func (CardSelect) cardElement()   {}
+func (CardMarkdown) cardElement()  {}
+func (CardPlainText) cardElement() {}
+func (CardDivider) cardElement()   {}
+func (CardActions) cardElement()   {}
+func (CardNote) cardElement()      {}
+func (CardListItem) cardElement()  {}
+func (CardSelect) cardElement()    {}
 
 // CardButton represents a clickable button inside a CardActions element.
 type CardButton struct {
@@ -144,6 +158,13 @@ func (b *CardBuilder) Title(title, color string) *CardBuilder {
 func (b *CardBuilder) Markdown(content string) *CardBuilder {
 	if content != "" {
 		b.card.Elements = append(b.card.Elements, CardMarkdown{Content: content})
+	}
+	return b
+}
+
+func (b *CardBuilder) PlainText(content string) *CardBuilder {
+	if content != "" {
+		b.card.Elements = append(b.card.Elements, CardPlainText{Content: content})
 	}
 	return b
 }
@@ -246,6 +267,9 @@ func (c *Card) RenderText() string {
 
 	for _, elem := range c.Elements {
 		switch e := elem.(type) {
+		case CardPlainText:
+			sb.WriteString(e.Content)
+			sb.WriteString("\n\n")
 		case CardMarkdown:
 			sb.WriteString(e.Content)
 			sb.WriteString("\n\n")

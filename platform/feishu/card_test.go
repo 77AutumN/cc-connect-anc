@@ -1,12 +1,52 @@
 package feishu
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+func TestPlainReviewKeepsMarkupLiteralAndChecksFinalSerializedSize(t *testing.T) {
+	content := strings.Repeat("中文<at id=all> **[同意](fake)** `🧪`\n", 40)
+	card := core.NewCard().PlainText(content).ButtonsEqual(core.Btn("approve", "primary", "host-owned")).Build()
+	card.SharedUpdate = true
+	card.MaxBytes = len(renderCard(card, "session"))
+	p := &interactivePlatform{}
+	if err := p.ValidateCard(card, "session"); err != nil {
+		t.Fatal(err)
+	}
+	elements := renderCardMap(card, "session")["elements"].([]map[string]any)
+	if elements[0]["tag"] != "div" {
+		t.Fatal("review body is not wrapping text")
+	}
+	text := elements[0]["text"].(map[string]any)
+	if text["tag"] != "plain_text" || text["content"] != content {
+		t.Fatal("source changed or parsed")
+	}
+	if !strings.Contains(card.RenderText(), content) {
+		t.Fatal("fallback lost source")
+	}
+	card.MaxBytes--
+	if err := p.ValidateCard(card, "session"); err != core.ErrCardTooLarge {
+		t.Fatal("final JSON overhead was not counted")
+	}
+	callback := renderHostedActionResponse(core.TrustedCardActionResponse{Card: card}, "session", core.LangChinese)
+	raw, _ := json.Marshal(callback.Card)
+	if strings.Contains(string(raw), "host-owned") || !strings.Contains(string(raw), "拆分") {
+		t.Fatal("callback exposed oversize approval")
+	}
+	// No API client is installed; rejection must happen before any outbound PATCH.
+	if err := p.RefreshCardMessage(context.Background(), "card", "session", card); err != core.ErrCardTooLarge {
+		t.Fatal("oversize approval reached network")
+	}
+	card.MaxBytes = 0
+	if err := p.ValidateCard(card, "session"); err != nil {
+		t.Fatal("ordinary card behavior changed")
+	}
+}
 
 func decodeRenderedCard(t *testing.T, card *core.Card) map[string]any {
 	t.Helper()

@@ -77,6 +77,20 @@ func TestActionToolsHandlerSelectsExactlyOneFixedEnvironment(t *testing.T) {
 	}
 }
 
+func TestOversizeReviewIsRejectedBeforePlaceholderBindingOrButtons(t *testing.T) {
+	e, h, p, _ := actionToolFixture(t)
+	card := NewCard().PlainText(strings.Repeat("中文", 100)).Buttons(PrimaryBtn("approve", "host")).Build()
+	card.MaxBytes = 100
+	h.toolCard = &ActionHostResult{Kind: h.Kind(), Status: "pending", ApprovalID: "fixture", Card: card}
+	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", "test-session-token", `{"command":"knowledge_propose","input":{}}`)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "review_card_too_large_split_required") {
+		t.Fatalf("wrong result: %d %s", w.Code, w.Body.String())
+	}
+	if len(p.placeholders) != 0 || len(p.refreshes) != 0 || len(h.cardBindings) != 0 || len(h.executions) != 0 {
+		t.Fatal("oversize approval reached publication")
+	}
+}
+
 func TestActionToolsHandlerThreePeopleSixEnvironments(t *testing.T) {
 	var engines []*Engine
 	var states []*interactiveState

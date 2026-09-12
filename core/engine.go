@@ -11969,7 +11969,7 @@ func (e *Engine) renderCardForPlatformWorkspace(p Platform, card *Card, workspac
 	if card == nil {
 		return nil
 	}
-	out := &Card{SharedUpdate: card.SharedUpdate, Interaction: card.Interaction}
+	out := &Card{SharedUpdate: card.SharedUpdate, Interaction: card.Interaction, MaxBytes: card.MaxBytes}
 	if card.Header != nil {
 		h := *card.Header
 		out.Header = &h
