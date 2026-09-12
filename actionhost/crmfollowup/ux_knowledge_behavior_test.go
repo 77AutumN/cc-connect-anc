@@ -537,6 +537,38 @@ func knowledgeFixtureRequest(command string, input map[string]any) map[string]an
 	return map[string]any{"operation": "tool", "command": command, "input": input, "session_token": "synthetic-session"}
 }
 
+func TestKnowledgeCancelledStatusWithUnchangedPage(t *testing.T) {
+	_, host := knowledgeFixtureHost(t)
+	readInput := map[string]any{"node_token": "syntheticmethod", "subject": "team"}
+	before := host(knowledgeFixtureRequest("knowledge_read", readInput))
+	proposal := host(knowledgeFixtureRequest("knowledge_propose", map[string]any{
+		"title": "虚构初访方法", "subject": "team", "target": "syntheticmethod", "statements": []any{},
+		"notes": []any{map[string]any{"kind": "question", "text": "虚构验证中由谁核对改善结果？", "quote": "什么结果能证明改善有效",
+			"source": map[string]any{"node_token": "syntheticmethod"}}},
+	}))
+	if proposal["status"] != "pending" {
+		t.Fatal(proposal)
+	}
+	id := proposal["approval_id"]
+	if host(map[string]any{"operation": "bind", "approval_id": id})["status"] != "bound" ||
+		host(map[string]any{"operation": "claim", "approval_id": id, "decision": "cancel"})["status"] != "cancelled" {
+		t.Fatal("fixture cancellation failed")
+	}
+	for i := 0; i < 2; i++ {
+		result := host(knowledgeFixtureRequest("knowledge_status", map[string]any{"approval_id": id}))
+		if result["status"] != "ok" || result["proposal"].(map[string]any)["state"] != "cancelled" || result["proposal"].(map[string]any)["next_action"] != "none" {
+			t.Fatal("unchanged page was mistaken for pending approval", result)
+		}
+		if claim := host(map[string]any{"operation": "claim", "approval_id": id, "decision": "approve"}); claim["status"] != "cancelled" || claim["execute"] != false {
+			t.Fatal("duplicate approval reopened cancelled proposal", claim)
+		}
+	}
+	after := host(knowledgeFixtureRequest("knowledge_read", readInput))
+	if before["source"].(map[string]any)["text"] != after["source"].(map[string]any)["text"] {
+		t.Fatal("status lookup or cancelled approval changed page")
+	}
+}
+
 func TestKnowledgeCanaryFixtureSearchReadAndScope(t *testing.T) {
 	_, host := knowledgeFixtureHost(t)
 	call := func(command string, input map[string]any) map[string]any {

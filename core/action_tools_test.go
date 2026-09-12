@@ -53,6 +53,22 @@ func actionToolRequest(handler http.Handler, method, path, token, body string) *
 	return w
 }
 
+func TestKnowledgeStatusUsesAuthenticatedSessionWithoutPublishing(t *testing.T) {
+	e, h, p, _ := actionToolFixture(t)
+	h.toolResult = map[string]any{"status": "ok", "proposal": map[string]any{"state": "cancelled"}}
+	body := `{"command":"knowledge_status","input":{"approval_id":"fixture"}}`
+	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", "test-session-token", body)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"cancelled"`) || h.toolCommand != "knowledge_status" || h.toolPrincipal.UserID != "owner" {
+		t.Fatalf("status request lost host scope: %d %s", w.Code, w.Body.String())
+	}
+	if len(p.placeholders) != 0 || len(p.refreshes) != 0 || len(h.cardBindings) != 0 || len(h.executions) != 0 {
+		t.Fatal("read-only status created approval or execution")
+	}
+	if w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", "foreign-token", body); w.Code != 401 || h.toolCalls != 1 {
+		t.Fatal("foreign token reached status lookup")
+	}
+}
+
 func TestActionToolsHandlerSelectsExactlyOneFixedEnvironment(t *testing.T) {
 	first, ownerHost, _, _ := actionToolFixture(t)
 	second, partnerHost, _, partner := actionToolFixture(t)
