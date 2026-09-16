@@ -34,7 +34,11 @@ func (h *Host) HealthSnapshot(ctx context.Context) opsalerts.Snapshot {
 			if r.Destination != h.privateRoute(r.User) || h.senders[r.User] == nil {
 				add(opsalerts.Route, r.User, 0, 1)
 			} else if r.Status == "paused" {
-				add(opsalerts.Permission, r.User, 0, 1)
+				category := opsalerts.Permission
+				if r.PauseReason == "crm_plan_unverified" {
+					category = opsalerts.Delivery
+				}
+				add(category, r.User, 0, 1)
 			}
 		}
 		for _, b := range st.Batches {
@@ -77,6 +81,10 @@ func (h *Host) HealthSnapshot(ctx context.Context) opsalerts.Snapshot {
 		return failed
 	}
 	result := opsalerts.Snapshot{Complete: true}
+	h.crmFaults.Range(func(project, _ any) bool {
+		add(opsalerts.Storage, "crm-plan-sync:"+project.(string), 0, 1)
+		return true
+	})
 	for _, f := range groups {
 		result.Faults = append(result.Faults, *f)
 	}

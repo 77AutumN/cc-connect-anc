@@ -7,7 +7,7 @@ import (
 	"github.com/chenhg5/cc-connect/core"
 )
 
-var customerProfileFields = []string{"name", "contact", "phone", "email", "stage", "owner"}
+var customerProfileFields = []string{"name", "contact", "phone", "email", "stage", "owner", "next_action", "next_followup_at"}
 
 // Only business fields from the canonical helper result are displayable. Tokens,
 // record IDs and transport identity never become card labels or values.
@@ -58,7 +58,21 @@ func renderCustomerPreview(preview map[string]any, i18n *core.I18n) string {
 		sections = append(sections, i18n.T(core.MsgCRMFollowupDraftHeading)+"\n"+renderFields(draft, []string{"occurred_at", "channel", "content", "next_action", "next_followup_at"}, i18n))
 	}
 	sections = append(sections, i18n.Tf(core.MsgCRMProfileExpiryBlockFmt, displayField("expires_at", preview["expires_at"], i18n)))
+	if plan := renderPlanReminder(preview, i18n); plan != "" {
+		sections = append(sections, plan)
+	}
 	return strings.Join(sections, "\n\n")
+}
+
+func renderPlanReminder(preview map[string]any, i18n *core.I18n) string {
+	plan, ok := preview["plan_reminder"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if enabled, _ := plan["enabled"].(bool); !enabled {
+		return i18n.T(core.MsgCRMPlanSilent)
+	}
+	return i18n.Tf(core.MsgCRMPlanNotify, displayField("next_followup_at", plan["at"], i18n), display(plan["recipient"]))
 }
 
 func relatedParent(result map[string]any) map[string]any {

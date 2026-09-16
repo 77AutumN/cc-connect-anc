@@ -88,6 +88,53 @@ func TestActionHostPairRoutesToolsAndExactCardToTheirOwnHost(t *testing.T) {
 	}
 }
 
+func TestActionToolsLinkedReminderApprovalUsesCRMHostAndLegacyEmptyKind(t *testing.T) {
+	for _, variant := range []string{"crm", "legacy-empty", "unknown"} {
+		t.Run(variant, func(t *testing.T) {
+			e, crm, platform, state := actionToolFixture(t)
+			reminder := &thirdToolHost{}
+			kind := crm.Kind()
+			switch variant {
+			case "legacy-empty":
+				kind = ""
+			case "unknown":
+				kind = "unregistered.action"
+			}
+			reminder.toolResult = map[string]any{"status": "pending"}
+			reminder.toolCard = &ActionHostResult{Kind: kind, Status: "pending", ApprovalID: "plan-approval", ChangeID: "plan-change", Card: NewCard().Title("CRM plan review", "blue").Build()}
+			e.SetActionHost(CombineActionHosts(crm, reminder, []string{"reminder-update"}))
+			w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, `{"command":"reminder-update","input":{}}`)
+			if reminder.toolCalls != 1 || crm.toolCalls != 0 {
+				t.Fatal("linked edit did not enter reminder tool")
+			}
+			if variant == "unknown" {
+				if w.Code != 503 || len(crm.cardBindings)+len(reminder.cardBindings) != 0 {
+					t.Fatal("unknown approval domain was published")
+				}
+				return
+			}
+			selected, untouched := &crm.actionHostStub, &reminder.actionHostStub
+			if variant == "legacy-empty" {
+				selected, untouched = untouched, selected
+				kind = reminder.Kind()
+			}
+			if w.Code != 200 || len(selected.cardBindings) != 1 || len(untouched.cardBindings) != 0 {
+				t.Fatalf("wrong publication host: %d %s", w.Code, w.Body.String())
+			}
+			callback := TrustedCardAction{Kind: kind, ApprovalID: "plan-approval", Decision: ActionApprove, Principal: state.currentPrincipal, Language: LangEnglish}
+			callback.Principal.MessageID = "outgoing-approval-card"
+			response := e.handleTrustedCardAction(platform, callback)
+			if response.Complete == nil {
+				t.Fatal("approval callback lost original host")
+			}
+			response.Complete()
+			if len(selected.executions) != 1 || len(untouched.executions) != 0 {
+				t.Fatal("approval execution crossed domains")
+			}
+		})
+	}
+}
+
 func TestActionToolsSixEnvironmentsRejectReboundAndAmbiguousTokens(t *testing.T) {
 	var engines []*Engine
 	var hosts []*actionToolHostStub

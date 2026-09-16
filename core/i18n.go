@@ -787,6 +787,11 @@ const (
 	MsgReminderWeekdays         MsgKey = "reminder_weekdays"
 	MsgReminderStatuses         MsgKey = "reminder_statuses"
 	MsgReminderNumber           MsgKey = "ReminderNumber"
+	MsgCRMReminderContent       MsgKey = "crm_reminder_content"
+	MsgCRMPlanNotify            MsgKey = "crm_plan_notify"
+	MsgCRMPlanSilent            MsgKey = "crm_plan_silent"
+	MsgCRMPlanReceipt           MsgKey = "crm_plan_receipt"
+	MsgCRMPlanUnverified        MsgKey = "crm_plan_unverified"
 	MsgOpsAlertActive           MsgKey = "OpsAlertActive"
 	MsgOpsAlertRecovered        MsgKey = "OpsAlertRecovered"
 	MsgOpsAlertStorage          MsgKey = "OpsAlertStorage"
@@ -802,6 +807,11 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgCRMPlanUnverified:    {LangEnglish: "The linked plan could not be verified. Confirm the CRM plan again before arranging a reminder.", LangChinese: "关联计划无法核实，请重新确认 CRM 计划后再安排提醒。", LangTraditionalChinese: "關聯計畫無法核實，請重新確認 CRM 計畫後再安排提醒。", LangJapanese: "関連する計画を確認できません。CRM計画を再確認してからリマインダーを設定してください。", LangSpanish: "No se pudo verificar el plan asociado. Confirme de nuevo el plan CRM antes de programar un aviso."},
+	MsgCRMReminderContent:   {LangEnglish: "%s — %s", LangChinese: "%s：%s", LangTraditionalChinese: "%s：%s", LangJapanese: "%s：%s", LangSpanish: "%s — %s"},
+	MsgCRMPlanNotify:        {LangEnglish: "At %s, privately remind %s. Approval replaces this customer's previous CRM-linked notification, including another colleague's. Other personal reminders are unchanged.", LangChinese: "于 %s 私聊提醒 %s。本次批准将替换该客户旧计划的 CRM 关联通知，包括其他同事的旧通知；普通个人提醒不受影响。", LangTraditionalChinese: "於 %s 私聊提醒 %s。本次批准將替換該客戶舊計畫的 CRM 關聯通知，包括其他同事的舊通知；普通個人提醒不受影響。", LangJapanese: "%s に %s へ個別通知します。承認すると他の担当者分を含むこの顧客の以前のCRM通知を置き換えます。通常の個人リマインダーは変更しません。", LangSpanish: "A las %s, avisar en privado a %s. La aprobación reemplaza la notificación CRM anterior de este cliente, incluso la de otro compañero. Los recordatorios personales no cambian."},
+	MsgCRMPlanSilent:        {LangEnglish: "No notification for this plan. Approval replaces the previous CRM-linked notification for this customer, including another colleague's; other personal reminders are unchanged.", LangChinese: "本计划不发通知。本次批准将关闭该客户旧计划的 CRM 关联通知，包括其他同事的旧通知；普通个人提醒不受影响。", LangTraditionalChinese: "本計畫不發通知。本次批准將關閉該客戶舊計畫的 CRM 關聯通知，包括其他同事的舊通知；普通個人提醒不受影響。", LangJapanese: "この計画は通知しません。承認すると他の担当者分を含むこの顧客の以前のCRM通知を終了します。通常の個人リマインダーは変更しません。", LangSpanish: "Este plan no envía avisos. La aprobación cierra la notificación CRM anterior, incluso de otro compañero; los recordatorios personales no cambian."},
+	MsgCRMPlanReceipt:       {LangEnglish: "CRM plan verified. Linked notification changes are being synchronized; check your reminders for notification status. This receipt does not confirm delivery.", LangChinese: "CRM 计划已核验；关联通知仍需同步。通知状态以提醒清单为准，本回执不表示已送达。", LangTraditionalChinese: "CRM 計畫已核驗；關聯通知仍需同步。通知狀態以提醒清單為準，本回執不表示已送達。", LangJapanese: "CRM計画を確認しました。通知変更は同期が必要です。通知一覧で状態を確認してください。この結果は配信済みを意味しません。", LangSpanish: "Plan CRM verificado. Los avisos aún deben sincronizarse; consulte su lista. Este recibo no confirma la entrega."},
 	MsgReminderNumber:       {LangEnglish: "ID: %s", LangChinese: "编号：%s", LangTraditionalChinese: "編號：%s", LangJapanese: "番号：%s", LangSpanish: "ID: %s"},
 	MsgOpsAlertActive:       {LangEnglish: "Bot needs attention", LangChinese: "Bot 需要处理异常", LangTraditionalChinese: "Bot 需要處理異常", LangJapanese: "Botの確認が必要です", LangSpanish: "El bot necesita atención"},
 	MsgOpsAlertRecovered:    {LangEnglish: "Failure no longer observed; reconcile paused/in-flight records", LangChinese: "本项异常已不再出现；暂停或在途记录仍需核查", LangTraditionalChinese: "本項異常已不再出現；暫停或在途記錄仍需核查", LangJapanese: "障害は見られません。停止中・送信中の記録は要確認です", LangSpanish: "El fallo ya no se observa; revise registros pausados o en tránsito"},

@@ -9,11 +9,21 @@ writes, re-reads, and receipts. cc-connect does not contain a workflow engine.
 ## Selected path — real CRM rollout paused
 
 The general assistant keeps one ongoing Claude session. CRM is one bounded tool
-family: `customer` reads facts/history, `stage` prepares a canonical follow-up,
+family: `customers` lists filtered live pages, `customer` reads facts/history pages,
+`stage` prepares a canonical follow-up,
 `assignee` resolves a person, `stage-customer-create` and `stage-customer-update`
 prepare customer profile proposals, and `result` queries the stored actual state.
 A session bearer resolves to the Engine's live
 Principal; no model field supplies identity or authorizes a write.
+
+The daily-follow-up extension also stages independent next action/date changes
+through `stage-customer-update`, without fabricating communication history. The
+helper freezes the plan revision and private recipient before approval; only a
+verified receipt advances the protected plan/outbox transaction. Host-only
+`host-plan-events`, `host-plan-read` and `host-plan-ack` are never model tools.
+The opt-in reminder integration is documented in [reminders.md](reminders.md#crm-linked-plans-default-off).
+Its canonical contract and maintenance gate live in the companion CRM
+[plan runbook](https://github.com/77AutumN/myanc-crm/blob/main/ops/CRM-PLANS.md).
 
 Set host-only deployment option `MYANC_CRM_TOOLS=1` to explicitly opt in;
 otherwise the legacy path is unchanged. Invalid values, missing host credentials,

@@ -52,11 +52,21 @@ func (h *Host) queueList(st *state, r Route, items []*Reminder, lang core.Langua
 	lines := []string{}
 	for _, item := range items {
 		status := strings.Split(core.NewI18n(lang).T(core.MsgReminderStatuses), "|")[statusIndex(item.Status)]
+		if hint := crmPauseHint(item, lang); hint != "" {
+			status += "\n" + hint
+		}
 		lines = append(lines, fmt.Sprintf("%s\n%s · %s\n%s", item.Content, reminderDate(item.At, lang), status, core.NewI18n(lang).Tf(core.MsgReminderNumber, item.ID)))
 	}
 	for _, text := range pages(header, lines) {
 		h.addBatch(st, r.User, r.PrivateChat, nil, text)
 	}
+}
+
+func crmPauseHint(item *Reminder, lang core.Language) string {
+	if item.CRM != nil && item.Status == "paused" && item.PauseReason == "crm_plan_unverified" {
+		return core.NewI18n(lang).T(core.MsgCRMPlanUnverified)
+	}
+	return ""
 }
 
 func pages(header string, lines []string) []string {
@@ -99,6 +109,12 @@ func (h *Host) collectDue(st *state, lang core.Language) {
 	byUser := map[string][]*Reminder{}
 	for _, r := range st.Items {
 		if r.Status == "pending" && r.At <= h.now().Unix() {
+			if r.CRM != nil {
+				// Each CRM item needs a fresh external check; never freeze it into
+				// an ordinary reminder batch that a CRM outage could hold back.
+				h.addBatch(st, r.User, r.Destination, []string{r.ID}, core.NewI18n(lang).T(core.MsgReminderHeading)+"\n\n"+h.reminderLine(r, lang))
+				continue
+			}
 			byUser[r.User] = append(byUser[r.User], r)
 		}
 	}
@@ -142,16 +158,27 @@ func (h *Host) collectDue(st *state, lang core.Language) {
 // Tick claims one frozen batch. A lease covers process crashes, and the stable
 // UUID covers uncertain acceptance. Success means API accepted, not user read.
 func (h *Host) Tick(ctx context.Context, lang core.Language) error {
+	defer h.syncCRM(ctx, lang)
+	return h.tick(ctx, lang, 0)
+}
+
+// scope 0 serves either kind, 1 personal only, 2 CRM only. Production's single
+// ticker gives CRM one bounded in-flight task so CRM reads cannot stall personal
+// reminders. All lanes share the same existing claims, leases and store.
+func (h *Host) tick(ctx context.Context, lang core.Language, scope int) error {
 	if h.store == nil {
 		return ErrUnavailable
 	}
 	var claimed *Batch
 	err := h.store.change(ctx, func(st *state) error {
 		h.collectDue(st, lang)
-		claimed = h.claimBatch(st, lang)
+		claimed = h.claimBatchScope(st, lang, scope)
 		return nil
 	})
 	if err != nil || claimed == nil {
+		return err
+	}
+	if ready, err := h.checkClaimCRM(ctx, claimed); err != nil || !ready {
 		return err
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -161,17 +188,29 @@ func (h *Host) Tick(ctx context.Context, lang core.Language) error {
 }
 
 func (h *Host) claimBatch(st *state, lang core.Language) *Batch {
+	return h.claimBatchScope(st, lang, 0)
+}
+
+func (h *Host) claimBatchScope(st *state, lang core.Language, scope int) *Batch {
 	ordered := []*Batch{}
 	for _, b := range st.Batches {
 		ordered = append(ordered, b)
 	}
 	sort.Slice(ordered, func(i, j int) bool {
+		crm := func(b *Batch) bool { return len(b.Items) == 1 && st.Items[b.Items[0]].CRM != nil }
+		if crm(ordered[i]) != crm(ordered[j]) {
+			return !crm(ordered[i])
+		}
 		if ordered[i].Next == ordered[j].Next {
 			return ordered[i].ID < ordered[j].ID
 		}
 		return ordered[i].Next < ordered[j].Next
 	})
 	for _, b := range ordered {
+		crm := len(b.Items) == 1 && st.Items[b.Items[0]].CRM != nil
+		if (scope == 1 && crm) || (scope == 2 && !crm) {
+			continue
+		}
 		if (b.Status != "pending" && b.Status != "retry" && b.Status != "sending") || b.Next > h.now().Unix() || b.LeaseUntil > h.now().Unix() {
 			continue
 		}
@@ -181,7 +220,7 @@ func (h *Host) claimBatch(st *state, lang core.Language) *Batch {
 		}
 		active := []string{}
 		for _, id := range b.Items {
-			if st.Items[id] != nil && st.Items[id].Status != "cancelled" {
+			if st.Items[id] != nil && st.Items[id].Status != "cancelled" && st.Items[id].Status != "paused" {
 				active = append(active, id)
 			}
 		}
@@ -217,6 +256,10 @@ func (h *Host) claimBatch(st *state, lang core.Language) *Batch {
 		b.Attempts++
 		b.Status = "sending"
 		b.LeaseUntil = h.now().Add(time.Minute).Unix()
+		if crm {
+			// CRM adds one bounded 30-second read before the existing send budget.
+			b.LeaseUntil += 30
+		}
 		copy := *b
 		return &copy
 	}
@@ -279,24 +322,47 @@ func backoff(attempt int) time.Duration {
 
 // Run is tied to host lifecycle, not any interactive agent session.
 func (h *Host) Run(ctx context.Context, lang core.Language) {
+	ctx, cancel := context.WithCancel(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	crmDone := make(chan error, 1)
+	crmRunning := false
+	defer func() {
+		cancel()
+		if crmRunning {
+			<-crmDone
+		}
+	}()
+	failed := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		if ctx.Err() != nil {
+			return true
+		}
+		if errors.Is(err, ErrUnavailable) {
+			slog.Error("reminders disabled", "code", "storage_unavailable")
+			return true
+		}
+		slog.Warn("reminder delivery deferred", "code", "claim_interrupted")
+		return false
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case err := <-crmDone:
+			crmRunning = false
+			if failed(err) {
+				return
+			}
 		case <-ticker.C:
-			if err := h.Tick(ctx, lang); err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				if errors.Is(err, ErrUnavailable) {
-					slog.Error("reminders disabled", "code", "storage_unavailable")
-					return
-				}
-				// An interrupted receipt write or a competing process leaves a
-				// durable claim. Its lease/UUID permits recovery on a later tick.
-				slog.Warn("reminder delivery deferred", "code", "claim_interrupted")
+			if !crmRunning {
+				crmRunning = true
+				go func() { h.syncCRM(ctx, lang); crmDone <- h.tick(ctx, lang, 2) }()
+			}
+			if failed(h.tick(ctx, lang, 1)) {
+				return
 			}
 		}
 	}

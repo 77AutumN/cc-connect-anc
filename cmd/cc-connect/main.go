@@ -249,6 +249,8 @@ func main() {
 	}
 	reminderDBPath := os.Getenv("MYANC_REMINDER_DB")
 	_ = os.Unsetenv("MYANC_REMINDER_DB") // never inherited by model children
+	crmPlanReminders := os.Getenv("MYANC_CRM_PLAN_REMINDERS") == "1"
+	_ = os.Unsetenv("MYANC_CRM_PLAN_REMINDERS")
 	if len(os.Args) > 1 && os.Args[1] == "reminders-init" {
 		if len(os.Args) != 3 || reminders.Initialize(os.Args[2]) != nil {
 			slog.Error("reminder initialization refused")
@@ -1143,6 +1145,24 @@ func main() {
 				}
 			} else {
 				initializationFailed = false
+				if crmPlanReminders && store != nil {
+					reminderHost.EnableCRM(func(ctx context.Context, project, command string, input map[string]any) (map[string]any, error) {
+						host := crmActionHosts[project]
+						if host == nil {
+							return nil, errors.New("CRM plan host unavailable")
+						}
+						return host.PlanCall(ctx, command, input)
+					}, func(ctx context.Context, plan reminders.CRMPlan, changes map[string]any, principal core.ActionPrincipal, token string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
+						host := crmActionHosts[principal.Project]
+						if host == nil {
+							return nil, nil, errors.New("CRM plan host unavailable")
+						}
+						return host.StagePlanUpdate(ctx, plan.CustomerQuery, plan.Namespace, plan.CustomerID, plan.Revision, changes, principal, token, lang)
+					})
+					for _, host := range crmActionHosts {
+						host.ConfigurePlanBinding(reminderHost.PlanBinding)
+					}
+				}
 				if store != nil {
 					defer func() { _ = store.Close() }()
 				}
@@ -1634,6 +1654,9 @@ func main() {
 		}
 		if reminderDBPath != "" {
 			restartEnv = append(restartEnv, "MYANC_REMINDER_DB="+reminderDBPath)
+		}
+		if crmPlanReminders {
+			restartEnv = append(restartEnv, "MYANC_CRM_PLAN_REMINDERS=1")
 		}
 		if alertDBPath != "" {
 			restartEnv = append(restartEnv, "MYANC_OPS_ALERT_DB="+alertDBPath, "MYANC_OPS_ALERT_OWNER_PROJECT="+alertOwnerProject)
