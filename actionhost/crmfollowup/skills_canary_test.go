@@ -23,8 +23,11 @@ func installCanarySkills(source, workspace, client string) (map[string]string, s
 			path := filepath.Join(source, relative)
 			for current := path; ; current = filepath.Dir(current) {
 				info, err := os.Lstat(current)
-				if err != nil || info.Mode()&os.ModeSymlink != 0 {
-					return nil, "", fmt.Errorf("missing or linked skill source: %s", relative)
+				if err != nil {
+					return nil, "", fmt.Errorf("inspect skill source %s: %w", relative, err)
+				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					return nil, "", fmt.Errorf("linked skill source: %s", relative)
 				}
 				if current == source {
 					break
@@ -32,33 +35,36 @@ func installCanarySkills(source, workspace, client string) (map[string]string, s
 			}
 			body, err := os.ReadFile(path)
 			if err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("read skill source %s: %w", relative, err)
 			}
 			hashes[filepath.ToSlash(relative)] = fmt.Sprintf("%x", sha256.Sum256(body))
 			contract.Write(body) // Preflight checks only, never passed to Claude.
 			installed := strings.ReplaceAll(string(body), "/usr/local/bin/crm-tool", fmt.Sprintf("python3 %q", client))
 			target := filepath.Join(workspace, ".claude", "skills", relative)
 			if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("create skill directory for %s: %w", relative, err)
 			}
 			// The isolated runner uses umask 0077; make only instruction directories
 			// traversable. They remain supervisor-owned, files model-read-only.
 			for dir := filepath.Dir(target); dir != workspace; dir = filepath.Dir(dir) {
 				if err = os.Chmod(dir, 0755); err != nil {
-					return nil, "", err
+					return nil, "", fmt.Errorf("set skill directory access for %s: %w", relative, err)
 				}
 			}
 			file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0444)
 			if err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("create isolated skill %s: %w", relative, err)
 			}
 			_, writeErr := file.WriteString(installed)
 			closeErr := file.Close()
-			if writeErr != nil || closeErr != nil {
-				return nil, "", fmt.Errorf("cannot write isolated skill: %s", relative)
+			if writeErr != nil {
+				return nil, "", fmt.Errorf("write isolated skill %s: %w", relative, writeErr)
+			}
+			if closeErr != nil {
+				return nil, "", fmt.Errorf("close isolated skill %s: %w", relative, closeErr)
 			}
 			if err = os.Chmod(target, 0444); err != nil {
-				return nil, "", err
+				return nil, "", fmt.Errorf("set skill read-only mode for %s: %w", relative, err)
 			}
 			hashes["installed/"+filepath.ToSlash(relative)] = fmt.Sprintf("%x", sha256.Sum256([]byte(installed)))
 		}
