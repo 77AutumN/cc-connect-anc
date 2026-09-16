@@ -94,9 +94,10 @@ func TestActionToolsLinkedReminderApprovalUsesCRMHostAndLegacyEmptyKind(t *testi
 			e, crm, platform, state := actionToolFixture(t)
 			reminder := &thirdToolHost{}
 			kind := crm.Kind()
-			if variant == "legacy-empty" {
+			switch variant {
+			case "legacy-empty":
 				kind = ""
-			} else if variant == "unknown" {
+			case "unknown":
 				kind = "unregistered.action"
 			}
 			reminder.toolResult = map[string]any{"status": "pending"}
