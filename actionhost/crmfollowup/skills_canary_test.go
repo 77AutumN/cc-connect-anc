@@ -81,8 +81,9 @@ func (e *canarySkillEvidence) observe(event core.Event) {
 	if event.Type != core.EventToolResult || event.ToolSuccess == nil || !*event.ToolSuccess {
 		return
 	}
-	// Only record successful native tool results containing file-specific
-	// headings. Do not retain arbitrary output, paths, thoughts or credentials.
+	// Native Skill returns a launch acknowledgement and expands its body in a
+	// separate user message. Read returns the file heading instead. Count only
+	// successful results; an attempted invocation is not loading evidence.
 	markers := map[string]string{
 		"team-crm/SKILL.md":                  "# Team CRM",
 		"team-crm/references/tools.md":       "## Controlled CRM tools: CRM_HOST_TOOLS_V1",
@@ -95,7 +96,9 @@ func (e *canarySkillEvidence) observe(event core.Event) {
 		e.loads = map[string]int{}
 	}
 	for file, marker := range markers {
-		if strings.Contains(event.ToolResult, marker) {
+		skill, entry := strings.CutSuffix(file, "/SKILL.md")
+		launched := entry && strings.TrimSpace(event.ToolResult) == "Launching skill: "+skill
+		if launched || strings.Contains(event.ToolResult, marker) {
 			e.loads[file]++
 		}
 	}
@@ -168,5 +171,19 @@ func TestCanarySkillsUseFilesystemAndSuccessfulResults(t *testing.T) {
 	e.observe(core.Event{Type: core.EventToolResult, ToolResult: "1→# Team CRM", ToolSuccess: &yes})
 	if e.snapshot()["team-crm/SKILL.md"] != 1 {
 		t.Fatal("successful native read not counted")
+	}
+	for _, result := range []string{"Launching skill: team-reminders", "Launching skill: team-reminders-extra"} {
+		e.observe(core.Event{Type: core.EventToolResult, ToolResult: result, ToolSuccess: &no})
+	}
+	if e.snapshot()["team-reminders/SKILL.md"] != 0 {
+		t.Fatal("failed skill activation counted")
+	}
+	e.observe(core.Event{Type: core.EventToolResult, ToolResult: "Launching skill: team-reminders-extra", ToolSuccess: &yes})
+	if e.snapshot()["team-reminders/SKILL.md"] != 0 {
+		t.Fatal("different skill activation counted")
+	}
+	e.observe(core.Event{Type: core.EventToolResult, ToolResult: "Launching skill: team-reminders", ToolSuccess: &yes})
+	if e.snapshot()["team-reminders/SKILL.md"] != 1 || e.snapshot()["team-reminders/references/tools.md"] != 0 {
+		t.Fatal("native activation must count entrypoint only, not unread reference")
 	}
 }
