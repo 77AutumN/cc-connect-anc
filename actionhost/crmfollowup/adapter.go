@@ -50,6 +50,7 @@ type Adapter struct {
 	validateCommand bool
 	toolsEnabled    bool
 	run             commandRunner
+	planBinding     func(core.ActionPrincipal) map[string]any
 }
 
 // NewFromEnv captures the host-only secret and removes it from the daemon
@@ -651,6 +652,9 @@ func receiptCard(result map[string]any, lang core.Language) *core.Card {
 	if id := text(result["change_id"]); id != "" {
 		b.Divider().Note(i18n.Tf(core.MsgCRMOperationNoteFmt, id, status))
 	}
+	if text(result["plan_reminder_status"]) != "" {
+		b.Markdown(i18n.T(core.MsgCRMPlanReceipt))
+	}
 	return b.Build()
 }
 
@@ -797,6 +801,9 @@ func renderPreview(preview map[string]any, i18n *core.I18n) string {
 			expiryKey = core.MsgCRMPreviewRepairExpiryBlockFmt
 		}
 		sections = append(sections, i18n.Tf(expiryKey, displayField("expires_at", expiry, i18n)))
+	}
+	if plan := renderPlanReminder(preview, i18n); plan != "" {
+		sections = append(sections, plan)
 	}
 	return strings.Join(sections, "\n\n")
 }

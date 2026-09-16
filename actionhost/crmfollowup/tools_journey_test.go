@@ -362,7 +362,11 @@ func TestCUJ_CRMIPC1_CustomerApprovalAndContinuedDiscussion(t *testing.T) {
 		command := exec.CommandContext(ctx, python, "-B", fixture, subcommand)
 		command.Env = append(env, "MYANC_SPIKE_DIR="+scratch)
 		command.Stdin = bytes.NewReader(input)
-		return command.Output()
+		output, err := command.Output()
+		if failure, ok := err.(*exec.ExitError); ok {
+			t.Logf("offline fixture %s failed: stdout=%s stderr=%s", subcommand, output, failure.Stderr)
+		}
+		return output, err
 	}
 	p := &toolJourneyPlatform{cards: make(map[string]*core.Card)}
 	agent := &toolJourneyAgent{client: &http.Client{Timeout: 10 * time.Second}, steps: make(chan toolJourneyStep, 1), results: make(chan toolJourneyReply, 1), events: make(chan core.Event, 16)}

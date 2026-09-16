@@ -70,6 +70,7 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 		e.actionMu.RLock()
 		host := e.actionHost
 		e.actionMu.RUnlock()
+		rootHost := host
 		host = actionHostForCommand(host, command)
 		tools, ok := host.(ActionToolHost)
 		if !ok {
@@ -86,6 +87,14 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 		}
 		result, approval, err := tools.Tool(ctx, command, input, principal, token, e.i18n.CurrentLang())
 		if err == nil && approval != nil {
+			// A linked reminder edit stages a CRM approval through its existing host.
+			if approval.Kind != "" && approval.Kind != host.Kind() {
+				host = actionHostForKind(rootHost, approval.Kind)
+			}
+			if host == nil {
+				writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "blocked", "code": "approval_host_unavailable"})
+				return
+			}
 			err = e.publishHostedActionContext(ctx, host, *approval, principal, platform, replyCtx)
 		}
 		if err != nil || result == nil {
@@ -169,7 +178,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if command != "open" && command != "customer" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
+	if command != "open" && command != "customer" && command != "customers" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])

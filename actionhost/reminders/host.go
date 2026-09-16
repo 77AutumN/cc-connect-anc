@@ -10,6 +10,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -28,6 +30,11 @@ type Host struct {
 	senders          map[string]Sender
 	now              func() time.Time
 	sourceAuthorized func(project, user string) bool
+	crmCall          func(context.Context, string, string, map[string]any) (map[string]any, error)
+	crmStage         func(context.Context, CRMPlan, map[string]any, core.ActionPrincipal, string, core.Language) (map[string]any, *core.ActionHostResult, error)
+	crmProjects      []string
+	crmCursor        atomic.Uint64
+	crmFaults        sync.Map
 }
 
 func New(store *Store, routes []Route, senders map[string]Sender, sourceAuthorized func(project, user string) bool) (*Host, error) {
@@ -136,7 +143,7 @@ func decode(raw json.RawMessage) (input, error) {
 
 func blocked(code string) map[string]any { return map[string]any{"status": "blocked", "code": code} }
 
-func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p core.ActionPrincipal, _ string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
+func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p core.ActionPrincipal, token string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
 	r, ok := h.routes[p.Project]
 	if !ok || p.Platform != "feishu" || r.User != p.UserID || r.Chat != p.ChatID || p.MessageID == "" || !h.authorized(r.User) || !h.sourceAuthorized(p.Project, p.UserID) {
 		return blocked("invalid_identity"), nil, nil
@@ -150,6 +157,11 @@ func (h *Host) Tool(ctx context.Context, command string, raw json.RawMessage, p 
 	}
 	if h.store == nil {
 		return nil, nil, ErrUnavailable
+	}
+	if command == "reminder-update" {
+		if result, card, handled, err := h.updateCRM(ctx, r, in, p, token, lang); handled || err != nil {
+			return result, card, err
+		}
 	}
 	canonical, _ := json.Marshal(in)
 	digest := sha256.Sum256([]byte(p.Project + "\x00" + p.UserID + "\x00" + p.ChatID + "\x00" + p.MessageID + "\x00" + command + "\x00" + string(canonical)))
@@ -210,6 +222,12 @@ func changeReminder(st *state, r Route, command string, in input) map[string]any
 	item.Version++
 	if command == "reminder-cancel" {
 		item.Status = "cancelled"
+		if item.CRM != nil {
+			plan := st.Plans[item.CRM.key()]
+			if plan != nil && plan.Plan.Revision == item.CRM.Revision {
+				plan.Disabled = true
+			}
+		}
 		return map[string]any{"status": "cancelled", "id": item.ID, "version": item.Version, "may_be_in_flight": item.Batch != ""}
 	}
 	if in.At != nil {
@@ -259,7 +277,11 @@ func (h *Host) list(st *state, r Route, in input, lang core.Language) map[string
 	}
 	rows := []map[string]any{}
 	for _, item := range items {
-		rows = append(rows, visible(item))
+		row := visible(item)
+		if hint := crmPauseHint(item, lang); hint != "" {
+			row["message"] = hint
+		}
+		rows = append(rows, row)
 	}
 	result := map[string]any{"status": "ok", "reminders": rows, "reference_time": h.now().In(beijing).Format(time.RFC3339), "timezone": "Asia/Shanghai"}
 	if next != "" {
@@ -309,7 +331,16 @@ func validateInput(command string, in input, now time.Time) error {
 }
 
 func visible(r *Reminder) map[string]any {
-	return map[string]any{"id": r.ID, "content": r.Content, "at": time.Unix(r.At, 0).In(beijing).Format(time.RFC3339), "weekday": time.Unix(r.At, 0).In(beijing).Weekday().String(), "timezone": "Asia/Shanghai", "version": r.Version, "status": r.Status}
+	result := map[string]any{"id": r.ID, "content": r.Content, "at": time.Unix(r.At, 0).In(beijing).Format(time.RFC3339), "weekday": time.Unix(r.At, 0).In(beijing).Weekday().String(), "timezone": "Asia/Shanghai", "version": r.Version, "status": r.Status}
+	if r.CRM != nil {
+		result["source"] = "crm"
+		result["customer_query"] = r.CRM.CustomerQuery
+		result["changes_require_crm_approval"] = true
+		if r.Status == "paused" && r.PauseReason != "" {
+			result["pause_reason"] = r.PauseReason
+		}
+	}
+	return result
 }
 func scopedItems(st *state, r Route, all bool) []*Reminder {
 	items := []*Reminder{}

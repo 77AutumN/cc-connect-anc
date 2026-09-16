@@ -34,19 +34,22 @@ type state struct {
 	Items    map[string]*Reminder       `json:"items"`
 	Requests map[string]json.RawMessage `json:"requests"`
 	Batches  map[string]*Batch          `json:"batches"`
+	Plans    map[string]*CRMPlanState   `json:"crm_plans,omitempty"`
 }
 
 type Reminder struct {
-	ID          string `json:"id"`
-	User        string `json:"user"`
-	Chat        string `json:"chat"`
-	Destination string `json:"destination"`
-	Content     string `json:"content"`
-	At          int64  `json:"at"`
-	Version     int    `json:"version"`
-	Status      string `json:"status"`
-	Batch       string `json:"batch,omitempty"`
-	Receipt     string `json:"receipt,omitempty"`
+	ID          string   `json:"id"`
+	User        string   `json:"user"`
+	Chat        string   `json:"chat"`
+	Destination string   `json:"destination"`
+	Content     string   `json:"content"`
+	At          int64    `json:"at"`
+	Version     int      `json:"version"`
+	Status      string   `json:"status"`
+	Batch       string   `json:"batch,omitempty"`
+	Receipt     string   `json:"receipt,omitempty"`
+	CRM         *CRMPlan `json:"crm,omitempty"`
+	PauseReason string   `json:"pause_reason,omitempty"`
 }
 
 type Batch struct {
@@ -66,7 +69,7 @@ type Batch struct {
 }
 
 func emptyState() state {
-	return state{1, map[string]*Reminder{}, map[string]json.RawMessage{}, map[string]*Batch{}}
+	return state{Schema: 1, Items: map[string]*Reminder{}, Requests: map[string]json.RawMessage{}, Batches: map[string]*Batch{}}
 }
 
 // Initialize is an explicit host operation, never called by Open or recovery.
@@ -190,7 +193,7 @@ func (s *Store) storageError(ctx context.Context, err error) error {
 }
 
 func validState(st state) bool {
-	if st.Schema != 1 || st.Items == nil || st.Requests == nil || st.Batches == nil {
+	if (st.Schema != 1 && st.Schema != 2) || st.Items == nil || st.Requests == nil || st.Batches == nil || (st.Schema == 2 && st.Plans == nil) || (st.Schema == 1 && len(st.Plans) != 0) {
 		return false
 	}
 	for id, r := range st.Items {
@@ -205,6 +208,23 @@ func validState(st state) bool {
 		if r.Batch != "" && st.Batches[r.Batch] == nil {
 			return false
 		}
+		if r.CRM != nil && (st.Schema != 2 || !validCRMPlan(*r.CRM) || st.Plans[r.CRM.key()] == nil) {
+			return false
+		}
+		if r.PauseReason != "" && (r.CRM == nil || r.PauseReason != "crm_plan_unverified") {
+			return false
+		}
+	}
+	for key, plan := range st.Plans {
+		if plan == nil || !validCRMPlan(plan.Plan) || plan.Plan.key() != key || (plan.ReminderID != "" && st.Items[plan.ReminderID] == nil) {
+			return false
+		}
+		if plan.ReminderID != "" {
+			r := st.Items[plan.ReminderID]
+			if r.CRM == nil || *r.CRM != plan.Plan {
+				return false
+			}
+		}
 	}
 	for id, b := range st.Batches {
 		if b == nil || b.ID != id || b.User == "" || b.Destination == "" || b.Text == "" || b.UUID == "" || b.Attempts < 0 {
@@ -218,6 +238,9 @@ func validState(st state) bool {
 		for _, item := range b.Items {
 			r := st.Items[item]
 			if r == nil || r.User != b.User || r.Destination != b.Destination {
+				return false
+			}
+			if r.CRM != nil && len(b.Items) != 1 {
 				return false
 			}
 		}
