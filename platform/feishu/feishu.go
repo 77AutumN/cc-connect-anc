@@ -111,6 +111,8 @@ type replyContext struct {
 	messageID       string
 	chatID          string
 	sessionKey      string
+	rootID          string // Actual inbound topic location, independent of session isolation.
+	threadID        string
 	bootstrapThread bool
 }
 
@@ -1690,7 +1692,7 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	mentions := msg.Mentions
 	parentID := stringValue(msg.ParentId)
 
-	rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey}
+	rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey, rootID: stringValue(msg.RootId), threadID: stringValue(msg.ThreadId)}
 	slog.Debug(p.tag()+": routed inbound message",
 		"message_id", messageID,
 		"session_key", sessionKey,
@@ -3170,46 +3172,64 @@ func (p *Platform) SendFile(ctx context.Context, rctx any, file core.FileAttachm
 	if !ok {
 		return fmt.Errorf("%s: SendFile: invalid reply context type %T", p.tag(), rctx)
 	}
+	msgType, fileContent, err := p.uploadFile(ctx, file, true)
+	if err != nil {
+		return err
+	}
+	return p.sendMediaMessage(ctx, rc, msgType, fileContent)
+}
 
+// uploadFile keeps the existing upload protocol shared by legacy and receipted
+// sends. Controlled delivery makes one attempt; the host owns recovery.
+func (p *Platform) uploadFile(ctx context.Context, file core.FileAttachment, retry bool) (string, string, error) {
 	fileName := file.FileName
 	if fileName == "" {
 		fileName = "attachment"
 	}
 	fileType := detectFeishuFileType(file.MimeType, fileName)
 	var uploadResp *larkim.CreateFileResp
-	if err := p.withTransientRetry(ctx, "upload file", func() error {
-		return p.withFreshTenantAccessTokenRetry(ctx, "upload file", func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
-			req := larkim.NewCreateFileReqBuilder().
-				Body(larkim.NewCreateFileReqBodyBuilder().
-					FileType(fileType).
-					FileName(fileName).
-					File(bytes.NewReader(file.Data)).
-					Build()).
-				Build()
-			var err error
-			uploadResp, err = client.Im.File.Create(ctx, req, options...)
-			if err != nil {
-				return fmt.Errorf("%s: upload file: %w", p.tag(), err)
-			}
-			if !uploadResp.Success() {
-				return fmt.Errorf("%s: upload file code=%d msg=%s", p.tag(), uploadResp.Code, uploadResp.Msg)
-			}
-			return nil
-		})
-	}); err != nil {
-		return err
+	upload := func(client *lark.Client, options ...larkcore.RequestOptionFunc) error {
+		req := larkim.NewCreateFileReqBuilder().
+			Body(larkim.NewCreateFileReqBodyBuilder().
+				FileType(fileType).
+				FileName(fileName).
+				File(bytes.NewReader(file.Data)).
+				Build()).
+			Build()
+		var err error
+		uploadResp, err = client.Im.File.Create(ctx, req, options...)
+		if err != nil {
+			return fmt.Errorf("%s: upload file: %w", p.tag(), err)
+		}
+		if uploadResp == nil {
+			return fmt.Errorf("%s: upload file: missing response", p.tag())
+		}
+		if !uploadResp.Success() {
+			return fmt.Errorf("%s: upload file code=%d msg=%s", p.tag(), uploadResp.Code, uploadResp.Msg)
+		}
+		return nil
 	}
-	if uploadResp.Data == nil || uploadResp.Data.FileKey == nil {
-		return fmt.Errorf("%s: upload file: no file_key returned", p.tag())
+	var err error
+	if retry {
+		err = p.withTransientRetry(ctx, "upload file", func() error {
+			return p.withFreshTenantAccessTokenRetry(ctx, "upload file", upload)
+		})
+	} else {
+		err = upload(p.client)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if uploadResp.Data == nil || uploadResp.Data.FileKey == nil || *uploadResp.Data.FileKey == "" {
+		return "", "", fmt.Errorf("%s: upload file: no file_key returned", p.tag())
 	}
 
 	msgType := detectFeishuFileMessageType(fileType)
 	fileContent, err := buildFeishuFileMessageContent(msgType, *uploadResp.Data.FileKey)
 	if err != nil {
-		return fmt.Errorf("%s: build file message: %w", p.tag(), err)
+		return "", "", fmt.Errorf("%s: build file message: %w", p.tag(), err)
 	}
-
-	return p.sendMediaMessage(ctx, rc, msgType, fileContent)
+	return msgType, fileContent, nil
 }
 
 func (p *Platform) sendMediaMessage(ctx context.Context, rc replyContext, msgType, content string) error {

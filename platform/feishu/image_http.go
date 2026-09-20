@@ -33,7 +33,13 @@ type boundedImageBody struct {
 }
 
 func (c imageBoundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	resp, err := c.client.Do(req)
+	client := c.client
+	if controlled, _ := req.Context().Value(fileDeliveryRequestKey{}).(bool); controlled {
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &copy
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
