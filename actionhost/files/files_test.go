@@ -507,7 +507,9 @@ func TestInputBatchFailsBeforeSavingAnyPart(t *testing.T) {
 	b := f.binding
 	b.Principal.MessageID = "message-new"
 	b.Inputs = []core.FileAttachment{{FileName: "good.docx", Data: packageBytes(t, documentParts("docx"))}, {FileName: "bad.xlsx", Data: []byte("invalid")}}
-	if _, err := f.host.Bind(context.Background(), b); !errors.Is(err, ErrInvalid) {
+	_, err := f.host.Bind(context.Background(), b)
+	var inputErr *core.FileInputError
+	if !errors.As(err, &inputErr) || inputErr.Key != core.MsgFileInputFormatUnsupported {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(filepath.Join(b.WorkRoot, "inputs"))
