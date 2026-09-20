@@ -135,6 +135,11 @@ jobs:
       - name: Run tests
         run: go test ./... -v -race
 
+      - name: Verify file handoff with different ordinary identities
+        run: |
+          go test -c ./actionhost/files -o "$RUNNER_TEMP/file-handoff.test"
+          sudo -n --preserve-env=GITHUB_ACTIONS python3 -B ops/file_handoff_fixture.py --test-binary "$RUNNER_TEMP/file-handoff.test"
+
       - name: Run tests with coverage
         run: go test ./... -coverprofile=coverage.out -covermode=atomic
 
