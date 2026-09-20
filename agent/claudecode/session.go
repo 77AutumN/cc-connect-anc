@@ -958,6 +958,9 @@ func (cs *claudeSession) Send(prompt string, messageID string, images []core.Ima
 	if !cs.alive.Load() {
 		return fmt.Errorf("session process is not running")
 	}
+	if err := core.CheckFileBatch(files); err != nil {
+		return err
+	}
 	prepared, err := prepareImages(images)
 	if err != nil {
 		return err
@@ -1015,7 +1018,22 @@ func (cs *claudeSession) Send(prompt string, messageID string, images []core.Ima
 	}
 
 	// Save files to disk so Claude Code can read them
-	filePaths := core.SaveFilesToDisk(cs.workDir, messageID, files)
+	strictFiles := false
+	for _, file := range files {
+		strictFiles = strictFiles || file.RequireSave
+	}
+	var filePaths []string
+	if strictFiles {
+		filePaths, err = core.SaveFilesToDiskChecked(cs.workDir, messageID, files)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			return err
+		}
+	} else {
+		filePaths = core.SaveFilesToDisk(cs.workDir, messageID, files)
+	}
 
 	// Build text part: user prompt + file path references
 	textPart := prompt

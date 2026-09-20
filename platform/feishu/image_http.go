@@ -37,6 +37,20 @@ func (c imageBoundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	// File limits are opt-in and host-owned. Unmarked legacy file requests
+	// retain their existing behavior; controlled requests are bounded before
+	// the SDK buffers the body, including chunked responses.
+	if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/open-apis/im/v1/messages/") && strings.Contains(req.URL.Path, "/resources/") && req.URL.Query().Get("type") == "file" {
+		if limit, ok := req.Context().Value(fileDownloadLimitKey{}).(int64); ok {
+			if limit <= 0 || limit > core.DefaultFileInputLimit || resp.ContentLength > limit {
+				if err := resp.Body.Close(); err != nil {
+					slog.Warn("feishu: rejected file response close failed")
+				}
+				return nil, core.NewFileInputError(core.MsgFileInputTooLarge)
+			}
+			resp.Body = boundedImageBody{Reader: io.LimitReader(resp.Body, limit+1), Closer: resp.Body}
+		}
+	}
 	if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/open-apis/im/v1/messages/") && strings.Contains(req.URL.Path, "/resources/") && req.URL.Query().Get("type") == "image" {
 		limit := core.MaxImageBytes
 		if remaining, ok := req.Context().Value(imageDownloadLimitKey{}).(int); ok {

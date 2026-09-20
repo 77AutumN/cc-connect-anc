@@ -2856,6 +2856,11 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(err.(*ImageInputError).Key))
 		return
 	}
+	if err := CheckFileBatch(msg.Files); err != nil {
+		message, _ := FileErrorMessage(err, e.i18n)
+		e.reply(p, msg.ReplyCtx, message)
+		return
+	}
 
 	slog.Info("message received",
 		"platform", msg.Platform, "msg_id", msg.MessageID,
@@ -5041,6 +5046,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				p := state.platform
 				state.mu.Unlock()
 				if message, imageFailure := ImageErrorMessage(err, e.i18n); imageFailure {
+					e.send(p, replyCtx, message)
+				} else if message, fileFailure := FileErrorMessage(err, e.i18n); fileFailure {
 					e.send(p, replyCtx, message)
 				} else {
 					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))

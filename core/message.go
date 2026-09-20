@@ -109,6 +109,10 @@ type FileAttachment struct {
 	MimeType string // e.g. "application/pdf", "text/plain"
 	Data     []byte // raw file bytes
 	FileName string // original filename
+	// RequireSave is set only by an opted-in host transport. A failed file
+	// must then reject the whole turn rather than leave a text-only prompt.
+	RequireSave  bool
+	ReceiveError MsgKey
 }
 
 // SaveFilesToDisk saves file attachments to disk and returns the list of
