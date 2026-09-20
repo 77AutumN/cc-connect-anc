@@ -370,6 +370,10 @@ type LocationAttachment struct {
 
 // Message represents a unified incoming message from any platform.
 type Message struct {
+	// Set only by an opted-in, authenticated file transport.
+	ParentMessageID    string
+	ControlledFileWork bool
+
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string
 	MessageID    string // platform message ID for tracing

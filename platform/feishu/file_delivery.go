@@ -41,7 +41,7 @@ func (p *Platform) FileReplyRoute(replyCtx any) (json.RawMessage, error) {
 	if !ok {
 		return nil, core.ErrFileNotSubmitted
 	}
-	inThread := rc.rootID != "" || rc.threadID != ""
+	inThread := rc.threadID != ""
 	route := fileReplyRoute{
 		Version: 1, Platform: p.Name(), AppID: p.appID, SenderID: p.allowFrom,
 		ChatID: rc.chatID, SessionKey: rc.sessionKey, MessageID: rc.messageID,
@@ -74,7 +74,7 @@ func (p *Platform) validFileReplyRoute(r fileReplyRoute) bool {
 			return false
 		}
 	}
-	inThread := r.RootID != "" || r.ThreadID != ""
+	inThread := r.ThreadID != ""
 	return r.ReplyInThread == inThread && (!inThread || r.Reply)
 }
 
@@ -83,7 +83,7 @@ func fileRouteID(value string, max int) bool {
 		return false
 	}
 	for _, c := range value {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+		if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", c) {
 			return false
 		}
 	}

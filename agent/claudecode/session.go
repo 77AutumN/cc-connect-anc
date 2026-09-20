@@ -292,7 +292,11 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	// shared file is safe under concurrent spawns.
 	var promptFilePath string
 	var promptFileIsShared bool
-	if appended := buildAppendSystemPrompt(core.AgentSystemPrompt(), platformPrompt, appendSystemPrompt); appended != "" {
+	if fileWorkSession(extraEnv) {
+		// Linux file-work namespaces cannot read a shared host prompt file.
+		// Keep the restricted prompt small and pass it as one literal argument.
+		innerArgs = append(innerArgs, "--append-system-prompt", buildAppendSystemPrompt(fileWorkPrompt, platformPrompt, appendSystemPrompt))
+	} else if appended := buildAppendSystemPrompt(core.AgentSystemPrompt(), platformPrompt, appendSystemPrompt); appended != "" {
 		if platformPrompt == "" && appendSystemPrompt == "" {
 			path, err := ensureSharedSystemPromptFile(ccDataDir, appended)
 			if err != nil {

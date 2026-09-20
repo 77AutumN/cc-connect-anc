@@ -52,9 +52,9 @@ func fileDeliveryFixture(t *testing.T, outcome string) (*Platform, *fileDelivery
 				w.WriteHeader(400)
 				return
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			if r.MultipartForm != nil {
-				defer r.MultipartForm.RemoveAll()
+				defer func() { _ = r.MultipartForm.RemoveAll() }()
 			}
 			data, err := io.ReadAll(file)
 			if err != nil {
@@ -125,13 +125,16 @@ func fileDeliverySource() replyContext {
 }
 
 func TestFileDeliveryPinsOriginalRouteUUIDAndSnapshot(t *testing.T) {
-	for _, mode := range []string{"reply", "create", "topic"} {
+	for _, mode := range []string{"reply", "create", "quote", "topic"} {
 		t.Run(mode, func(t *testing.T) {
 			p, observed := fileDeliveryFixture(t, "success")
 			source := fileDeliverySource()
 			p.noReplyToTrigger = mode != "reply"
 			if mode == "topic" {
 				source.rootID, source.threadID = "original-root", "original-thread"
+			}
+			if mode == "quote" {
+				source.rootID = "original-root"
 			}
 			route, err := p.FileReplyRoute(source)
 			if err != nil {
@@ -151,7 +154,7 @@ func TestFileDeliveryPinsOriginalRouteUUIDAndSnapshot(t *testing.T) {
 			}
 			body := observed.bodies[0]
 			wantPath := "/open-apis/im/v1/messages/origin-message/reply"
-			if mode == "create" {
+			if mode == "create" || mode == "quote" {
 				wantPath = "/open-apis/im/v1/messages"
 				if body.ReceiveID != "chat-fixture" {
 					t.Fatal("create destination changed")
@@ -169,7 +172,7 @@ func TestFileDeliveryUnknownNeverRetriesOrFallsBack(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			p, observed := fileDeliveryFixture(t, outcome)
 			source := fileDeliverySource()
-			source.rootID = "original-topic"
+			source.rootID, source.threadID = "original-root", "original-topic"
 			route, err := p.FileReplyRoute(source)
 			if err != nil {
 				t.Fatal(err)
@@ -209,7 +212,7 @@ func TestFileDeliveryRejectsInvalidAndReboundRoutesBeforeUpload(t *testing.T) {
 		strings.Replace(string(route), `"version":1`, `"version":2`, 1),
 		strings.Replace(string(route), `"sender_id":"sender-fixture"`, `"sender_id":"another-sender"`, 1),
 		strings.Replace(string(route), `"chat_id":"chat-fixture"`, `"chat_id":"another-chat"`, 1),
-		strings.Replace(string(route), `"root_id":""`, `"root_id":"topic-without-thread-flag"`, 1),
+		strings.Replace(string(route), `"thread_id":""`, `"thread_id":"topic-without-thread-flag"`, 1),
 	} {
 		if _, err := p.SendFileWithReceipt(context.Background(), json.RawMessage(invalid), core.FileAttachment{FileName: "sample.xlsx", Data: []byte("synthetic")}, "delivery"); !errors.Is(err, core.ErrFileNotSubmitted) {
 			t.Fatal("invalid route reached upload")

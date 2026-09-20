@@ -671,6 +671,8 @@ const (
 	MsgFileInputTooLarge                  MsgKey = "file_input_too_large"
 	MsgFileInputUnavailable               MsgKey = "file_input_unavailable"
 	MsgFileInputSaveFailed                MsgKey = "file_input_save_failed"
+	MsgFileWorkUnavailable                MsgKey = "file_work_unavailable"
+	MsgFileWorkAssociationRequired        MsgKey = "file_work_association_required"
 	MsgImageLimit                         MsgKey = "image_input_limit"
 	MsgImageInvalid                       MsgKey = "image_input_invalid"
 	MsgImageDimensions                    MsgKey = "image_input_dimensions"
@@ -4476,6 +4478,12 @@ var messages = map[MsgKey]map[Language]string{
 	},
 	MsgFileInputTooLarge: {
 		LangEnglish: "The files exceed the intake limit. Nothing was submitted; send fewer or smaller files.", LangChinese: "文件超过接收上限，本批内容未提交。请减少文件数量或缩小文件后重发。", LangTraditionalChinese: "檔案超過接收上限，本批內容未提交。請減少檔案數量或縮小檔案後重傳。", LangJapanese: "ファイルが受付上限を超えています。一式は未送信です。数かサイズを減らして再送してください。", LangSpanish: "Los archivos superan el límite. No se envió el lote; reduzca su número o tamaño y reenvíelo.",
+	},
+	MsgFileWorkUnavailable: {
+		LangEnglish: "Controlled file processing is unavailable for this request. Nothing was submitted.", LangChinese: "此请求的受控文件处理暂不可用，未提交模型处理。", LangTraditionalChinese: "此請求的受控檔案處理暫不可用，未提交模型處理。", LangJapanese: "このリクエストの制限付きファイル処理は利用できません。未送信です。", LangSpanish: "El procesamiento controlado de archivos no está disponible para esta solicitud. No se envió nada.",
+	},
+	MsgFileWorkAssociationRequired: {
+		LangEnglish: "This reply cannot be linked to a saved work. Reply to its original request or delivered file, or resend the materials as a new request.", LangChinese: "无法定位这次回复所属的工作。请回复原请求或已交付文件；也可重新发送材料，发起新工作。", LangTraditionalChinese: "無法定位這次回覆所屬的工作。請回覆原請求或已交付檔案；也可重新傳送材料，發起新工作。", LangJapanese: "返信に対応する作業を確認できません。元の依頼か納品ファイルに返信するか、資料を新しい依頼として再送してください。", LangSpanish: "No se puede vincular esta respuesta a un trabajo guardado. Responda a la solicitud original o al archivo entregado, o reenvíe los materiales como una nueva solicitud.",
 	},
 	MsgFileInputUnavailable: {
 		LangEnglish: "A file could not be received completely. Nothing was submitted; resend the complete batch.", LangChinese: "文件未完整接收，本批内容未提交。请整批重发。", LangTraditionalChinese: "檔案未完整接收，本批內容未提交。請整批重傳。", LangJapanese: "ファイルを完全に受信できませんでした。一式は未送信です。全体を再送してください。", LangSpanish: "No se recibió un archivo completo. No se envió el lote; reenvíelo completo.",

@@ -67,6 +67,10 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			writeActionToolResult(w, http.StatusBadRequest, map[string]any{"status": "blocked", "code": "invalid_input"})
 			return
 		}
+		if isFileWorkCommand(command) {
+			e.serveFileWorkTool(w, r, token, principal, command, input)
+			return
+		}
 		e.actionMu.RLock()
 		host := e.actionHost
 		e.actionMu.RUnlock()
@@ -178,7 +182,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if command != "open" && command != "customer" && command != "customers" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
+	if !isFileWorkCommand(command) && command != "open" && command != "customer" && command != "customers" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])

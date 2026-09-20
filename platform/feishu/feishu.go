@@ -108,12 +108,15 @@ func init() {
 }
 
 type replyContext struct {
-	messageID       string
-	chatID          string
-	sessionKey      string
-	rootID          string // Actual inbound topic location, independent of session isolation.
-	threadID        string
-	bootstrapThread bool
+	messageID            string
+	chatID               string
+	sessionKey           string
+	rootID               string // Original reply root; only threadID identifies a topic.
+	threadID             string
+	bootstrapThread      bool
+	parentID             string
+	controlledFileWork   bool
+	fileParentAuthorized bool
 }
 
 type Platform struct {
@@ -130,6 +133,8 @@ type Platform struct {
 	allowFrom                  string
 	allowChat                  string
 	strictRoutes               bool // Set by the host for fixed multi-project routing.
+	fileWorkEnabled            bool // Host opt-in, protected by mu.
+	fileReplyAuthorized        func(core.Message, string) bool
 	groupOnly                  bool
 	groupReplyAll              bool
 	respondToAtEveryoneAndHere bool
@@ -1638,12 +1643,26 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	// Pre-compute sessionKey so the @bot filter below can consult the active
 	// thread set; sessionKey is also used downstream for dispatch.
 	sessionKey := p.makeSessionKey(msg, chatID, userID)
-	if p.strictRoutes && chatType == "group" &&
+	parentID := stringValue(msg.ParentId)
+	p.mu.RLock()
+	controlledFiles, authorizeFileReply := p.fileWorkEnabled, p.fileReplyAuthorized
+	p.mu.RUnlock()
+	knownFileParent := false
+	if controlledFiles && parentID != "" && authorizeFileReply != nil {
+		knownFileParent = authorizeFileReply(core.Message{
+			Platform: p.Name(), SessionKey: sessionKey, ChannelID: chatID,
+			UserID: userID, MessageID: messageID, ParentMessageID: parentID,
+			ControlledFileWork: true,
+		}, parentID)
+	}
+	fileContinuation := controlledFiles && knownFileParent
+	isGroup := chatType == "group" || (controlledFiles && chatType == "topic_group")
+	if p.strictRoutes && isGroup && !fileContinuation &&
 		(p.getBotOpenID() == "" || !isBotMentioned(msg.Mentions, p.getBotOpenID())) {
 		return nil
 	}
 
-	if chatType == "group" && !p.groupReplyAll && p.getBotOpenID() != "" {
+	if isGroup && !fileContinuation && !p.groupReplyAll && p.getBotOpenID() != "" {
 		if !isBotMentioned(msg.Mentions, p.getBotOpenID()) {
 			switch {
 			// Feishu @all sends {"text":"@_all"} with 0 mentions.
@@ -1670,16 +1689,16 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		return nil
 	}
 
-	if chatType == "group" && !core.AllowList(p.allowChat, chatID) {
+	if isGroup && !core.AllowList(p.allowChat, chatID) {
 		slog.Debug(p.tag()+": message from unauthorized chat", "chat_id", chatID)
 		return nil
 	}
-	if chatType != "group" && p.groupOnly {
+	if !isGroup && p.groupOnly {
 		slog.Debug(p.tag()+": p2p message skipped (group_only=true)", "chat_type", chatType)
 		return nil
 	}
 
-	if msg.Content == nil && msgType != "merge_forward" {
+	if msg.Content == nil && msgType != "merge_forward" && !controlledFiles {
 		slog.Debug(p.tag()+": message content is nil", "message_id", messageID, "type", msgType)
 		return nil
 	}
@@ -1690,9 +1709,12 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		content = *msg.Content
 	}
 	mentions := msg.Mentions
-	parentID := stringValue(msg.ParentId)
 
-	rctx := replyContext{messageID: messageID, chatID: chatID, sessionKey: sessionKey, rootID: stringValue(msg.RootId), threadID: stringValue(msg.ThreadId)}
+	rctx := replyContext{
+		messageID: messageID, chatID: chatID, sessionKey: sessionKey,
+		rootID: stringValue(msg.RootId), threadID: stringValue(msg.ThreadId), parentID: parentID,
+		controlledFileWork: controlledFiles, fileParentAuthorized: knownFileParent,
+	}
 	slog.Debug(p.tag()+": routed inbound message",
 		"message_id", messageID,
 		"session_key", sessionKey,
@@ -1712,7 +1734,7 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	// blocked by IO-heavy operations (image/audio download, handler HTTP calls).
 	// The dedup and old-message checks above remain synchronous to guarantee
 	// correctness before spawning the goroutine.
-	if msgType == "image" && parentID == "" {
+	if msgType == "image" && parentID == "" && !controlledFiles {
 		var body struct {
 			ImageKey string `json:"image_key"`
 		}
@@ -1749,6 +1771,15 @@ func (p *Platform) dispatchMessage(ctx context.Context, msgType, content string,
 func (p *Platform) dispatchMessageContent(ctx context.Context, msgType, content string, mentions []*larkim.MentionEvent, messageID, sessionKey, userID, chatID string, rctx replyContext, parentID string, createTimeMs int64) {
 	if p.isMessageRecalled(messageID) {
 		slog.Debug(p.tag()+": recalled message ignored in async dispatch", "message_id", messageID)
+		return
+	}
+	if rctx.controlledFileWork {
+		p.dispatchFileWork(ctx, msgType, content, mentions, &core.Message{
+			Platform: p.Name(), SessionKey: sessionKey, ChannelID: chatID,
+			UserID: userID, MessageID: messageID, ReplyCtx: rctx,
+			ParentMessageID: rctx.parentID, ControlledFileWork: true,
+			UserMessageTimeMs: createTimeMs,
+		}, rctx.fileParentAuthorized)
 		return
 	}
 
