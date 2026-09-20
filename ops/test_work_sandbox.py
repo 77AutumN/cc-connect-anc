@@ -2,6 +2,7 @@
 """Synthetic-only boundary tests; never execute a model or external request."""
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +25,38 @@ LAUNCHER = Path(__file__).with_name("work_sandbox.py").resolve()
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_mount_source_is_reopened_and_identity_checked_after_unshare(self):
+        original = SimpleNamespace(st_dev=7, st_ino=11)
+        with patch.object(work_sandbox.os, "readlink", return_value="/fixture/source"), \
+                patch.object(work_sandbox, "pin", return_value=42), \
+                patch.object(work_sandbox.os, "fstat", return_value=original):
+            self.assertEqual(work_sandbox.namespace_source(21), 42)
+        # Reusing the pathname must not authorize a different work or socket.
+        replaced = SimpleNamespace(st_dev=7, st_ino=12)
+        with patch.object(work_sandbox.os, "readlink", return_value="/fixture/source"), \
+                patch.object(work_sandbox, "pin", return_value=42), \
+                patch.object(work_sandbox.os, "fstat", side_effect=[original, replaced]), \
+                patch.object(work_sandbox.os, "close") as close:
+            with self.assertRaisesRegex(work_sandbox.Refused, "source identity changed"):
+                work_sandbox.namespace_source(21)
+            close.assert_called_once_with(42)
+
+    def test_bind_policy_preserves_inherited_mount_restrictions(self):
+        # Linux statvfs reports NOSUID, NODEV, NOEXEC and RELATIME here. A
+        # remount that clears locked NOEXEC would be rejected in a userns.
+        inherited = SimpleNamespace(f_flag=2 | 4 | 8 | 4096)
+        with patch.object(work_sandbox.os, "statvfs", return_value=inherited, create=True):
+            flags = work_sandbox.bind_policy("/fixture/mount", readonly=True, device=False)
+        self.assertEqual(flags & (1 | 2 | 4 | 8 | (1 << 21)), 1 | 2 | 4 | 8 | (1 << 21))
+
+    def test_mount_failure_reports_stage_and_errno_without_host_paths(self):
+        libc = SimpleNamespace(mount=lambda *_args: -1)
+        with patch.object(work_sandbox.ctypes, "CDLL", return_value=libc), \
+                patch.object(work_sandbox.ctypes, "get_errno", return_value=errno.EINVAL):
+            with self.assertRaises(work_sandbox.Refused) as caught:
+                work_sandbox.mount("/private-source", "/private-destination", phase="bind-source")
+        self.assertEqual(str(caught.exception), "namespace mount unavailable (bind-source, EINVAL)")
+
     def test_unsupported_platform_never_executes_command(self):
         args = argparse.Namespace(config="unused", work_root="unused", command=["unused"])
         with patch.object(work_sandbox.sys, "platform", "win32"), \

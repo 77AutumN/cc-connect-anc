@@ -7,6 +7,7 @@ socket survive pivot_root. Host configuration is consumed before isolation.
 
 import argparse
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -149,12 +150,44 @@ def prepare(config_path, work_root, command, fds):
             "parent_ns": {name: os.readlink("/proc/self/ns/" + name) for name in NAMESPACES}}
 
 
-def mount(source, target, filesystem=None, flags=0, data=None):
+def namespace_source(inherited_fd):
+    # An O_PATH inherited across unshare still refers to the old mount tree;
+    # Linux refuses to bind that foreign mount. Reopen in this namespace and
+    # compare against the still-pinned original, so a renamed/replaced source
+    # never gains authority from reusing its old pathname.
+    expected = os.fstat(inherited_fd)
+    current_fd = pin(os.readlink(f"/proc/self/fd/{inherited_fd}"), [])
+    actual = os.fstat(current_fd)
+    if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+        os.close(current_fd)
+        raise Refused("mount source identity changed")
+    return current_fd
+
+
+def bind_policy(target, readonly, device):
+    # statvfs and mount share these Linux flag values except ST_RELATIME.
+    # User namespaces lock inherited restrictions; remount may add limits but
+    # must never clear NOSUID/NODEV/NOEXEC or change a locked atime policy.
+    inherited = os.statvfs(target).f_flag
+    flags = MS_BIND | MS_REMOUNT | MS_NOSUID
+    for stat_flag, mount_flag in ((1, 1), (2, 2), (4, 4), (8, 8),
+                                  (1024, 1024), (2048, 2048), (4096, 1 << 21)):
+        if inherited & stat_flag:
+            flags |= mount_flag
+    if readonly:
+        flags |= MS_RDONLY
+    if not device:
+        flags |= MS_NODEV
+    return flags
+
+
+def mount(source, target, filesystem=None, flags=0, data=None, *, phase="mount"):
     libc = ctypes.CDLL(None, use_errno=True)
     args = [os.fsencode(value) if value is not None else None
             for value in (source, target, filesystem)]
     if libc.mount(*args, ctypes.c_ulong(flags), os.fsencode(data) if data else None) != 0:
-        raise Refused("namespace mount unavailable")
+        code = errno.errorcode.get(ctypes.get_errno(), "UNKNOWN")
+        raise Refused(f"namespace mount unavailable ({phase}, {code})")
 
 
 def inside(state_fd):
@@ -168,8 +201,8 @@ def inside(state_fd):
     if ctypes.CDLL(None, use_errno=True).sethostname(b"file-work", 9) != 0:
         raise Refused("private hostname unavailable")
     root = Path(state["root"])
-    mount(None, "/", flags=MS_REC | MS_PRIVATE)
-    mount("tmpfs", str(root), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=16m")
+    mount(None, "/", flags=MS_REC | MS_PRIVATE, phase="propagation")
+    mount("tmpfs", str(root), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=16m", phase="root")
     client_path = root / "usr/local/bin/cc-connect-file"
     client_path.parent.mkdir(parents=True)
     client_path.write_bytes(state["client"].encode("utf-8"))
@@ -179,7 +212,7 @@ def inside(state_fd):
     for value in ("tmp", "home/model"):
         destination = root / value
         destination.mkdir(parents=True, exist_ok=True)
-        mount("tmpfs", str(destination), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=64m")
+        mount("tmpfs", str(destination), "tmpfs", MS_NOSUID | MS_NODEV, "mode=0700,size=64m", phase="private-storage")
     for fd, target, directory, readonly in state["mounts"]:
         destination = root / target.lstrip("/")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -187,18 +220,20 @@ def inside(state_fd):
             destination.mkdir(exist_ok=True)
         else:
             destination.touch(exist_ok=True)
-        mount(f"/proc/self/fd/{fd}", str(destination), flags=MS_BIND)
-        flags = MS_BIND | MS_REMOUNT | MS_NOSUID
-        if not target.startswith("/dev/"):
-            flags |= MS_NODEV
-        mount(None, str(destination), flags=flags | (MS_RDONLY if readonly else 0))
+        source_fd = namespace_source(fd)
+        try:
+            mount(f"/proc/self/fd/{source_fd}", str(destination), flags=MS_BIND, phase="bind-source")
+            flags = bind_policy(str(destination), readonly, target.startswith("/dev/"))
+            mount(None, str(destination), flags=flags, phase="bind-policy")
+        finally:
+            os.close(source_fd)
     # Support merged-/usr distributions without mounting any host /etc, /home,
     # /var, /run or /tmp directory.
     for alias in ("bin", "lib", "lib64"):
         if not (root / alias).exists() and (root / "usr" / alias).exists():
             (root / alias).symlink_to("usr/" + alias)
     (root / "proc").mkdir()
-    mount("proc", str(root / "proc"), "proc", MS_RDONLY | MS_NOSUID | MS_NODEV)
+    mount("proc", str(root / "proc"), "proc", MS_RDONLY | MS_NOSUID | MS_NODEV, phase="proc")
     (root / ".oldroot").mkdir()
     os.chdir(root)
     # Linux has no libc pivot_root wrapper. Fail closed on other architectures.
@@ -212,7 +247,7 @@ def inside(state_fd):
     if libc.umount2(b"/.oldroot", 2) != 0:
         raise Refused("host root detach failed")
     os.rmdir("/.oldroot")
-    mount(None, "/", flags=MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV)
+    mount(None, "/", flags=MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV, phase="seal-root")
     os.closerange(3, os.sysconf("SC_OPEN_MAX"))
     os.chdir(state["work"])
     env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/home/model", "TMPDIR": "/tmp",
