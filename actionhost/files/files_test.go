@@ -190,7 +190,7 @@ func newFixture(t *testing.T, sender Sender) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	if sender == nil {
 		sender = func(context.Context, json.RawMessage, core.FileAttachment, string) (string, error) {
 			return "receipt-fictional", nil
@@ -200,7 +200,7 @@ func newFixture(t *testing.T, sender Sender) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	binding := Binding{Principal: core.ActionPrincipal{Platform: "fixture", UserID: "staff-a", ChatID: "chat-a", SessionKey: "session-a", Project: "project-a", MessageID: "message-a"}, SessionID: "native-a", Route: json.RawMessage(`{"audience":"original-thread"}`), WorkRoot: filepath.Join(base, "work"), OwnerUID: os.Geteuid()}
 	w, err := h.Bind(context.Background(), binding)
 	if err != nil {
