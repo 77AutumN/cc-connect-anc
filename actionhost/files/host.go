@@ -111,8 +111,11 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 	total := 0
 	for _, f := range b.Inputs {
 		total += len(f.Data)
-		if f.ReceiveError != "" || len(f.Data) > MaxFileBytes || total > 2*MaxFileBytes || !safeName(f.FileName) || validateOOXML(f.FileName, f.Data) != nil {
+		if f.ReceiveError != "" || len(f.Data) > MaxFileBytes || total > 2*MaxFileBytes || !safeName(f.FileName) {
 			return result, ErrInvalid
+		}
+		if validateOOXML(f.FileName, f.Data) != nil {
+			return result, core.NewFileInputError(core.MsgFileInputFormatUnsupported)
 		}
 	}
 	r, err := protectedRoot(b.WorkRoot)
@@ -250,12 +253,12 @@ func strictInput(raw json.RawMessage, target any) error {
 
 func (h *Host) Tool(ctx context.Context, command string, input json.RawMessage, principal core.ActionPrincipal, workID string) (map[string]any, error) {
 	if !validPrincipal(principal) || workID == "" {
-		return nil, ErrScope
+		return fileRefusal(ErrScope)
 	}
 	if command == "file-deliver" {
 		var request deliverRequest
 		if strictInput(input, &request) != nil || request.WorkID != workID || request.ExpectedVersion == nil || *request.ExpectedVersion < 0 || !validHash(request.SHA256) || !relativeFile(request.Path) {
-			return nil, ErrInvalid
+			return fileRefusal(ErrInvalid)
 		}
 		return h.deliver(ctx, request, principal)
 	}
@@ -290,9 +293,21 @@ func (h *Host) Tool(ctx context.Context, command string, input json.RawMessage, 
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return fileRefusal(err)
 	}
 	return resultMap(result), nil
+}
+
+// Only call before a send attempt, or from a read-only tool. Journal failures
+// after submission must stay uncertain even when an underlying error resembles
+// a scope/version refusal.
+func fileRefusal(err error) (map[string]any, error) {
+	for _, known := range []error{ErrScope, ErrInvalid, ErrFormat, ErrVersion, ErrUncertain} {
+		if errors.Is(err, known) {
+			return map[string]any{"status": "blocked", "code": known.Error()}, err
+		}
+	}
+	return nil, err
 }
 
 func owned(st *state, p core.ActionPrincipal, id string) (*work, error) {
@@ -339,8 +354,11 @@ func (h *Host) deliver(ctx context.Context, r deliverRequest, p core.ActionPrinc
 		if err != nil {
 			return err
 		}
-		if hash(data) != r.SHA256 || validateOOXML(r.Path, data) != nil {
+		if hash(data) != r.SHA256 {
 			return ErrInvalid
+		}
+		if validateOOXML(r.Path, data) != nil {
+			return ErrFormat
 		}
 		id := uuid.NewString()
 		snapshot := id + strings.ToLower(filepath.Ext(r.Path))
@@ -354,7 +372,7 @@ func (h *Host) deliver(ctx context.Context, r deliverRequest, p core.ActionPrinc
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return fileRefusal(err)
 	}
 	if !created {
 		return resultMap(selected), nil

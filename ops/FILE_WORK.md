@@ -13,7 +13,10 @@ Concurrent requests receive the existing busy response; no background queue is a
 
 Inputs are limited to four files, 20 MiB each and 40 MiB total, with a 30-second
 download deadline. The first format boundary accepts local DOCX/XLSX packages;
-encrypted, macro/active content and external relationships are rejected. Originals
+encrypted, macro/active content and external relationships are rejected. All Word
+fields (including PAGE/TOC) are currently unsupported; they are rejected rather
+than silently stripped. Static Word text/tables and local spreadsheet formulas
+such as SUM are supported. Originals
 are retained with hashes. Output files must be in this work's `outputs`, regular,
 single-link, owned by the configured model UID, and at most 20 MiB (100 MiB expanded).
 One checked descriptor supplies the immutable snapshot and bytes actually sent.
@@ -28,6 +31,8 @@ Delivery versions use compare-and-set. The host durably records `submitted` and
 the delivery UUID before the single network attempt. Accepted requires a Feishu
 message receipt. Missing/uncertain results stay `unknown` and block resends,
 including renamed copies. Restart converts incomplete submissions to unknown.
+Known input/format/scope/version refusals return `blocked` with a safe code;
+post-send journal failures remain uncertain and must not invite resubmission.
 An API acceptance does not prove an employee received or opened the file.
 
 Example configuration (all paths are fictional; do not apply to a live host):

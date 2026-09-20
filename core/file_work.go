@@ -169,6 +169,10 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	}
 	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files})
 	if err != nil {
+		if message, ok := FileErrorMessage(err, e.i18n); ok {
+			e.reply(p, msg.ReplyCtx, message)
+			return true
+		}
 		return fail(MsgFileInputSaveFailed)
 	}
 	if !work.Enabled || work.WorkID == "" || work.WorkRoot != root {
@@ -252,6 +256,10 @@ func (e *Engine) serveFileWorkTool(w http.ResponseWriter, r *http.Request, token
 	stop := context.AfterFunc(e.ctx, cancel)
 	defer stop()
 	result, err := host.Tool(ctx, command, input, principal, workID)
+	if result != nil && result["status"] == "blocked" {
+		writeActionToolResult(w, http.StatusBadRequest, result)
+		return
+	}
 	if err != nil || result == nil {
 		// The failure may be a post-send journal write. Never imply that the
 		// recipient saw nothing or invite resubmission under another filename.

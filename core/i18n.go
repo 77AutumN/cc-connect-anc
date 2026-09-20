@@ -671,6 +671,7 @@ const (
 	MsgFileInputTooLarge                  MsgKey = "file_input_too_large"
 	MsgFileInputUnavailable               MsgKey = "file_input_unavailable"
 	MsgFileInputSaveFailed                MsgKey = "file_input_save_failed"
+	MsgFileInputFormatUnsupported         MsgKey = "file_input_format_unsupported"
 	MsgFileWorkUnavailable                MsgKey = "file_work_unavailable"
 	MsgFileWorkAssociationRequired        MsgKey = "file_work_association_required"
 	MsgImageLimit                         MsgKey = "image_input_limit"
@@ -4490,6 +4491,13 @@ var messages = map[MsgKey]map[Language]string{
 	},
 	MsgFileInputSaveFailed: {
 		LangEnglish: "A file could not be saved. Nothing was submitted; ask the administrator to check storage, then resend.", LangChinese: "文件保存失败，本批内容未提交。请管理员检查存储后重发。", LangTraditionalChinese: "檔案儲存失敗，本批內容未提交。請管理員檢查儲存後重傳。", LangJapanese: "ファイルを保存できませんでした。一式は未送信です。管理者の確認後に再送してください。", LangSpanish: "No se pudo guardar un archivo. No se envió el lote; pida revisar el almacenamiento y reenvíelo.",
+	},
+	MsgFileInputFormatUnsupported: {
+		LangEnglish:            "A file is damaged or uses an unsupported feature. Nothing was submitted. Use a static DOCX or local XLSX without fields, macros, embedded objects or external links.",
+		LangChinese:            "文件损坏或含暂不支持的内容，本批未提交模型处理。请提供无字段、宏、嵌入对象或外链的静态 DOCX 或本地 XLSX。",
+		LangTraditionalChinese: "檔案損壞或含暫不支援的內容，本批未提交模型處理。請提供無欄位、巨集、嵌入物件或外連結的靜態 DOCX 或本機 XLSX。",
+		LangJapanese:           "ファイルが破損しているか未対応の機能を含むため、未送信です。フィールド、マクロ、埋め込みオブジェクト、外部リンクのない静的DOCXまたはローカルXLSXを使用してください。",
+		LangSpanish:            "Un archivo está dañado o contiene funciones no admitidas. No se envió nada. Use DOCX estático o XLSX local sin campos, macros, objetos incrustados ni enlaces externos.",
 	},
 	MsgImageLimit: {
 		LangEnglish: "No images or text in this batch were submitted. Limit: 4 images, 5 MiB each, 10 MiB total (including a decoded first frame). Compress or resend in smaller batches.", LangChinese: "本批图片和文字均未提交。上限为4张、每张5MiB、合计10MiB（含动图首帧转换后大小）。请压缩或分批重发。", LangTraditionalChinese: "本批圖片和文字均未提交。上限為4張、每張5MiB、合計10MiB（含動圖首幀轉換後大小）。請壓縮或分批重發。", LangJapanese: "この画像・テキスト一式は未送信です。上限は4枚、各5MiB、合計10MiB（先頭フレーム変換後を含む）。圧縮または分割して再送してください。", LangSpanish: "No se envió este lote de imágenes ni texto. Máximo: 4 imágenes, 5 MiB cada una, 10 MiB total (incluido el primer fotograma convertido). Comprima o divida el lote.",

@@ -65,6 +65,21 @@ func TestOOXMLRejectsDisguisedActiveAndMalformedFiles(t *testing.T) {
 		}
 	}
 	cases := map[string]func(map[string]string){
+		"foreign_external_attributes": func(p map[string]string) {
+			p["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships" xmlns:x="urn:fictional"><Relationship Id="r2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" TargetMode="External" Target="https://example.invalid/synthetic" x:TargetMode="Internal" x:Target="local.xml"/></Relationships>`
+		},
+		"duplicate_expanded_attribute": func(p map[string]string) {
+			p["word/_rels/document.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r2" TargetMode="External" TargetMode="Internal" Target="local.xml"/></Relationships>`
+		},
+		"split_complex_field": func(p map[string]string) {
+			p["word/document.xml"] = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>INCLUDE</w:instrText></w:r><w:r><w:instrText>TEXT "https://example.invalid/synthetic"</w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:body></w:document>`
+		},
+		"foreign_field_attribute": func(p map[string]string) {
+			p["word/document.xml"] = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:fictional"><w:body><w:fldSimple w:instr="INCLUDETEXT &quot;https://example.invalid/synthetic&quot;" x:instr="PAGE"/></w:body></w:document>`
+		},
+		"static_word_fields_unsupported": func(p map[string]string) {
+			p["word/document.xml"] = `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:fldSimple w:instr="PAGE"/></w:body></w:document>`
+		},
 		"macro": func(p map[string]string) { p["word/vbaProject.bin"] = "macro" },
 		"external": func(p map[string]string) {
 			p["word/_rels/document.xml.rels"] = `<Relationships><Relationship TargetMode="External" Target="https://example.invalid/file"/></Relationships>`
@@ -117,6 +132,15 @@ func TestOOXMLBudgets(t *testing.T) {
 	}
 	if validateOOXML("bomb.docx", b.Bytes()) == nil {
 		t.Fatal("expansion bomb accepted")
+	}
+}
+
+func TestBindUnsupportedFormatHasSafeFeedbackBeforeStorage(t *testing.T) {
+	b := Binding{Principal: core.ActionPrincipal{Platform: "fixture", UserID: "sender", ChatID: "chat", SessionKey: "session", Project: "project", MessageID: "message"}, SessionID: "native", Route: json.RawMessage(`{}`), Inputs: []core.FileAttachment{{FileName: "damaged.docx", Data: []byte("not a package")}}}
+	_, err := (&Host{}).Bind(context.Background(), b)
+	var inputErr *core.FileInputError
+	if !errors.As(err, &inputErr) || inputErr.Key != core.MsgFileInputFormatUnsupported {
+		t.Fatal("unsupported input lost its safe category", err)
 	}
 }
 
@@ -362,6 +386,36 @@ func TestDeliveryUnknownFailedAndRestartNeverResend(t *testing.T) {
 	result, err = deliver(t, f, "result.docx", data, 0)
 	if err != nil || result["status"] != "unknown" {
 		t.Fatal(result, err)
+	}
+}
+
+func TestDeliveryRefusalAndPostSendJournalFailureStayDistinct(t *testing.T) {
+	f := newFixture(t, nil)
+	data := output(t, f, "docx")
+	result, err := deliver(t, f, "result.docx", data, 1)
+	if !errors.Is(err, ErrVersion) || result["status"] != "blocked" || result["code"] != ErrVersion.Error() {
+		t.Fatal("version refusal was not preserved", result, err)
+	}
+	unsafe := documentParts("docx")
+	unsafe["word/header1.xml"] = `<header><instrText>PAGE</instrText></header>`
+	bad := packageBytes(t, unsafe)
+	if err := os.WriteFile(filepath.Join(f.context.OutputDir, "field.docx"), bad, 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err = deliver(t, f, "field.docx", bad, 0)
+	if !errors.Is(err, ErrFormat) || result["code"] != ErrFormat.Error() {
+		t.Fatal("format refusal lost", result, err)
+	}
+	f.host.send = func(context.Context, json.RawMessage, core.FileAttachment, string) (string, error) {
+		// Simulate losing the work after the external service accepted the file.
+		if err := f.store.change(context.Background(), func(st *state) error { delete(st.Works, f.context.WorkID); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return "fixture-accepted", nil
+	}
+	result, err = deliver(t, f, "result.docx", data, 0)
+	if !errors.Is(err, ErrScope) || result != nil {
+		t.Fatal("post-send journal failure was mislabeled as a pre-send refusal", result, err)
 	}
 }
 

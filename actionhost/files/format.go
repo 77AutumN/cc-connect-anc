@@ -106,36 +106,44 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 					flags[2] = true
 				}
 			}
-			attrs := map[string]string{}
+			attrs := map[xml.Name]string{}
 			for _, a := range t.Attr {
-				attrs[a.Name.Local] = a.Value
+				if _, duplicate := attrs[a.Name]; duplicate {
+					return flags, ErrInvalid
+				}
+				attrs[a.Name] = a.Value
 			}
+			// Package metadata attributes are unqualified. A foreign attribute
+			// with the same local name cannot replace its authoritative value.
+			attr := func(local string) string { return attrs[xml.Name{Local: local}] }
 			if name == "[Content_Types].xml" {
-				value := strings.ToLower(attrs["ContentType"])
+				value := strings.ToLower(attr("ContentType"))
 				for _, bad := range []string{"macroenabled", "vbaproject", "oleobject", "activex"} {
 					if strings.Contains(value, bad) {
 						return flags, ErrInvalid
 					}
 				}
-				if t.Name.Local == "Override" && attrs["PartName"] == "/"+mainPart && attrs["ContentType"] == mainType {
+				if t.Name.Local == "Override" && t.Name.Space == "http://schemas.openxmlformats.org/package/2006/content-types" && attr("PartName") == "/"+mainPart && attr("ContentType") == mainType {
 					flags[0] = true
 				}
 			}
 			if relations && t.Name.Local == "Relationship" {
-				if strings.EqualFold(attrs["TargetMode"], "External") || strings.ContainsAny(attrs["Target"], ":\\") || strings.HasPrefix(attrs["Target"], "//") {
+				if t.Name.Space != "http://schemas.openxmlformats.org/package/2006/relationships" || strings.EqualFold(attr("TargetMode"), "External") || strings.ContainsAny(attr("Target"), ":\\") || strings.HasPrefix(attr("Target"), "//") {
 					return flags, ErrInvalid
 				}
-				if name == "_rels/.rels" && strings.HasSuffix(attrs["Type"], "/officeDocument") && strings.TrimPrefix(attrs["Target"], "/") == mainPart {
+				if name == "_rels/.rels" && strings.HasSuffix(attr("Type"), "/officeDocument") && strings.TrimPrefix(attr("Target"), "/") == mainPart {
 					flags[1] = true
 				}
 			}
 			if t.Name.Local == "altChunk" || t.Name.Local == "object" || t.Name.Local == "oleObject" || t.Name.Local == "control" {
 				return flags, ErrInvalid
 			}
-			if t.Name.Local == "fldSimple" && activeExpression(attrs["instr"]) {
+			// Word fields can span runs and nested fields. This first boundary
+			// accepts static Word content rather than partially interpreting them.
+			if t.Name.Local == "fldSimple" || t.Name.Local == "fldChar" || t.Name.Local == "instrText" {
 				return flags, ErrInvalid
 			}
-			if t.Name.Local == "f" || t.Name.Local == "instrText" {
+			if t.Name.Local == "f" {
 				formulaDepth = depth
 				formula.Reset()
 			}

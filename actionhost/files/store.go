@@ -19,6 +19,7 @@ var (
 	ErrUnavailable = errors.New("file_host_unavailable")
 	ErrScope       = errors.New("file_work_scope_mismatch")
 	ErrInvalid     = errors.New("invalid_file_request")
+	ErrFormat      = errors.New("file_format_unsupported")
 	ErrVersion     = errors.New("file_version_conflict")
 	ErrUncertain   = errors.New("file_delivery_requires_reconciliation")
 )

@@ -11,10 +11,11 @@ import (
 )
 
 type fileHostStub struct {
-	bindErr  error
-	bindings []FileWorkBinding
-	toolWork string
-	toolErr  error
+	bindErr    error
+	bindings   []FileWorkBinding
+	toolWork   string
+	toolErr    error
+	toolResult map[string]any
 }
 
 func (h *fileHostStub) Bind(_ context.Context, b FileWorkBinding) (FileWorkContext, error) {
@@ -26,6 +27,9 @@ func (h *fileHostStub) FindByMessage(context.Context, ActionPrincipal, string) (
 }
 func (h *fileHostStub) Tool(_ context.Context, _ string, _ json.RawMessage, _ ActionPrincipal, work string) (map[string]any, error) {
 	h.toolWork = work
+	if h.toolResult != nil {
+		return h.toolResult, h.toolErr
+	}
 	return map[string]any{"status": "ok", "enabled": true, "work_id": work}, h.toolErr
 }
 
@@ -77,6 +81,12 @@ func TestFileWorkRejectsUnboundAndUnavailableRuntimeBeforeModel(t *testing.T) {
 		t.Fatal("failed original persistence reached model")
 	}
 	p.clearSent()
+	h.bindErr = NewFileInputError(MsgFileInputFormatUnsupported)
+	e.ReceiveMessage(p, &msg)
+	if a.attempts != 0 || len(p.getSent()) != 1 || !strings.Contains(p.getSent()[0], "unsupported") {
+		t.Fatal("unsupported format was reported as a storage failure")
+	}
+	p.clearSent()
 	h.bindErr = nil
 	msg.MessageID = "new-request"
 	e.ReceiveMessage(p, &msg)
@@ -113,6 +123,11 @@ func TestFileWorkToolsUsePinnedWorkAndCurrentIdentity(t *testing.T) {
 	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, body)
 	if w.Code != 503 || !strings.Contains(w.Body.String(), "file_outcome_unconfirmed") || strings.Contains(w.Body.String(), "private") {
 		t.Fatal("uncertain host failure exposed details or implied no send")
+	}
+	h.toolResult = map[string]any{"status": "blocked", "code": "file_version_conflict"}
+	w = actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, body)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "file_version_conflict") || strings.Contains(w.Body.String(), "private") {
+		t.Fatal("known pre-send refusal lost its safe category")
 	}
 	if w := actionToolRequest(e.ActionToolHandler(), "POST", "/send", state.actionToken, body); w.Code != 404 {
 		t.Fatal("file transport exposed management route")
