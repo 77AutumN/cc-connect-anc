@@ -105,7 +105,10 @@ def prepare(config_path, work_root, command, fds):
     for path in (Path(config_path).parent, base, work, work / "inputs"):
         protected(pin(path, fds, directory=True), info.st_uid)
     output_fd = pin(work / "outputs", fds, directory=True)
-    protected(output_fd, os.geteuid())
+    output_info = os.fstat(output_fd)
+    if (output_info.st_uid != info.st_uid or output_info.st_gid != os.getgid()
+            or stat.S_IMODE(output_info.st_mode) != 0o2770):
+        raise Refused("host-owned output directory and dedicated model group required")
     check_tree(work / "inputs")
     check_tree(work / "outputs")
     approved = absolute(config["command"])

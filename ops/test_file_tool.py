@@ -1,8 +1,12 @@
 """Offline file-client contract, using a fake Unix socket and real HTTP parser."""
 import io
+import hashlib
 import json
 import os
 import socket
+import stat
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -35,6 +39,48 @@ class Peer:
 
 
 class FileClientTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'posix', 'POSIX ownership and no-follow publication')
+    def test_only_selected_owned_output_is_published_and_links_digest_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous = os.getcwd()
+            try:
+                os.chdir(directory)
+                Path('outputs/nested').mkdir(parents=True, mode=0o700)
+                selected = Path('outputs/nested/result.docx')
+                selected.write_bytes(b'fictional-docx-client-fixture')
+                selected.chmod(0o600)
+                untouched = Path('outputs/private.txt')
+                untouched.write_bytes(b'private-draft')
+                untouched.chmod(0o600)
+                value = {'work_id':'fixture', 'path':'nested/result.docx',
+                         'sha256':hashlib.sha256(selected.read_bytes()).hexdigest(), 'expected_version':0}
+                accepted = {'delivery_id':'fixture-delivery', 'status':'accepted', 'message_receipt':'fixture-message'}
+                code, result, factory = self.invoke(['file-deliver'], json.dumps(value).encode(), Peer(accepted))
+                self.assertEqual((code,result), (0,accepted))
+                self.assertEqual(factory.call_count, 1)
+                self.assertEqual(stat.S_IMODE(selected.stat().st_mode), 0o640)
+                self.assertEqual(stat.S_IMODE(selected.parent.stat().st_mode), 0o2750)
+                self.assertEqual(stat.S_IMODE(untouched.stat().st_mode), 0o600)
+                for kind in ('digest', 'symlink', 'hardlink'):
+                    with self.subTest(kind=kind):
+                        bad = dict(value)
+                        selected.chmod(0o600)
+                        if kind == 'digest':
+                            bad['sha256'] = '0' * 64
+                        else:
+                            link = Path('outputs/' + kind)
+                            if kind == 'symlink':
+                                link.symlink_to('nested/result.docx')
+                            else:
+                                os.link(selected, link)
+                            bad['path'] = kind
+                        code, result, factory = self.invoke(['file-deliver'], json.dumps(bad).encode(), Peer(accepted))
+                        self.assertEqual((code,result['code']), (2,'file_access_not_prepared'))
+                        factory.assert_not_called()
+                        self.assertEqual(stat.S_IMODE(selected.stat().st_mode), 0o600)
+            finally:
+                os.chdir(previous)
+
     def invoke(self, command, raw, peer, env=None):
         output = io.StringIO()
         environment = {"CC_FILE_ACTION_TOKEN": "fixture-token",

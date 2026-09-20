@@ -165,7 +165,7 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 				if err := writeNew(h.snapshots, "input_"+name, f.Data, 0400); err != nil {
 					return err
 				}
-				if err := writeNew(inputs, name, f.Data, 0444); err != nil {
+				if err := writeNew(inputs, name, f.Data, 0440); err != nil {
 					return err
 				}
 				w.Inputs = append(w.Inputs, Input{ID: id, Name: f.FileName, Path: filepath.Join(b.WorkRoot, "inputs", name), SHA256: digest})

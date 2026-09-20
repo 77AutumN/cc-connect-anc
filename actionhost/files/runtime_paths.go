@@ -14,6 +14,37 @@ func ValidateHostDirectory(path string) error {
 	return r.Close()
 }
 
+// The dedicated model group is inherited by new work directories. Only the
+// gateway and this project's model identity should be members; runtime setup is
+// explicit and this check never changes memberships or existing modes.
+func ValidateWorkGroup(path string, gid int) error {
+	if gid <= 0 {
+		return ErrUnavailable
+	}
+	r, err := protectedRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	info, err := r.Stat(".")
+	if err != nil || fileGroup(info) != gid || info.Mode().Perm() != 0750 {
+		return ErrUnavailable
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return ErrUnavailable
+	}
+	for _, group := range groups {
+		if group == gid {
+			return nil
+		}
+	}
+	if os.Getegid() == gid {
+		return nil
+	}
+	return ErrUnavailable
+}
+
 func ValidateHostFile(path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return ErrUnavailable

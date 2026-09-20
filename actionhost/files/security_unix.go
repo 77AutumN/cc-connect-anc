@@ -19,12 +19,20 @@ func checkOwner(info os.FileInfo, uid int, single bool) error {
 	return nil
 }
 
+func fileGroup(info os.FileInfo) int {
+	s, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return -1
+	}
+	return int(s.Gid)
+}
+
 func identity(info os.FileInfo) string {
 	s, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return ""
 	}
-	return fmt.Sprintf("%d:%d:%d", s.Dev, s.Ino, s.Uid)
+	return fmt.Sprintf("%d:%d:%d:%d", s.Dev, s.Ino, s.Uid, s.Gid)
 }
 
 func unchanged(a, b os.FileInfo) bool {

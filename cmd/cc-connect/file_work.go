@@ -32,6 +32,10 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 	if err != nil || uid <= 0 || uid == os.Geteuid() {
 		return nil, noop, errInvalid
 	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil || files.ValidateWorkGroup(project.FileWork.WorkBaseDir, gid) != nil {
+		return nil, noop, errInvalid
+	}
 	for _, key := range []string{"file_work_launcher", "file_work_config"} {
 		path, _ := project.Agent.Options[key].(string)
 		if files.ValidateHostFile(path) != nil {

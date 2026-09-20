@@ -56,6 +56,15 @@ operator-only initialization and refuses an existing file; startup never initial
 or resets a ledger. Only new session directories are created by the host. Existing
 directory ownership/modes are checked rather than repaired. A missing, replaced or
 corrupt ledger fails closed. Do not restore an older ledger to clear unknown sends.
+The work base group must be the distinct model account's primary group and an
+existing gateway membership; work directories remain gateway-owned. See the
+exact directory and publication modes in the isolation document. This candidate
+does not provision the group, migrate old work directories or change service users.
+
+The DOCX/XLSX journey uses explicitly fictional documents. Common PAGE/TOC fields
+remain rejected without deletion. **Real template compatibility is unverified**;
+the absence of a sanitized real template does not block fictional transport and
+revision testing. No live file send or employee receipt is inferred from CI.
 
 See [the isolation boundary](FILE_WORK_SANDBOX.md). The candidate does not install
 CLI, document libraries, Skills, credentials, sudoers or ACLs. Provider access,

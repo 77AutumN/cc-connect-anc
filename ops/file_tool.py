@@ -2,10 +2,12 @@
 """Narrow model-side file client; no management API, credentials or recipients."""
 
 import http.client
+import hashlib
 import json
 import os
 import re
 import socket
+import stat
 import sys
 
 SOCKET = "/run/cc-connect/action-tools.sock"
@@ -68,6 +70,40 @@ def valid_input(command, value):
     return True
 
 
+def prepare_delivery(value):
+    """Grant the host group access only to the selected, verified output.
+
+    The sandbox fixes cwd and outputs. The host independently checks ownership,
+    no-follow paths, digest and the immutable snapshot; this client is not an
+    authorization boundary and cannot select a recipient or a host directory.
+    """
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    directory = os.open("outputs", flags | os.O_DIRECTORY)
+    try:
+        group = os.fstat(directory).st_gid
+        parts = value["path"].split("/")
+        for part in parts[:-1]:
+            child = os.open(part, flags | os.O_DIRECTORY, dir_fd=directory)
+            os.close(directory)
+            directory = child
+            info = os.fstat(directory)
+            if info.st_uid != os.geteuid() or info.st_gid != group:
+                raise ValueError("invalid output directory")
+            os.fchmod(directory, 0o2750)
+        fd = os.open(parts[-1], flags, dir_fd=directory)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_gid != group or info.st_nlink != 1 or not 0 < info.st_size <= 20 << 20):
+                raise ValueError("invalid output file")
+            data = stream.read((20 << 20) + 1)
+            if len(data) != info.st_size or hashlib.sha256(data).hexdigest() != value["sha256"]:
+                raise ValueError("output changed")
+            os.fchmod(stream.fileno(), 0o640)
+    finally:
+        os.close(directory)
+
+
 def main(argv=None, *, stdin=None, stdout=None):
     argv = sys.argv[1:] if argv is None else argv
     stdin = sys.stdin.buffer if stdin is None else stdin
@@ -91,6 +127,12 @@ def main(argv=None, *, stdin=None, stdout=None):
         body = json.dumps({"command": argv[0], "input": value}).encode("utf-8")
     except (ValueError, OSError, RecursionError):
         return emit(stdout, {"status": "blocked", "code": "invalid_input"}, 2)
+
+    if argv[0] == "file-deliver":
+        try:
+            prepare_delivery(value)
+        except (ValueError, OSError, AttributeError):
+            return emit(stdout, {"status": "blocked", "code": "file_access_not_prepared"}, 2)
 
     conn = SessionHTTP("localhost", timeout=35)
     try:

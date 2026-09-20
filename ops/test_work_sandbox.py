@@ -91,6 +91,7 @@ class LinuxBoundaryTests(unittest.TestCase):
         self.work = self.base / "current"
         (self.work / "inputs").mkdir(parents=True)
         (self.work / "outputs").mkdir()
+        (self.work / "outputs").chmod(0o2770)
         (self.work / "inputs" / "input.txt").write_text("synthetic-input", encoding="utf-8")
         self.config = self.root / "sandbox.json"
         self.command = str(Path("/usr/bin/python3").resolve(strict=True))

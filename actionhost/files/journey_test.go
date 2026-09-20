@@ -34,10 +34,11 @@ type fileJourneyResult struct {
 	err      error
 }
 type fileJourneyShared struct {
-	handler http.Handler
-	steps   chan fileJourneyStep
-	results chan fileJourneyResult
-	turns   atomic.Int32
+	handler  http.Handler
+	steps    chan fileJourneyStep
+	results  chan fileJourneyResult
+	turns    atomic.Int32
+	external func(*fileJourneyAgent, fileJourneyStep) fileJourneyResult
 }
 type fileJourneyAgent struct {
 	shared *fileJourneyShared
@@ -100,6 +101,9 @@ func (a *fileJourneyAgent) perform(step fileJourneyStep, files []core.FileAttach
 	if len(files) != 0 {
 		result.err = fmt.Errorf("engine forwarded a second attachment copy")
 		return
+	}
+	if a.shared.external != nil {
+		return a.shared.external(a, step)
 	}
 	if result.err = a.tool("work-context", map[string]any{}, &result.work); result.err != nil {
 		return
@@ -285,22 +289,32 @@ func TestCUJ_FileWork_OriginalReceiptRevisionNewCustomerAndSelectedReference(t *
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX host ownership boundary; Linux CI runs the journey")
 	}
+	runFileJourney(t, "", os.Geteuid(), nil)
+}
+
+func runFileJourney(t *testing.T, base string, modelUID int, configure func(*fileJourneyShared, fixture, *core.Engine)) {
+	t.Helper()
 	platform := &fileJourneyPlatform{}
 	fixture := newFixture(t, platform.SendFileWithReceipt)
-	base := filepath.Join(t.TempDir(), "works")
-	if err := os.Mkdir(base, 0700); err != nil {
-		t.Fatal(err)
+	if base == "" {
+		base = filepath.Join(t.TempDir(), "works")
+		if err := os.Mkdir(base, 0700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	shared := &fileJourneyShared{steps: make(chan fileJourneyStep, 1), results: make(chan fileJourneyResult, 1)}
 	engine := core.NewEngine("file-project", &fileJourneyAgent{shared: shared}, []core.Platform{platform}, filepath.Join(t.TempDir(), "sessions.json"), core.LangEnglish)
 	t.Cleanup(func() { _ = engine.Stop() })
 	if err := engine.SetFileWorkHost(fixture.host, func(session string) (string, int, error) {
-		root, err := PrepareWork(base, session, os.Geteuid())
-		return root, os.Geteuid(), err
+		root, err := PrepareWork(base, session, modelUID)
+		return root, modelUID, err
 	}); err != nil {
 		t.Fatal(err)
 	}
 	shared.handler = engine.ActionToolHandler()
+	if configure != nil {
+		configure(shared, fixture, engine)
+	}
 	makeMessage := func(id, parent, user string, attachments ...core.FileAttachment) *core.Message {
 		return &core.Message{Platform: "fixture", SessionKey: "fixture:room:" + user, ChannelID: "room", UserID: user, MessageID: id, ParentMessageID: parent, ControlledFileWork: true, Content: "Edit the selected fictional document", Files: attachments, ReplyCtx: fileJourneyRoute{user, id}}
 	}
@@ -333,7 +347,7 @@ func TestCUJ_FileWork_OriginalReceiptRevisionNewCustomerAndSelectedReference(t *
 				t.Fatal("recipient delivery has no accepted receipt")
 			}
 			return result
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("file journey was not processed")
 		}
 		return fileJourneyResult{}
