@@ -1,0 +1,270 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// FileWorkBinding is assembled only from the authenticated transport and host
+// filesystem configuration. None of these fields are model tool arguments.
+type FileWorkBinding struct {
+	Principal ActionPrincipal
+	SessionID string
+	Route     json.RawMessage
+	WorkRoot  string
+	OwnerUID  int
+	Inputs    []FileAttachment
+}
+
+type FileWorkInput struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+type FileWorkArtifact struct {
+	Path           string `json:"path"`
+	DeliveryID     string `json:"delivery_id"`
+	Version        int    `json:"version"`
+	Status         string `json:"status"`
+	Name           string `json:"name"`
+	SHA256         string `json:"sha256"`
+	MessageReceipt string `json:"message_receipt,omitempty"`
+}
+
+type FileWorkContext struct {
+	Enabled       bool               `json:"enabled"`
+	WorkID        string             `json:"work_id"`
+	WorkRoot      string             `json:"-"`
+	Inputs        []FileWorkInput    `json:"inputs"`
+	OutputDir     string             `json:"output_dir"`
+	LatestVersion int                `json:"latest_version"`
+	Artifacts     []FileWorkArtifact `json:"artifacts"`
+}
+
+type FileWorkRef struct{ WorkID, SessionID string }
+
+type FileWorkHost interface {
+	Bind(context.Context, FileWorkBinding) (FileWorkContext, error)
+	FindByMessage(context.Context, ActionPrincipal, string) (FileWorkRef, error)
+	Tool(context.Context, string, json.RawMessage, ActionPrincipal, string) (map[string]any, error)
+}
+
+// FileWorkReceiver opts a transport into bounded intake. Reply authorization
+// happens before downloading an unmentioned group attachment.
+type FileWorkReceiver interface {
+	SetFileWorkEnabled(bool, func(Message, string) bool) error
+}
+
+// FileWorkAgent creates an isolated process configuration for exactly one work.
+// Unsupported runtimes must fail before launching an ordinary agent process.
+type FileWorkAgent interface {
+	ForFileWork(string) (Agent, error)
+}
+
+func isFileWorkCommand(command string) bool {
+	return command == "work-context" || command == "file-deliver" || command == "file-status"
+}
+
+var errFileWorkUnavailable = errors.New("controlled file work unavailable")
+var ErrFileWorkNotFound = errors.New("file work not found")
+
+// SetFileWorkHost is called only during startup, after protected configuration
+// and runtime support have been checked. A nil host leaves legacy behavior off.
+func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string, int, error)) error {
+	if host == nil || prepare == nil {
+		return errFileWorkUnavailable
+	}
+	if _, ok := e.agent.(FileWorkAgent); !ok {
+		return errFileWorkUnavailable
+	}
+	if e.multiWorkspace {
+		return errFileWorkUnavailable
+	}
+	for _, p := range e.platforms {
+		receiver, ok := p.(FileWorkReceiver)
+		if !ok {
+			return errFileWorkUnavailable
+		}
+		if _, ok := p.(FileReceiptSender); !ok {
+			return errFileWorkUnavailable
+		}
+		if err := receiver.SetFileWorkEnabled(true, func(msg Message, parent string) bool {
+			_, err := host.FindByMessage(e.ctx, e.actionPrincipalForMessage(&msg), parent)
+			return err == nil
+		}); err != nil {
+			return err
+		}
+	}
+	e.actionMu.Lock()
+	e.fileWorkHost, e.fileWorkPrepare = host, prepare
+	e.actionMu.Unlock()
+	return nil
+}
+
+// Every directed top-level message starts a native session. A revision must
+// reply to an inbound message or delivery receipt already recorded for that
+// principal. No "most recent sender" or model-supplied work selection is used.
+func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
+	e.actionMu.RLock()
+	host, prepare := e.fileWorkHost, e.fileWorkPrepare
+	e.actionMu.RUnlock()
+	if host == nil && !msg.ControlledFileWork {
+		return false
+	}
+	fail := func(key MsgKey) bool { e.reply(p, msg.ReplyCtx, e.i18n.T(key)); return true }
+	if host == nil || prepare == nil || !msg.ControlledFileWork {
+		return fail(MsgFileWorkUnavailable)
+	}
+	sender, ok := p.(FileReceiptSender)
+	if !ok {
+		return fail(MsgFileWorkUnavailable)
+	}
+	route, err := sender.FileReplyRoute(msg.ReplyCtx)
+	if err != nil {
+		return fail(MsgFileWorkUnavailable)
+	}
+	principal := e.actionPrincipalForMessage(msg)
+	if principal.UserID == "" || principal.ChatID == "" || principal.MessageID == "" {
+		return fail(MsgFileWorkUnavailable)
+	}
+	// ponytail: one intake lock per engine; split by principal only if intake
+	// throughput requires it. File processing itself runs outside this lock.
+	e.fileWorkMu.Lock()
+	defer e.fileWorkMu.Unlock()
+	var session *Session
+	for _, existing := range e.sessions.ListSessions(msg.SessionKey) {
+		if existing.Busy() {
+			return fail(MsgPreviousProcessing)
+		}
+	}
+	lookup := msg.ParentMessageID
+	if lookup == "" {
+		lookup = msg.MessageID
+	}
+	ref, lookupErr := host.FindByMessage(e.ctx, principal, lookup)
+	if lookupErr == nil {
+		for _, existing := range e.sessions.ListSessions(msg.SessionKey) {
+			if fileNativeSessionID(existing) == ref.SessionID {
+				session = existing
+				break
+			}
+		}
+		if session == nil {
+			return fail(MsgFileWorkAssociationRequired)
+		}
+	} else if msg.ParentMessageID == "" && errors.Is(lookupErr, ErrFileWorkNotFound) {
+		session = e.sessions.NewSession(msg.SessionKey, "file work")
+	} else {
+		return fail(MsgFileWorkAssociationRequired)
+	}
+	root, uid, err := prepare(fileNativeSessionID(session))
+	if err != nil {
+		return fail(MsgFileWorkUnavailable)
+	}
+	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files})
+	if err != nil {
+		if message, ok := FileErrorMessage(err, e.i18n); ok {
+			e.reply(p, msg.ReplyCtx, message)
+			return true
+		}
+		return fail(MsgFileInputSaveFailed)
+	}
+	if !work.Enabled || work.WorkID == "" || work.WorkRoot != root {
+		return fail(MsgFileWorkUnavailable)
+	}
+	agent, err := e.agent.(FileWorkAgent).ForFileWork(root)
+	if err != nil {
+		return fail(MsgFileWorkUnavailable)
+	}
+	e.interactiveMu.Lock()
+	old := e.interactiveStates[msg.SessionKey]
+	different := false
+	if old != nil {
+		old.mu.Lock()
+		different = old.fileWorkID != work.WorkID
+		old.mu.Unlock()
+	}
+	e.interactiveMu.Unlock()
+	if different {
+		e.cleanupInteractiveState(msg.SessionKey, old)
+	}
+	if _, err := e.sessions.SwitchSession(msg.SessionKey, session.ID); err != nil {
+		return fail(MsgFileWorkAssociationRequired)
+	}
+	if !session.TryLock() {
+		return fail(MsgPreviousProcessing)
+	}
+	e.ensureInteractiveStateForQueueing(msg.SessionKey, p, msg.ReplyCtx)
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[msg.SessionKey]
+	state.mu.Lock()
+	state.fileWorkID = work.WorkID
+	state.mu.Unlock()
+	e.interactiveMu.Unlock()
+	// The host preserved the originals. Do not let a native attachment saver
+	// create a second, model-writable copy with different authority.
+	if len(msg.Files) > 0 {
+		msg.Content += "\n[Host: selected files were preserved for this work. Read work-context and the registered input paths before answering.]"
+	}
+	msg.Files = nil
+	session.TouchUserActivity()
+	runMessageAccepted(msg)
+	go e.processInteractiveMessageWith(p, msg, session, agent, e.sessions, msg.SessionKey, "", msg.SessionKey)
+	return true
+}
+
+func fileNativeSessionID(session *Session) string {
+	// A reset/lost SessionManager counter must not silently reopen an older work.
+	return fmt.Sprintf("%s@%d", session.ID, session.CreatedAt.UnixNano())
+}
+
+func (e *Engine) fileWorkForToken(token string) (FileWorkHost, string) {
+	e.actionMu.RLock()
+	host := e.fileWorkHost
+	e.actionMu.RUnlock()
+	if host == nil {
+		return nil, ""
+	}
+	e.interactiveMu.Lock()
+	defer e.interactiveMu.Unlock()
+	for _, state := range e.interactiveStates {
+		state.mu.Lock()
+		matches := state.actionToken == token && !state.stopped
+		id := state.fileWorkID
+		state.mu.Unlock()
+		if matches && id != "" {
+			return host, id
+		}
+	}
+	return nil, ""
+}
+
+func (e *Engine) serveFileWorkTool(w http.ResponseWriter, r *http.Request, token string, principal ActionPrincipal, command string, input json.RawMessage) {
+	host, workID := e.fileWorkForToken(token)
+	if host == nil {
+		writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "enabled": false, "code": "file_host_disabled"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+	result, err := host.Tool(ctx, command, input, principal, workID)
+	if result != nil && result["status"] == "blocked" {
+		writeActionToolResult(w, http.StatusBadRequest, result)
+		return
+	}
+	if err != nil || result == nil {
+		// The failure may be a post-send journal write. Never imply that the
+		// recipient saw nothing or invite resubmission under another filename.
+		writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "code": "file_outcome_unconfirmed"})
+		return
+	}
+	writeActionToolResult(w, http.StatusOK, result)
+}

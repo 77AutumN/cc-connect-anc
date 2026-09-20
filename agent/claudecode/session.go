@@ -292,7 +292,11 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	// shared file is safe under concurrent spawns.
 	var promptFilePath string
 	var promptFileIsShared bool
-	if appended := buildAppendSystemPrompt(core.AgentSystemPrompt(), platformPrompt, appendSystemPrompt); appended != "" {
+	if fileWorkSession(extraEnv) {
+		// Linux file-work namespaces cannot read a shared host prompt file.
+		// Keep the restricted prompt small and pass it as one literal argument.
+		innerArgs = append(innerArgs, "--append-system-prompt", buildAppendSystemPrompt(fileWorkPrompt, platformPrompt, appendSystemPrompt))
+	} else if appended := buildAppendSystemPrompt(core.AgentSystemPrompt(), platformPrompt, appendSystemPrompt); appended != "" {
 		if platformPrompt == "" && appendSystemPrompt == "" {
 			path, err := ensureSharedSystemPromptFile(ccDataDir, appended)
 			if err != nil {
@@ -958,6 +962,9 @@ func (cs *claudeSession) Send(prompt string, messageID string, images []core.Ima
 	if !cs.alive.Load() {
 		return fmt.Errorf("session process is not running")
 	}
+	if err := core.CheckFileBatch(files); err != nil {
+		return err
+	}
 	prepared, err := prepareImages(images)
 	if err != nil {
 		return err
@@ -1015,7 +1022,22 @@ func (cs *claudeSession) Send(prompt string, messageID string, images []core.Ima
 	}
 
 	// Save files to disk so Claude Code can read them
-	filePaths := core.SaveFilesToDisk(cs.workDir, messageID, files)
+	strictFiles := false
+	for _, file := range files {
+		strictFiles = strictFiles || file.RequireSave
+	}
+	var filePaths []string
+	if strictFiles {
+		filePaths, err = core.SaveFilesToDiskChecked(cs.workDir, messageID, files)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			return err
+		}
+	} else {
+		filePaths = core.SaveFilesToDisk(cs.workDir, messageID, files)
+	}
 
 	// Build text part: user prompt + file path references
 	textPart := prompt

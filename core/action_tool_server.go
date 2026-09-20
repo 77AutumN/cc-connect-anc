@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -17,6 +19,36 @@ type ActionToolServer struct {
 	listener  net.Listener
 	closeOnce sync.Once
 	closeErr  error
+}
+
+// ListenActionToolsUnix exposes the same narrow /tool handler inside a file
+// namespace. The caller verifies the parent ownership; existing socket paths
+// are never removed or adopted. Session tokens remain mandatory.
+func ListenActionToolsUnix(path string, handler http.Handler) (*ActionToolServer, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || handler == nil {
+		return nil, errors.New("action tools require an absolute dedicated socket")
+	}
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !parent.IsDir() || parent.Mode().Perm()&0022 != 0 || parent.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("action tools require a protected socket parent")
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		return nil, errors.New("action tool socket already exists or is unavailable")
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	// The model uses a distinct UID. The protected mount and opaque token,
+	// rather than broad filesystem access, authorize this HTTP endpoint.
+	if err := os.Chmod(path, 0666); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return &ActionToolServer{listener: listener, server: &http.Server{
+		Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 40 * time.Second,
+		WriteTimeout: 40 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8 << 10,
+	}}, nil
 }
 
 // ListenActionTools requires a literal loopback address and never falls back to

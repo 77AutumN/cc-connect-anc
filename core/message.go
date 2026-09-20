@@ -109,6 +109,10 @@ type FileAttachment struct {
 	MimeType string // e.g. "application/pdf", "text/plain"
 	Data     []byte // raw file bytes
 	FileName string // original filename
+	// RequireSave is set only by an opted-in host transport. A failed file
+	// must then reject the whole turn rather than leave a text-only prompt.
+	RequireSave  bool
+	ReceiveError MsgKey
 }
 
 // SaveFilesToDisk saves file attachments to disk and returns the list of
@@ -366,6 +370,10 @@ type LocationAttachment struct {
 
 // Message represents a unified incoming message from any platform.
 type Message struct {
+	// Set only by an opted-in, authenticated file transport.
+	ParentMessageID    string
+	ControlledFileWork bool
+
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string
 	MessageID    string // platform message ID for tracing

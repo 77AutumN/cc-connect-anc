@@ -668,6 +668,12 @@ const (
 	MsgHostedActionUnknownTitle           MsgKey = "hosted_action_unknown_title"
 	MsgHostedActionUnknownBody            MsgKey = "hosted_action_unknown_body"
 	MsgHostedActionDisplayFailedFmt       MsgKey = "hosted_action_display_failed_fmt"
+	MsgFileInputTooLarge                  MsgKey = "file_input_too_large"
+	MsgFileInputUnavailable               MsgKey = "file_input_unavailable"
+	MsgFileInputSaveFailed                MsgKey = "file_input_save_failed"
+	MsgFileInputFormatUnsupported         MsgKey = "file_input_format_unsupported"
+	MsgFileWorkUnavailable                MsgKey = "file_work_unavailable"
+	MsgFileWorkAssociationRequired        MsgKey = "file_work_association_required"
 	MsgImageLimit                         MsgKey = "image_input_limit"
 	MsgImageInvalid                       MsgKey = "image_input_invalid"
 	MsgImageDimensions                    MsgKey = "image_input_dimensions"
@@ -4470,6 +4476,28 @@ var messages = map[MsgKey]map[Language]string{
 	},
 	MsgHostedActionReceivedToast: {
 		LangEnglish: "Click received; checking approval.", LangChinese: "已收到点击，正在核验审批。", LangTraditionalChinese: "已收到點擊，正在核驗審批。", LangJapanese: "クリックを受信しました。承認を確認中です。", LangSpanish: "Clic recibido; comprobando la aprobación.",
+	},
+	MsgFileInputTooLarge: {
+		LangEnglish: "The files exceed the intake limit. Nothing was submitted; send fewer or smaller files.", LangChinese: "文件超过接收上限，本批内容未提交。请减少文件数量或缩小文件后重发。", LangTraditionalChinese: "檔案超過接收上限，本批內容未提交。請減少檔案數量或縮小檔案後重傳。", LangJapanese: "ファイルが受付上限を超えています。一式は未送信です。数かサイズを減らして再送してください。", LangSpanish: "Los archivos superan el límite. No se envió el lote; reduzca su número o tamaño y reenvíelo.",
+	},
+	MsgFileWorkUnavailable: {
+		LangEnglish: "Controlled file processing is unavailable for this request. Nothing was submitted.", LangChinese: "此请求的受控文件处理暂不可用，未提交模型处理。", LangTraditionalChinese: "此請求的受控檔案處理暫不可用，未提交模型處理。", LangJapanese: "このリクエストの制限付きファイル処理は利用できません。未送信です。", LangSpanish: "El procesamiento controlado de archivos no está disponible para esta solicitud. No se envió nada.",
+	},
+	MsgFileWorkAssociationRequired: {
+		LangEnglish: "This reply cannot be linked to a saved work. Reply to its original request or delivered file, or resend the materials as a new request.", LangChinese: "无法定位这次回复所属的工作。请回复原请求或已交付文件；也可重新发送材料，发起新工作。", LangTraditionalChinese: "無法定位這次回覆所屬的工作。請回覆原請求或已交付檔案；也可重新傳送材料，發起新工作。", LangJapanese: "返信に対応する作業を確認できません。元の依頼か納品ファイルに返信するか、資料を新しい依頼として再送してください。", LangSpanish: "No se puede vincular esta respuesta a un trabajo guardado. Responda a la solicitud original o al archivo entregado, o reenvíe los materiales como una nueva solicitud.",
+	},
+	MsgFileInputUnavailable: {
+		LangEnglish: "A file could not be received completely. Nothing was submitted; resend the complete batch.", LangChinese: "文件未完整接收，本批内容未提交。请整批重发。", LangTraditionalChinese: "檔案未完整接收，本批內容未提交。請整批重傳。", LangJapanese: "ファイルを完全に受信できませんでした。一式は未送信です。全体を再送してください。", LangSpanish: "No se recibió un archivo completo. No se envió el lote; reenvíelo completo.",
+	},
+	MsgFileInputSaveFailed: {
+		LangEnglish: "A file could not be saved. Nothing was submitted; ask the administrator to check storage, then resend.", LangChinese: "文件保存失败，本批内容未提交。请管理员检查存储后重发。", LangTraditionalChinese: "檔案儲存失敗，本批內容未提交。請管理員檢查儲存後重傳。", LangJapanese: "ファイルを保存できませんでした。一式は未送信です。管理者の確認後に再送してください。", LangSpanish: "No se pudo guardar un archivo. No se envió el lote; pida revisar el almacenamiento y reenvíelo.",
+	},
+	MsgFileInputFormatUnsupported: {
+		LangEnglish:            "A file is damaged or uses an unsupported feature. Nothing was submitted. Use a static DOCX or local XLSX without fields, macros, embedded objects or external links.",
+		LangChinese:            "文件损坏或含暂不支持的内容，本批未提交模型处理。请提供无字段、宏、嵌入对象或外链的静态 DOCX 或本地 XLSX。",
+		LangTraditionalChinese: "檔案損壞或含暫不支援的內容，本批未提交模型處理。請提供無欄位、巨集、嵌入物件或外連結的靜態 DOCX 或本機 XLSX。",
+		LangJapanese:           "ファイルが破損しているか未対応の機能を含むため、未送信です。フィールド、マクロ、埋め込みオブジェクト、外部リンクのない静的DOCXまたはローカルXLSXを使用してください。",
+		LangSpanish:            "Un archivo está dañado o contiene funciones no admitidas. No se envió nada. Use DOCX estático o XLSX local sin campos, macros, objetos incrustados ni enlaces externos.",
 	},
 	MsgImageLimit: {
 		LangEnglish: "No images or text in this batch were submitted. Limit: 4 images, 5 MiB each, 10 MiB total (including a decoded first frame). Compress or resend in smaller batches.", LangChinese: "本批图片和文字均未提交。上限为4张、每张5MiB、合计10MiB（含动图首帧转换后大小）。请压缩或分批重发。", LangTraditionalChinese: "本批圖片和文字均未提交。上限為4張、每張5MiB、合計10MiB（含動圖首幀轉換後大小）。請壓縮或分批重發。", LangJapanese: "この画像・テキスト一式は未送信です。上限は4枚、各5MiB、合計10MiB（先頭フレーム変換後を含む）。圧縮または分割して再送してください。", LangSpanish: "No se envió este lote de imágenes ni texto. Máximo: 4 imágenes, 5 MiB cada una, 10 MiB total (incluido el primer fotograma convertido). Comprima o divida el lote.",

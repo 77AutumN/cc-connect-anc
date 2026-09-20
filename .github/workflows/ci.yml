@@ -119,8 +119,26 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Probe file-work Linux isolation with synthetic fixtures
+        run: |
+          python3 -B -m unittest discover -s ops -p 'test_*.py'
+          command -v unshare
+          command -v setpriv
+          command -v sudo
+          if unshare --user --map-root-user --mount --pid --fork --mount-proc --net --ipc --uts true; then
+            echo "Unprivileged namespace probe: available on this CI runner"
+          else
+            echo "Unprivileged namespace probe: unavailable; runtime UID remains unverified"
+          fi
+          sudo -n python3 -B ops/test_work_sandbox.py --require-isolation
+
       - name: Run tests
         run: go test ./... -v -race
+
+      - name: Verify file handoff with different ordinary identities
+        run: |
+          go test -c ./actionhost/files -o "$RUNNER_TEMP/file-handoff.test"
+          sudo -n --preserve-env=GITHUB_ACTIONS python3 -B ops/file_handoff_fixture.py --test-binary "$RUNNER_TEMP/file-handoff.test"
 
       - name: Run tests with coverage
         run: go test ./... -coverprofile=coverage.out -covermode=atomic

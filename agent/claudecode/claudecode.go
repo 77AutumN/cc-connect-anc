@@ -67,7 +67,9 @@ type Agent struct {
 	// <ccDataDir>/agent-prompts/cc-connect-system.md is written once per
 	// startup and shared across all sessions that don't need per-spawn
 	// customisation. Empty value falls back to os.TempDir.
-	ccDataDir string
+	ccDataDir        string
+	fileWorkLauncher string
+	fileWorkConfig   string
 
 	// spawnOpts controls OS-user isolation via run_as_user. Zero value
 	// means legacy spawn as the supervisor user. See core/runas.go.
@@ -151,6 +153,8 @@ func New(opts map[string]any) (core.Agent, error) {
 	systemPrompt, _ := opts["system_prompt"].(string)
 	appendSystemPrompt, _ := opts["append_system_prompt"].(string)
 	ccDataDir, _ := opts["cc_data_dir"].(string)
+	fileWorkLauncher, _ := opts["file_work_launcher"].(string)
+	fileWorkConfig, _ := opts["file_work_config"].(string)
 
 	var pluginDirs []string
 	if dir, ok := opts["plugin_dir"].(string); ok && dir != "" {
@@ -282,6 +286,8 @@ func New(opts map[string]any) (core.Agent, error) {
 		routerAPIKey:     routerAPIKey,
 		spawnOpts:        spawnOpts,
 		ccDataDir:        ccDataDir,
+		fileWorkLauncher: fileWorkLauncher,
+		fileWorkConfig:   fileWorkConfig,
 
 		appendSystemPrompt: appendSystemPrompt,
 	}, nil

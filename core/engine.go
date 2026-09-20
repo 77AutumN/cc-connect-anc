@@ -463,6 +463,9 @@ type Engine struct {
 	interactiveMu     sync.Mutex
 	interactiveStates map[string]*interactiveState // key = sessionKey
 	actionHost        ActionHost
+	fileWorkHost      FileWorkHost
+	fileWorkPrepare   func(string) (string, int, error)
+	fileWorkMu        sync.Mutex
 	actionMu          sync.RWMutex
 
 	platformLifecycleMu sync.Mutex
@@ -576,6 +579,7 @@ type interactiveState struct {
 	// Pinned at the first transport message; a shared process cannot adopt a
 	// different sender's tool authority when currentPrincipal changes.
 	actionPrincipal ActionPrincipal
+	fileWorkID      string
 }
 
 // latestUserMessageWatermarkLocked returns the highest UserMessageTimeMs among
@@ -2852,8 +2856,17 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		e.handleMessageRecall(p, msg)
 		return
 	}
+	if msg.ControlledFileWork && (msg.Audio != nil || len(msg.Images) != 0) {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileWorkUnavailable))
+		return
+	}
 	if err := CheckImageBatch(msg.Images); err != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(err.(*ImageInputError).Key))
+		return
+	}
+	if err := CheckFileBatch(msg.Files); err != nil {
+		message, _ := FileErrorMessage(err, e.i18n)
+		e.reply(p, msg.ReplyCtx, message)
 		return
 	}
 
@@ -2914,7 +2927,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	}
 
 	content := strings.TrimSpace(msg.Content)
-	if content == "" && msg.ExtraContent == "" && len(msg.Images) == 0 && len(msg.Files) == 0 && msg.Location == nil {
+	if content == "" && msg.ExtraContent == "" && len(msg.Images) == 0 && len(msg.Files) == 0 && msg.Location == nil && (!msg.ControlledFileWork || msg.ParentMessageID == "") {
 		return
 	}
 
@@ -3085,6 +3098,9 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		return
 	}
 
+	if e.handleFileWorkMessage(p, msg) {
+		return
+	}
 	session := sessions.GetOrCreateActive(msg.SessionKey)
 	sessions.UpdateUserMeta(msg.SessionKey, msg.UserName, msg.ChatName)
 	// Ensure an interactiveState entry exists before taking the session lock.
@@ -4141,8 +4157,14 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	}
 
 	var actionToken string
+	fileWorkID := ""
+	if state != nil {
+		state.mu.Lock()
+		fileWorkID = state.fileWorkID
+		state.mu.Unlock()
+	}
 	e.actionMu.RLock()
-	actionHostEnabled := e.actionHost != nil
+	actionHostEnabled := e.actionHost != nil || (e.fileWorkHost != nil && fileWorkID != "")
 	e.actionMu.RUnlock()
 	if actionHostEnabled {
 		var err error
@@ -4162,6 +4184,9 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 			envVars = append(envVars, "CC_DATA_DIR="+e.dataDir)
 		}
 		if actionToken != "" {
+			if fileWorkID != "" {
+				envVars = append(envVars, "CC_FILE_ACTION_TOKEN="+actionToken, "CC_FILE_WORK_ID="+fileWorkID)
+			}
 			e.actionMu.RLock()
 			host := e.actionHost
 			e.actionMu.RUnlock()
@@ -4303,6 +4328,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 
 	newState := &interactiveState{
 		agentSession:     agentSession,
+		fileWorkID:       fileWorkID,
 		platform:         p,
 		replyCtx:         replyCtx,
 		agent:            agent,
@@ -5041,6 +5067,8 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				p := state.platform
 				state.mu.Unlock()
 				if message, imageFailure := ImageErrorMessage(err, e.i18n); imageFailure {
+					e.send(p, replyCtx, message)
+				} else if message, fileFailure := FileErrorMessage(err, e.i18n); fileFailure {
 					e.send(p, replyCtx, message)
 				} else {
 					e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), err))

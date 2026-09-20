@@ -33,9 +33,29 @@ type boundedImageBody struct {
 }
 
 func (c imageBoundedHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	resp, err := c.client.Do(req)
+	client := c.client
+	if controlled, _ := req.Context().Value(fileDeliveryRequestKey{}).(bool); controlled {
+		copy := *client
+		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &copy
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	// File limits are opt-in and host-owned. Unmarked legacy file requests
+	// retain their existing behavior; controlled requests are bounded before
+	// the SDK buffers the body, including chunked responses.
+	if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/open-apis/im/v1/messages/") && strings.Contains(req.URL.Path, "/resources/") && req.URL.Query().Get("type") == "file" {
+		if limit, ok := req.Context().Value(fileDownloadLimitKey{}).(int64); ok {
+			if limit <= 0 || limit > core.DefaultFileInputLimit || resp.ContentLength > limit {
+				if err := resp.Body.Close(); err != nil {
+					slog.Warn("feishu: rejected file response close failed")
+				}
+				return nil, core.NewFileInputError(core.MsgFileInputTooLarge)
+			}
+			resp.Body = boundedImageBody{Reader: io.LimitReader(resp.Body, limit+1), Closer: resp.Body}
+		}
 	}
 	if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/open-apis/im/v1/messages/") && strings.Contains(req.URL.Path, "/resources/") && req.URL.Query().Get("type") == "image" {
 		limit := core.MaxImageBytes

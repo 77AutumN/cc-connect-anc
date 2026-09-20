@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -17,6 +18,17 @@ type Platform interface {
 
 // ErrNotSupported indicates a platform doesn't support a particular operation.
 var ErrNotSupported = errors.New("operation not supported by this platform")
+
+// ErrFileNotSubmitted means no recipient-visible message was accepted. All
+// other delivery errors are uncertain and must not trigger an automatic retry.
+var ErrFileNotSubmitted = errors.New("file was not submitted")
+
+// FileReceiptSender is used only by a trusted file-work host. Route bytes are
+// created from an authenticated inbound context and never supplied by a model.
+type FileReceiptSender interface {
+	FileReplyRoute(replyCtx any) (json.RawMessage, error)
+	SendFileWithReceipt(ctx context.Context, route json.RawMessage, file FileAttachment, deliveryID string) (string, error)
+}
 
 // ReplyContextReconstructor is an optional interface for platforms that can
 // recreate a reply context from a session key. This is needed for cron jobs

@@ -21,6 +21,7 @@ import (
 
 	ccconnect "github.com/chenhg5/cc-connect"
 	"github.com/chenhg5/cc-connect/actionhost/crmfollowup"
+	"github.com/chenhg5/cc-connect/actionhost/files"
 	"github.com/chenhg5/cc-connect/actionhost/opsalerts"
 	"github.com/chenhg5/cc-connect/actionhost/reminders"
 	"github.com/chenhg5/cc-connect/actionhost/teambrain"
@@ -237,6 +238,13 @@ var topLevelCommandHandlers = map[string]func([]string){
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "files-init" {
+		if len(os.Args) != 3 || files.Initialize(os.Args[2]) != nil {
+			slog.Error("file ledger initialization refused")
+			os.Exit(1)
+		}
+		return
+	}
 	alertDBPath, alertOwnerProject := os.Getenv("MYANC_OPS_ALERT_DB"), os.Getenv("MYANC_OPS_ALERT_OWNER_PROJECT")
 	_ = os.Unsetenv("MYANC_OPS_ALERT_DB")
 	_ = os.Unsetenv("MYANC_OPS_ALERT_OWNER_PROJECT")
@@ -1075,6 +1083,15 @@ func main() {
 			engine.SetConversationOnly()
 		}
 		engines = append(engines, engine)
+		fileServer, closeFileHost, err := configureFileWork(proj, engine, platforms)
+		if err != nil {
+			slog.Error("file work startup rejected", "error", err)
+			os.Exit(1)
+		}
+		defer closeFileHost()
+		if fileServer != nil {
+			go func() { crmToolErrors <- fileServer.Serve() }()
+		}
 		effectiveWorkDirs = append(effectiveWorkDirs, effectiveWorkDir)
 	}
 	var reminderHost *reminders.Host

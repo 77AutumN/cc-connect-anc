@@ -496,7 +496,8 @@ type ProjectConfig struct {
 	// runs cc-connect itself. Requires passwordless sudo to the target user
 	// and is POSIX-only. See docs/usage.md "Running agents as a different
 	// Unix user" for setup and migration.
-	RunAsUser string `toml:"run_as_user,omitempty"`
+	RunAsUser string         `toml:"run_as_user,omitempty"`
+	FileWork  FileWorkConfig `toml:"file_work,omitempty"`
 	// RunAsEnv optionally extends the minimal environment variable allowlist
 	// that crosses the sudo boundary when RunAsUser is set. The default
 	// allowlist (LANG, LC_*, TERM) is always included; PATH is NOT preserved
@@ -553,6 +554,16 @@ type ProjectConfig struct {
 	Shell string `toml:"shell,omitempty"`
 	// ShellProfile overrides the global shell_profile for this project.
 	ShellProfile string `toml:"shell_profile,omitempty"`
+}
+
+// FileWorkConfig is disabled by default. Enabling requires a separately
+// provisioned ledger, protected directories and an isolated agent launcher.
+type FileWorkConfig struct {
+	Enabled     bool   `toml:"enabled"`
+	Ledger      string `toml:"ledger"`
+	Snapshots   string `toml:"snapshots"`
+	WorkBaseDir string `toml:"work_base_dir"`
+	ToolsSocket string `toml:"tools_socket"`
 }
 
 type AgentConfig struct {
