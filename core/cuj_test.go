@@ -2292,6 +2292,7 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 	pB := &stubPlatformEngine{n: "platB"}
 	agent := &cujAgent{}
 	e := NewEngine("test", agent, []Platform{pA, pB}, dir+"/sessions.json", LangEnglish)
+	t.Cleanup(func() { _ = e.Stop() })
 
 	// Fire 5 messages on each platform concurrently.
 	var wg sync.WaitGroup
@@ -2324,10 +2325,12 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 	// constrained CI hosts; the in-isolation run finishes < 2s.
 	deadline := time.After(30 * time.Second)
 	for {
-		histA := e.sessions.GetOrCreateActive("platA:userA").GetHistory(0)
-		histB := e.sessions.GetOrCreateActive("platB:userB").GetHistory(0)
-		// Each user sent 5 messages — expect each session to have ≥5 user
-		// entries when fully drained.
+		sessionA := e.sessions.GetOrCreateActive("platA:userA")
+		sessionB := e.sessions.GetOrCreateActive("platB:userB")
+		histA := sessionA.GetHistory(0)
+		histB := sessionB.GetHistory(0)
+		// User history is appended before the reply and final disk save.
+		// Wait for both queues to finish before assertions or TempDir cleanup.
 		userA := 0
 		for _, h := range histA {
 			if h.Role == "user" {
@@ -2340,7 +2343,7 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 				userB++
 			}
 		}
-		if userA >= 5 && userB >= 5 {
+		if userA >= 5 && userB >= 5 && !sessionA.Busy() && !sessionB.Busy() {
 			break
 		}
 		select {
@@ -2363,6 +2366,18 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 	for _, h := range histB {
 		if strings.Contains(h.Content, "from A") {
 			t.Fatalf("session B history leaked A's message: %+v", h)
+		}
+	}
+
+	// Each completed turn must also be persisted, not merely received.
+	reloaded := NewSessionManager(dir + "/sessions.json")
+	for _, key := range []string{"platA:userA", "platB:userB"} {
+		roles := map[string]int{}
+		for _, entry := range reloaded.GetOrCreateActive(key).GetHistory(0) {
+			roles[entry.Role]++
+		}
+		if roles["user"] != 5 || roles["assistant"] != 5 {
+			t.Fatalf("%s finished before all replies were persisted: %v", key, roles)
 		}
 	}
 
