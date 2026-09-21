@@ -133,7 +133,7 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 							return flags, ErrInvalid
 						}
 						defaultType, defaultSeen = attr("ContentType"), true
-					case t.Name.Local == "Override" && attr("PartName") == "/"+mainPart:
+					case t.Name.Local == "Override" && strings.EqualFold(attr("PartName"), "/"+mainPart):
 						if overrideSeen {
 							return flags, ErrInvalid
 						}
