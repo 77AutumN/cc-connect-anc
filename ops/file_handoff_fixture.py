@@ -74,7 +74,7 @@ def main():
             with sudoers.open('x', encoding='utf-8') as stream:
                 sudoers_created = True
                 stream.write(f'Defaults:{gateway} env_keep += "CC_FILE_ACTION_TOKEN"\n'
-                    # Match the existing deployment: sudo login keeps its
+                    # Match the reviewed sudoers template: sudo login keeps its
                     # children in the caller's lifetime, not a logind user scope.
                     f'Defaults:{gateway} pam_login_service=sudo\n'
                     f'{gateway} ALL=({model}) NOPASSWD: /usr/bin/python3 -I -B {bundle}/work_sandbox.py --config {config} --work-root {workspace}/works/* -- {command} -c *\n'
