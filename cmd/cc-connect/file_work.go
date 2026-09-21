@@ -24,6 +24,9 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 	if project.RunAsUser == "" || len(platforms) != 1 || project.Mode != "" {
 		return nil, noop, errInvalid
 	}
+	if project.FileWork.Runtime != "" && project.FileWork.Runtime != "native" {
+		return nil, noop, errInvalid
+	}
 	account, err := user.Lookup(project.RunAsUser)
 	if err != nil {
 		return nil, noop, errInvalid
@@ -36,20 +39,23 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 	if err != nil || files.ValidateWorkGroup(project.FileWork.WorkBaseDir, gid) != nil {
 		return nil, noop, errInvalid
 	}
-	for _, key := range []string{"file_work_launcher", "file_work_config"} {
-		path, _ := project.Agent.Options[key].(string)
-		if files.ValidateHostFile(path) != nil {
+	cfg := project.FileWork
+	if cfg.Runtime == "native" {
+		// Native mode reuses the fixed /tool listener. Reject misleading socket
+		// configuration rather than accidentally starting another endpoint.
+		if cfg.ToolsSocket != "" {
 			return nil, noop, errInvalid
 		}
-	}
-	cfg := project.FileWork
-	runtimeConfigPath, _ := project.Agent.Options["file_work_config"].(string)
-	raw, err := os.ReadFile(runtimeConfigPath)
-	if err != nil || !fileRuntimeMatches(raw, cfg) {
-		return nil, noop, errInvalid
-	}
-	for _, dir := range []string{cfg.WorkBaseDir, filepath.Dir(cfg.ToolsSocket)} {
-		if files.ValidateHostDirectory(dir) != nil {
+	} else {
+		for _, key := range []string{"file_work_launcher", "file_work_config"} {
+			path, _ := project.Agent.Options[key].(string)
+			if files.ValidateHostFile(path) != nil {
+				return nil, noop, errInvalid
+			}
+		}
+		runtimeConfigPath, _ := project.Agent.Options["file_work_config"].(string)
+		raw, err := os.ReadFile(runtimeConfigPath)
+		if err != nil || !fileRuntimeMatches(raw, cfg) || files.ValidateHostDirectory(filepath.Dir(cfg.ToolsSocket)) != nil {
 			return nil, noop, errInvalid
 		}
 	}
@@ -73,6 +79,9 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 	}); err != nil {
 		closeHost()
 		return nil, noop, err
+	}
+	if cfg.Runtime == "native" {
+		return nil, closeHost, nil
 	}
 	server, err := core.ListenActionToolsUnix(cfg.ToolsSocket, engine.ActionToolHandler())
 	if err != nil {

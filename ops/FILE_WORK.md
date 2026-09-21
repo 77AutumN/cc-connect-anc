@@ -3,6 +3,10 @@
 Disabled by default. This candidate does not authorize deployment, account or
 permission changes, model execution, or live Feishu sends. The offline launcher
 has no provider network/authentication; real model readiness is **incomplete**.
+An explicit `runtime = "native"` uses the existing managed employee Claude instead.
+It retains that employee's cwd, authentication, knowledge clients and Skills,
+adding the selected work directory with `--add-dir`. It does not provide a separate
+OS sandbox between the same employee's works. Account separation remains unchanged.
 
 An enabled project uses one fixed sender/chat Feishu route and a distinct existing
 `run_as_user`. Each directed top-level request starts a native session and work.
@@ -24,6 +28,10 @@ One checked descriptor supplies the immutable snapshot and bytes actually sent.
 Only `work-context`, `file-deliver`, `file-status` are added to the existing `/tool`
 handler. They take the live host session token; identity, destination and work
 authority are never caller-selected. The Unix endpoint has no management routes.
+Native mode reuses the existing fixed `127.0.0.1:18743/tool` listener through
+Claude's sandbox HTTP proxy; leave `tools_socket` empty in native mode. The client
+uses the gateway-supplied `CC_FILE_WORK_ROOT`, not the employee's cwd, for output
+publication. A missing proxy fails; there is no direct-network or admin fallback.
 `ops/file_tool.py` is installed as `cc-connect-file` only during separately
 authorized runtime provisioning. JSON comes from stdin, not a shell argument.
 

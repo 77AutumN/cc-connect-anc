@@ -70,6 +70,7 @@ type Agent struct {
 	ccDataDir        string
 	fileWorkLauncher string
 	fileWorkConfig   string
+	fileWorkNative   bool
 
 	// spawnOpts controls OS-user isolation via run_as_user. Zero value
 	// means legacy spawn as the supervisor user. See core/runas.go.
@@ -155,6 +156,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	ccDataDir, _ := opts["cc_data_dir"].(string)
 	fileWorkLauncher, _ := opts["file_work_launcher"].(string)
 	fileWorkConfig, _ := opts["file_work_config"].(string)
+	fileWorkNative, _ := opts["file_work_native"].(bool)
 
 	var pluginDirs []string
 	if dir, ok := opts["plugin_dir"].(string); ok && dir != "" {
@@ -288,6 +290,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		ccDataDir:        ccDataDir,
 		fileWorkLauncher: fileWorkLauncher,
 		fileWorkConfig:   fileWorkConfig,
+		fileWorkNative:   fileWorkNative,
 
 		appendSystemPrompt: appendSystemPrompt,
 	}, nil
