@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 )
 
@@ -30,10 +31,16 @@ func (e *Engine) beginQueuedFileTurn(state *interactiveState, session *Session, 
 			}
 		}
 	}
-	if started && e.sessions.setFileTurnStatus(session, queued.messageID, "started") == nil {
-		if _, err := host.ActivateInputs(e.ctx, queued.principal, queued.fileWorkID); err == nil {
+	if started {
+		if err := e.sessions.setFileTurnStatus(session, queued.messageID, "started"); err != nil {
+			slog.Error("file supplement could not start", "operation", "save-started")
+		} else if _, err := host.ActivateInputs(e.ctx, queued.principal, queued.fileWorkID); err != nil {
+			slog.Error("file supplement could not start", "operation", "activate-inputs")
+		} else {
 			return true
 		}
+	} else {
+		slog.Warn("file supplement could not start", "operation", "validate-association")
 	}
 	e.reply(queued.platform, queued.replyCtx, e.i18n.T(MsgFileUnfinished))
 	e.notifyDroppedQueuedMessages(state, errors.New(e.i18n.T(MsgFileUnfinished)))

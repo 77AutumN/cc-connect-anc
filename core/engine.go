@@ -3948,6 +3948,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 		host := e.fileWorkHost
 		e.actionMu.RUnlock()
 		if _, err := host.ActivateInputs(e.ctx, msg.fileTurn.Principal, msg.fileTurn.WorkID); err != nil {
+			slog.Error("file supplement could not start", "operation", "activate-inputs")
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileUnfinished))
 			return
 		}

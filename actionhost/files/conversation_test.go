@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,75 @@ import (
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+type blockingSupplementHost struct {
+	*Host
+	entered, release chan struct{}
+}
+
+func (h *blockingSupplementHost) Bind(ctx context.Context, b Binding) (WorkContext, error) {
+	if b.DeferInputs {
+		close(h.entered)
+		<-h.release
+	}
+	return h.Host.Bind(ctx, b)
+}
+
+func TestCUJ_FileSupplement_TurnFinishesDuringIntake(t *testing.T) {
+	p := &fileJourneyPlatform{}
+	f := newFixture(t, p.SendFileWithReceipt)
+	base := t.TempDir()
+	_ = os.Chmod(base, 0700)
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	shared := contextOnlyJourney()
+	e := conversationEngine(t, f, p, shared, base, path)
+	host := &blockingSupplementHost{Host: f.host, entered: make(chan struct{}), release: make(chan struct{})}
+	if err := e.SetFileWorkHost(host, func(id string) (string, int, error) {
+		root, err := PrepareWork(base, id, os.Geteuid())
+		return root, os.Geteuid(), err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.ReceiveMessage(p, naturalMessage("first", "", "Prepare a draft"))
+	awaitFileCondition(t, func() bool { return shared.turns.Load() == 1 })
+	msg := naturalMessage("racing", "", "Use this revised budget", core.FileAttachment{FileName: "budget.xlsx", Data: packageBytes(t, documentParts("xlsx"))})
+	ack := make(chan bool, 1)
+	msg.OnAccepted = func() {
+		s := core.NewSessionManager(path).GetOrCreateActive(msg.SessionKey)
+		ack <- len(s.FileTurns) == 1 && s.FileTurns[0].Principal.MessageID == "racing"
+	}
+	received := make(chan struct{})
+	go func() { e.ReceiveMessage(p, msg); close(received) }()
+	select {
+	case <-host.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("intake not reached")
+	}
+	nextFileResult(t, shared)
+	awaitFileIdle(t, e)
+	close(host.release)
+	select {
+	case <-received:
+	case <-time.After(5 * time.Second):
+		t.Fatal("intake did not finish")
+	}
+	select {
+	case saved := <-ack:
+		if !saved {
+			t.Fatal("busy supplement acknowledged without recovery record")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("supplement not acknowledged")
+	}
+	if got := nextFileResult(t, shared); len(got.Inputs) != 1 {
+		t.Fatal("deferred attachment not activated")
+	}
+	awaitFileIdle(t, e)
+	e.ReceiveMessage(p, naturalMessage("racing", "", "Use this revised budget"))
+	if shared.turns.Load() != 2 {
+		t.Fatal("accepted supplement replayed")
+	}
+}
 
 func naturalMessage(id, parent, text string, files ...core.FileAttachment) *core.Message {
 	return &core.Message{Platform: "fixture", SessionKey: "fixture:room:staff-a", ChannelID: "room", UserID: "staff-a",

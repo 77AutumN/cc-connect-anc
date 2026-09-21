@@ -263,6 +263,14 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		}
 		return fail(MsgPreviousProcessing)
 	}
+	// The running turn may finish while Bind saves attachments. This is still
+	// an accepted supplement, even when it can now start without waiting.
+	if busy != nil {
+		if err := e.sessions.addFileTurn(session, *msg.fileTurn, e.maxQueuedMessages); err != nil {
+			session.UnlockWithoutUpdate()
+			return fail(MsgFileSupplementSaveFailed)
+		}
+	}
 	e.ensureInteractiveStateForQueueing(msg.SessionKey, p, msg.ReplyCtx)
 	e.interactiveMu.Lock()
 	state := e.interactiveStates[msg.SessionKey]
