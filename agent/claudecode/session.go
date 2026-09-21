@@ -900,7 +900,8 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 			slog.Error("claudeSession: unattended permission response failed", "error", err)
 			select {
 			case cs.events <- core.Event{Type: core.EventError, Error: fmt.Errorf("agent session could not complete the operation")}:
-			case <-cs.ctx.Done():
+			default:
+				// A stalled event consumer must not keep the process alive.
 			}
 			cs.cancel()
 		}

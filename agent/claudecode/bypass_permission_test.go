@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/chenhg5/cc-connect/core"
 )
@@ -115,5 +116,28 @@ func TestBypassModeChangesRequireNativeCLIRestart(t *testing.T) {
 		if cs.SetLiveMode(pair[1]) || cs.permissionModeValue() != pair[0] {
 			t.Fatalf("%s -> %s must restart native CLI", pair[0], pair[1])
 		}
+	}
+}
+
+func TestBypassDenialWriteFailureFullQueueStillCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cs := &claudeSession{stdin: permissionBrokenStdin{}, events: make(chan core.Event), ctx: ctx, cancel: cancel}
+	cs.alive.Store(true)
+	cs.setPermissionMode("bypassPermissions")
+	done := make(chan struct{})
+	go func() {
+		cs.handleControlRequest(map[string]any{"request_id": "blocked-fixture", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "fixture"}}})
+		close(done)
+	}()
+	select {
+	case <-done:
+		if ctx.Err() == nil {
+			t.Fatal("failed denial did not cancel the process")
+		}
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("permission failure waits for an event consumer before cancelling")
 	}
 }
