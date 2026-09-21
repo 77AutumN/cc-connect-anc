@@ -50,6 +50,7 @@ func receiveFileWorkMessage(t *testing.T, p *Platform, got <-chan *core.Message,
 	select {
 	case msg := <-got:
 		if !msg.ControlledFileWork || msg.Platform != "feishu" || msg.UserID != "sender-fixture" ||
+			msg.FileWorkPrivate != (*event.Event.Message.ChatType == "p2p") ||
 			msg.ChannelID != "chat-fixture" || msg.SessionKey != "feishu:chat-fixture:sender-fixture" ||
 			msg.MessageID != *event.Event.Message.MessageId || msg.ParentMessageID != *event.Event.Message.ParentId ||
 			msg.ExtraContent != "" || len(msg.Images) != 0 || msg.Audio != nil {

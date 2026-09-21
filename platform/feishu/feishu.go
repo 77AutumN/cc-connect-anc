@@ -116,6 +116,7 @@ type replyContext struct {
 	bootstrapThread      bool
 	parentID             string
 	controlledFileWork   bool
+	fileWorkPrivate      bool
 	fileParentAuthorized bool
 }
 
@@ -1714,6 +1715,7 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		messageID: messageID, chatID: chatID, sessionKey: sessionKey,
 		rootID: stringValue(msg.RootId), threadID: stringValue(msg.ThreadId), parentID: parentID,
 		controlledFileWork: controlledFiles, fileParentAuthorized: knownFileParent,
+		fileWorkPrivate: chatType == "p2p",
 	}
 	slog.Debug(p.tag()+": routed inbound message",
 		"message_id", messageID,
@@ -1775,7 +1777,8 @@ func (p *Platform) dispatchMessageContent(ctx context.Context, msgType, content 
 	}
 	if rctx.controlledFileWork {
 		p.dispatchFileWork(ctx, msgType, content, mentions, &core.Message{
-			Platform: p.Name(), SessionKey: sessionKey, ChannelID: chatID,
+			FileWorkPrivate: rctx.fileWorkPrivate,
+			Platform:        p.Name(), SessionKey: sessionKey, ChannelID: chatID,
 			UserID: userID, MessageID: messageID, ReplyCtx: rctx,
 			ParentMessageID: rctx.parentID, ControlledFileWork: true,
 			UserMessageTimeMs: createTimeMs,

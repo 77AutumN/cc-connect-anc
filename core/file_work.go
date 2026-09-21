@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -107,9 +108,8 @@ func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string
 	return nil
 }
 
-// Every directed top-level message starts a native session. A revision must
-// reply to an inbound message or delivery receipt already recorded for that
-// principal. No "most recent sender" or model-supplied work selection is used.
+// Private messages continue the sender's active work. Explicit replies take
+// precedence; groups still require an owned reply to continue an earlier work.
 func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	e.actionMu.RLock()
 	host, prepare := e.fileWorkHost, e.fileWorkPrepare
@@ -137,6 +137,14 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	// throughput requires it. File processing itself runs outside this lock.
 	e.fileWorkMu.Lock()
 	defer e.fileWorkMu.Unlock()
+	intent := ""
+	if msg.FileWorkPrivate && len(msg.Files) == 0 {
+		intent = fileConversationIntent(msg.Content)
+	}
+	if intent == "stop" {
+		e.cmdStop(p, msg)
+		return true
+	}
 	var session *Session
 	for _, existing := range e.sessions.ListSessions(msg.SessionKey) {
 		if existing.Busy() {
@@ -159,7 +167,11 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 			return fail(MsgFileWorkAssociationRequired)
 		}
 	} else if msg.ParentMessageID == "" && errors.Is(lookupErr, ErrFileWorkNotFound) {
-		session = e.sessions.NewSession(msg.SessionKey, "file work")
+		if msg.FileWorkPrivate && intent != "new" {
+			session = e.sessions.GetOrCreateActive(msg.SessionKey)
+		} else {
+			session = e.sessions.NewSession(msg.SessionKey, "file work")
+		}
 	} else {
 		return fail(MsgFileWorkAssociationRequired)
 	}
@@ -217,6 +229,26 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	runMessageAccepted(msg)
 	go e.processInteractiveMessageWith(p, msg, session, agent, e.sessions, msg.SessionKey, "", msg.SessionKey)
 	return true
+}
+
+// Only an explicit opening clause in the current user's own text is a control
+// instruction. Ambiguous topic changes remain conversational clarification.
+func fileConversationIntent(content string) string {
+	text := strings.TrimSpace(content)
+	switch strings.TrimRight(text, "。.!！ ") {
+	case "先停下", "停一下", "停止当前工作", "先暂停", "stop", "Stop":
+		return "stop"
+	}
+	clause := strings.FieldsFunc(text, func(r rune) bool {
+		return strings.ContainsRune("，,:：。.!！\n", r)
+	})
+	if len(clause) > 0 {
+		switch strings.TrimSpace(clause[0]) {
+		case "换个事", "换一件事", "另开一件事", "另外做一件事", "新任务", "开始一项新工作", "new task", "New task":
+			return "new"
+		}
+	}
+	return ""
 }
 
 func fileNativeSessionID(session *Session) string {
