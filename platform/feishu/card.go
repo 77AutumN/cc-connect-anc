@@ -45,6 +45,7 @@ func (p *interactivePlatform) ReplyCard(ctx context.Context, rctx any, card *cor
 		}
 		id, err := p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
 		if err == nil {
+			p.observeFileWorkReply(rc, id)
 			err = p.bindInteraction(id, rc, card)
 		}
 		return err
@@ -93,6 +94,7 @@ func (p *interactivePlatform) SendCard(ctx context.Context, rctx any, card *core
 	}
 	id, err := p.createMessageWithID(ctx, rc.chatID, larkim.MsgTypeInteractive, cardJSON, "send card")
 	if err == nil {
+		p.observeFileWorkReply(rc, id)
 		err = p.bindInteraction(id, rc, card)
 	}
 	return err

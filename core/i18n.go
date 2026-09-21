@@ -674,6 +674,10 @@ const (
 	MsgFileInputFormatUnsupported         MsgKey = "file_input_format_unsupported"
 	MsgFileWorkUnavailable                MsgKey = "file_work_unavailable"
 	MsgFileWorkAssociationRequired        MsgKey = "file_work_association_required"
+	MsgFileSupplementQueued               MsgKey = "file_supplement_queued"
+	MsgFileSupplementSaveFailed           MsgKey = "file_supplement_save_failed"
+	MsgFileUnfinished                     MsgKey = "file_unfinished"
+	MsgFileRecoveryUnknown                MsgKey = "file_recovery_unknown"
 	MsgImageLimit                         MsgKey = "image_input_limit"
 	MsgImageInvalid                       MsgKey = "image_input_invalid"
 	MsgImageDimensions                    MsgKey = "image_input_dimensions"
@@ -4482,6 +4486,34 @@ var messages = map[MsgKey]map[Language]string{
 	},
 	MsgFileWorkUnavailable: {
 		LangEnglish: "Controlled file processing is unavailable for this request. Nothing was submitted.", LangChinese: "此请求的受控文件处理暂不可用，未提交模型处理。", LangTraditionalChinese: "此請求的受控檔案處理暫不可用，未提交模型處理。", LangJapanese: "このリクエストの制限付きファイル処理は利用できません。未送信です。", LangSpanish: "El procesamiento controlado de archivos no está disponible para esta solicitud. No se envió nada.",
+	},
+	MsgFileSupplementQueued: {
+		LangEnglish:            "Supplement saved. I will handle it in the next version after this turn finishes.",
+		LangChinese:            "补充要求已保存，当前这轮结束后会在下一版处理。",
+		LangTraditionalChinese: "補充要求已儲存，目前這輪結束後會在下一版處理。",
+		LangJapanese:           "追加の要望を保存しました。現在の処理が終わった後、次の版に反映します。",
+		LangSpanish:            "Requisito adicional guardado. Lo incorporaré en la siguiente versión al terminar este turno.",
+	},
+	MsgFileSupplementSaveFailed: {
+		LangEnglish:            "I could not confirm that the supplement was saved. Keep this message until storage is checked before continuing it.",
+		LangChinese:            "未能确认补充要求已保存。请保留这条消息，待存储检查后核对再继续处理这项补充。",
+		LangTraditionalChinese: "未能確認補充要求已儲存。請保留這則訊息，待儲存檢查後核對再繼續處理這項補充。",
+		LangJapanese:           "追加の要望の保存を確認できません。保存先を確認してから続行するため、このメッセージを残してください。",
+		LangSpanish:            "No pude confirmar que se guardó el requisito. Conserve este mensaje hasta revisar el almacenamiento antes de continuarlo.",
+	},
+	MsgFileUnfinished: {
+		LangEnglish:            "Unfinished supplements are retained. Reply “continue” to reconcile existing results and continue; completed or uncertain sends will not be replayed.",
+		LangChinese:            "尚未确认完成的补充要求已保留。回复“继续”，我会先核对已有成果再接着处理；已完成或结果不明的发送不会重放。",
+		LangTraditionalChinese: "尚未確認完成的補充要求已保留。回覆「繼續」，我會先核對已有成果再接著處理；已完成或結果不明的傳送不會重放。",
+		LangJapanese:           "未完了の追加要望を保持しています。「continue」と返信すると既存の成果を確認して続けます。完了済み・結果不明の送信は再実行しません。",
+		LangSpanish:            "Los requisitos pendientes se conservan. Responda «continue» para revisar los resultados y continuar; no se repetirán envíos completados o inciertos.",
+	},
+	MsgFileRecoveryUnknown: {
+		LangEnglish:            "A previous file delivery is still unconfirmed. Recovery is paused until its actual receipt is checked; I will not resend it.",
+		LangChinese:            "之前的文件投递结果仍未确认。已暂停续接，需要先核实实际回执；不会重复发送。",
+		LangTraditionalChinese: "先前的檔案投遞結果仍未確認。已暫停續接，需要先核實實際回執；不會重複傳送。",
+		LangJapanese:           "以前のファイル送信結果が未確認です。実際の受領記録を確認するまで再開を停止し、再送信しません。",
+		LangSpanish:            "Una entrega anterior sigue sin confirmarse. La recuperación se pausa hasta verificar su recibo; no se reenviará.",
 	},
 	MsgFileWorkAssociationRequired: {
 		LangEnglish: "This reply cannot be linked to a saved work. Reply to its original request or delivered file, or resend the materials as a new request.", LangChinese: "无法定位这次回复所属的工作。请回复原请求或已交付文件；也可重新发送材料，发起新工作。", LangTraditionalChinese: "無法定位這次回覆所屬的工作。請回覆原請求或已交付檔案；也可重新傳送材料，發起新工作。", LangJapanese: "返信に対応する作業を確認できません。元の依頼か納品ファイルに返信するか、資料を新しい依頼として再送してください。", LangSpanish: "No se puede vincular esta respuesta a un trabajo guardado. Responda a la solicitud original o al archivo entregado, o reenvíe los materiales como una nueva solicitud.",

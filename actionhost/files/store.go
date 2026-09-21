@@ -181,7 +181,17 @@ func validState(st state) bool {
 			return false
 		}
 		sessions[key], roots[w.RootIdentity] = true, true
-		for _, i := range w.Inputs {
+		allInputs := append([]Input(nil), w.Inputs...)
+		if len(w.PendingInputs) > 128 {
+			return false
+		}
+		for message, pending := range w.PendingInputs {
+			if !w.Messages[message] || len(pending) > 4 {
+				return false
+			}
+			allInputs = append(allInputs, pending...)
+		}
+		for _, i := range allInputs {
 			if !validHash(i.ID) || i.Path != filepath.Join(w.Root, "inputs", i.ID+filepath.Ext(i.Path)) || !safeName(i.Name) || !validHash(i.SHA256) {
 				return false
 			}

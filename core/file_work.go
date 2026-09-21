@@ -6,18 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // FileWorkBinding is assembled only from the authenticated transport and host
 // filesystem configuration. None of these fields are model tool arguments.
 type FileWorkBinding struct {
-	Principal ActionPrincipal
-	SessionID string
-	Route     json.RawMessage
-	WorkRoot  string
-	OwnerUID  int
-	Inputs    []FileAttachment
+	Principal   ActionPrincipal
+	SessionID   string
+	Route       json.RawMessage
+	WorkRoot    string
+	OwnerUID    int
+	Inputs      []FileAttachment
+	DeferInputs bool // Keep busy-turn attachments in host-only snapshots until dequeue.
 }
 
 type FileWorkInput struct {
@@ -38,13 +40,14 @@ type FileWorkArtifact struct {
 }
 
 type FileWorkContext struct {
-	Enabled       bool               `json:"enabled"`
-	WorkID        string             `json:"work_id"`
-	WorkRoot      string             `json:"-"`
-	Inputs        []FileWorkInput    `json:"inputs"`
-	OutputDir     string             `json:"output_dir"`
-	LatestVersion int                `json:"latest_version"`
-	Artifacts     []FileWorkArtifact `json:"artifacts"`
+	Enabled        bool               `json:"enabled"`
+	WorkID         string             `json:"work_id"`
+	WorkRoot       string             `json:"-"`
+	Inputs         []FileWorkInput    `json:"inputs"`
+	OutputDir      string             `json:"output_dir"`
+	LatestVersion  int                `json:"latest_version"`
+	Artifacts      []FileWorkArtifact `json:"artifacts"`
+	IncomingInputs []FileWorkInput    `json:"-"` // Host intake receipt, never model-visible pending materials.
 }
 
 type FileWorkRef struct{ WorkID, SessionID string }
@@ -52,6 +55,8 @@ type FileWorkRef struct{ WorkID, SessionID string }
 type FileWorkHost interface {
 	Bind(context.Context, FileWorkBinding) (FileWorkContext, error)
 	FindByMessage(context.Context, ActionPrincipal, string) (FileWorkRef, error)
+	RecordReply(context.Context, ActionPrincipal, string) error
+	ActivateInputs(context.Context, ActionPrincipal, string) (FileWorkContext, error)
 	Tool(context.Context, string, json.RawMessage, ActionPrincipal, string) (map[string]any, error)
 }
 
@@ -59,6 +64,8 @@ type FileWorkHost interface {
 // happens before downloading an unmentioned group attachment.
 type FileWorkReceiver interface {
 	SetFileWorkEnabled(bool, func(Message, string) bool) error
+	SetFileWorkReplyObserver(func(Message, string) error)
+	FileWorkReplyContext(json.RawMessage) (any, error)
 }
 
 // FileWorkAgent creates an isolated process configuration for exactly one work.
@@ -100,6 +107,9 @@ func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string
 		}); err != nil {
 			return err
 		}
+		receiver.SetFileWorkReplyObserver(func(msg Message, receipt string) error {
+			return host.RecordReply(e.ctx, e.actionPrincipalForMessage(&msg), receipt)
+		})
 	}
 	e.actionMu.Lock()
 	e.fileWorkHost, e.fileWorkPrepare = host, prepare
@@ -107,9 +117,8 @@ func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string
 	return nil
 }
 
-// Every directed top-level message starts a native session. A revision must
-// reply to an inbound message or delivery receipt already recorded for that
-// principal. No "most recent sender" or model-supplied work selection is used.
+// Private messages continue the sender's active work. Explicit replies take
+// precedence; groups still require an owned reply to continue an earlier work.
 func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	e.actionMu.RLock()
 	host, prepare := e.fileWorkHost, e.fileWorkPrepare
@@ -120,6 +129,12 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	fail := func(key MsgKey) bool { e.reply(p, msg.ReplyCtx, e.i18n.T(key)); return true }
 	if host == nil || prepare == nil || !msg.ControlledFileWork {
 		return fail(MsgFileWorkUnavailable)
+	}
+	e.sessions.mu.RLock()
+	storageError := e.sessions.loadErr
+	e.sessions.mu.RUnlock()
+	if storageError != nil {
+		return fail(MsgFileSupplementSaveFailed)
 	}
 	sender, ok := p.(FileReceiptSender)
 	if !ok {
@@ -137,11 +152,23 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	// throughput requires it. File processing itself runs outside this lock.
 	e.fileWorkMu.Lock()
 	defer e.fileWorkMu.Unlock()
+	intent := ""
+	if msg.FileWorkPrivate && len(msg.Files) == 0 {
+		intent = fileConversationIntent(msg.Content)
+	}
+	if intent == "stop" {
+		e.cmdStop(p, msg)
+		return true
+	}
 	var session *Session
+	var busy *Session
 	for _, existing := range e.sessions.ListSessions(msg.SessionKey) {
 		if existing.Busy() {
-			return fail(MsgPreviousProcessing)
+			busy = existing
 		}
+	}
+	if busy != nil && msg.ParentMessageID == "" && (!msg.FileWorkPrivate || intent == "new") {
+		return fail(MsgPreviousProcessing)
 	}
 	lookup := msg.ParentMessageID
 	if lookup == "" {
@@ -159,15 +186,28 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 			return fail(MsgFileWorkAssociationRequired)
 		}
 	} else if msg.ParentMessageID == "" && errors.Is(lookupErr, ErrFileWorkNotFound) {
-		session = e.sessions.NewSession(msg.SessionKey, "file work")
+		if msg.FileWorkPrivate && intent != "new" {
+			session = e.sessions.GetOrCreateActive(msg.SessionKey)
+		} else {
+			session = e.sessions.NewSession(msg.SessionKey, "file work")
+		}
 	} else {
 		return fail(MsgFileWorkAssociationRequired)
+	}
+	if busy != nil && busy != session {
+		return fail(MsgPreviousProcessing)
+	}
+	for _, turn := range session.fileTurns() {
+		if turn.Principal.MessageID == msg.MessageID || turn.ResumeMessageID == msg.MessageID {
+			runMessageAccepted(msg)
+			return true
+		}
 	}
 	root, uid, err := prepare(fileNativeSessionID(session))
 	if err != nil {
 		return fail(MsgFileWorkUnavailable)
 	}
-	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files})
+	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files, DeferInputs: busy != nil || session.hasUnfinishedFileTurns()})
 	if err != nil {
 		if message, ok := FileErrorMessage(err, e.i18n); ok {
 			e.reply(p, msg.ReplyCtx, message)
@@ -177,6 +217,23 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	}
 	if !work.Enabled || work.WorkID == "" || work.WorkRoot != root {
 		return fail(MsgFileWorkUnavailable)
+	}
+	// Originals are durable in the host before acknowledging a supplement.
+	msg.fileSession = session
+	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued"}
+	if len(msg.Files) > 0 {
+		if len(work.IncomingInputs) != len(msg.Files) {
+			return fail(MsgFileInputSaveFailed)
+		}
+		msg.fileTurn.Inputs = append([]FileWorkInput(nil), work.IncomingInputs...)
+		msg.Content += "\n[Host: selected files were preserved for this work. Read work-context and the registered input paths before answering.]"
+		msg.fileTurn.Content = msg.Content
+	}
+	msg.Files = nil
+	if busy == nil && session.hasUnfinishedFileTurns() {
+		if e.prepareFileRecovery(p, msg, session, work) {
+			return true
+		}
 	}
 	agent, err := e.agent.(FileWorkAgent).ForFileWork(root)
 	if err != nil {
@@ -198,7 +255,21 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		return fail(MsgFileWorkAssociationRequired)
 	}
 	if !session.TryLock() {
+		if e.queueMessageForBusySession(p, msg, msg.SessionKey) {
+			if session.TryLock() {
+				go e.drainOrphanedQueue(session, e.sessions, msg.SessionKey, agent, "")
+			}
+			return true
+		}
 		return fail(MsgPreviousProcessing)
+	}
+	// The running turn may finish while Bind saves attachments. This is still
+	// an accepted supplement, even when it can now start without waiting.
+	if busy != nil {
+		if err := e.sessions.addFileTurn(session, *msg.fileTurn, e.maxQueuedMessages); err != nil {
+			session.UnlockWithoutUpdate()
+			return fail(MsgFileSupplementSaveFailed)
+		}
 	}
 	e.ensureInteractiveStateForQueueing(msg.SessionKey, p, msg.ReplyCtx)
 	e.interactiveMu.Lock()
@@ -207,16 +278,30 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	state.fileWorkID = work.WorkID
 	state.mu.Unlock()
 	e.interactiveMu.Unlock()
-	// The host preserved the originals. Do not let a native attachment saver
-	// create a second, model-writable copy with different authority.
-	if len(msg.Files) > 0 {
-		msg.Content += "\n[Host: selected files were preserved for this work. Read work-context and the registered input paths before answering.]"
-	}
-	msg.Files = nil
 	session.TouchUserActivity()
 	runMessageAccepted(msg)
 	go e.processInteractiveMessageWith(p, msg, session, agent, e.sessions, msg.SessionKey, "", msg.SessionKey)
 	return true
+}
+
+// Only an explicit opening clause in the current user's own text is a control
+// instruction. Ambiguous topic changes remain conversational clarification.
+func fileConversationIntent(content string) string {
+	text := strings.TrimSpace(content)
+	switch strings.TrimRight(text, "。.!！ ") {
+	case "先停下", "停一下", "停止当前工作", "先暂停", "stop", "Stop":
+		return "stop"
+	}
+	clause := strings.FieldsFunc(text, func(r rune) bool {
+		return strings.ContainsRune("，,:：。.!！\n", r)
+	})
+	if len(clause) > 0 {
+		switch strings.TrimSpace(clause[0]) {
+		case "换个事", "换一件事", "另开一件事", "另外做一件事", "新任务", "开始一项新工作", "new task", "New task":
+			return "new"
+		}
+	}
+	return ""
 }
 
 func fileNativeSessionID(session *Session) string {

@@ -508,6 +508,7 @@ type workspaceInitFlow struct {
 // The message is NOT sent to agent stdin at queue time; the event loop
 // sends it after the current turn completes to avoid mid-turn interference.
 type queuedMessage struct {
+	fileWorkID        string
 	messageID         string
 	platform          Platform
 	replyCtx          any
@@ -2468,6 +2469,7 @@ func (e *Engine) onPlatformReady(p Platform) {
 	}
 	slog.Info("platform ready", "project", e.name, "platform", p.Name())
 	e.initPlatformCapabilities(p)
+	e.notifyRecoveredFileTurns(p)
 }
 
 func (e *Engine) markPlatformReady(p Platform) bool {
@@ -2643,6 +2645,12 @@ func (e *Engine) removeQueuedMessageByID(messageID string) (string, bool) {
 		if removed {
 			state.pendingMessages = filtered
 			state.mu.Unlock()
+			// A recalled accepted supplement must not return after restart.
+			if session := e.sessions.FindByID(e.sessions.ActiveSessionID(sessionKey)); session != nil {
+				if err := e.sessions.setFileTurnStatus(session, messageID, "stopped"); err != nil {
+					slog.Error("file supplement recall could not be saved", "error", err)
+				}
+			}
 			return sessionKey, true
 		}
 		state.mu.Unlock()
@@ -3270,7 +3278,19 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
 		return true // handled: queue-full reply sent
 	}
+	fileWorkID := ""
+	if msg.fileTurn != nil {
+		if msg.fileSession == nil || state.fileWorkID != msg.fileTurn.WorkID {
+			return false
+		}
+		if err := e.sessions.addFileTurn(msg.fileSession, *msg.fileTurn, e.maxQueuedMessages); err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+			return true
+		}
+		fileWorkID = msg.fileTurn.WorkID
+	}
 	state.pendingMessages = append(state.pendingMessages, queuedMessage{
+		fileWorkID:        fileWorkID,
 		messageID:         msg.MessageID,
 		platform:          p,
 		replyCtx:          msg.ReplyCtx,
@@ -3302,7 +3322,11 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		"user", msg.UserName,
 		"queue_depth", queueDepth,
 	)
-	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
+	if fileWorkID != "" {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementQueued))
+	} else {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMessageQueued))
+	}
 	return true
 }
 
@@ -3915,6 +3939,20 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 
 	promptContent := e.buildSenderPrompt(msg.Content, msg.UserID, msg.UserName, msg.Platform, msg.SessionKey, msg.ChannelKey)
 	promptContent = e.withReminderClock(promptContent, msg.UserMessageTimeMs)
+	if err := sessions.setFileTurnStatus(session, msg.MessageID, "started"); err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+		return
+	}
+	if msg.fileTurn != nil && len(msg.fileTurn.Inputs) > 0 {
+		e.actionMu.RLock()
+		host := e.fileWorkHost
+		e.actionMu.RUnlock()
+		if _, err := host.ActivateInputs(e.ctx, msg.fileTurn.Principal, msg.fileTurn.WorkID); err != nil {
+			slog.Error("file supplement could not start", "operation", "activate-inputs")
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileUnfinished))
+			return
+		}
+	}
 
 	sendStart := time.Now()
 	state.mu.Lock()
@@ -6115,6 +6153,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				slog.Debug("tts: not enabled", "tts_nil", e.tts == nil, "enabled", e.tts != nil && e.tts.Enabled, "tts_obj_nil", e.tts == nil || e.tts.TTS == nil)
 			}
 
+			if err := sessions.setFileTurnStatus(session, msgID, "completed"); err != nil {
+				e.reply(p, replyCtx, e.i18n.T(MsgFileUnfinished))
+				e.notifyDroppedQueuedMessages(state, errors.New(e.i18n.T(MsgFileUnfinished)))
+				return
+			}
+
 			// Auto-compress after finishing a turn, before sending any queued messages.
 			if triggerAutoCompress {
 				compressor, ok := e.agent.(ContextCompressor)
@@ -6147,7 +6191,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			// for the next turn instead of returning.
 			state.mu.Lock()
 			droppedStale := 0
-			for len(state.pendingMessages) > 0 && e.isQueuedUserMessageStaleForDrainLocked(state, state.pendingMessages[0].userMessageTimeMs) {
+			for len(state.pendingMessages) > 0 && state.pendingMessages[0].fileWorkID == "" && e.isQueuedUserMessageStaleForDrainLocked(state, state.pendingMessages[0].userMessageTimeMs) {
 				state.pendingMessages = state.pendingMessages[1:]
 				droppedStale++
 			}
@@ -6168,6 +6212,9 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				state.currentTurnUserMessageTimeMs = queued.userMessageTimeMs
 				state.currentPrincipal = queued.principal
 				state.mu.Unlock()
+				if !e.beginQueuedFileTurn(state, session, queued) {
+					return
+				}
 
 				// Stop the previous turn's typing indicator
 				if stopTyping != nil {
@@ -6507,7 +6554,7 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 			return true
 		}
 		droppedStale := 0
-		for len(state.pendingMessages) > 0 && e.isQueuedUserMessageStaleForDrainLocked(state, state.pendingMessages[0].userMessageTimeMs) {
+		for len(state.pendingMessages) > 0 && state.pendingMessages[0].fileWorkID == "" && e.isQueuedUserMessageStaleForDrainLocked(state, state.pendingMessages[0].userMessageTimeMs) {
 			state.pendingMessages = state.pendingMessages[1:]
 			droppedStale++
 		}
@@ -6531,6 +6578,9 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 		state.currentTurnUserMessageTimeMs = queued.userMessageTimeMs
 		state.currentPrincipal = queued.principal
 		state.mu.Unlock()
+		if !e.beginQueuedFileTurn(state, session, queued) {
+			return false
+		}
 
 		e.i18n.DetectAndSet(queued.content)
 		prompt := e.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey, queued.channelKey)
@@ -10326,6 +10376,9 @@ func (e *Engine) cmdTTS(p Platform, msg *Message, args []string) {
 }
 
 func (e *Engine) cmdStop(p Platform, msg *Message) {
+	if err := e.stopFileTurns(msg.SessionKey); err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+	}
 	// /stop only tears down the live agent process; it preserves the stored
 	// AgentSessionID so the next message can --resume the conversation. This
 	// matches the card-button stop path (see executeCardAction "/stop"). The
@@ -10389,6 +10442,11 @@ func (e *Engine) stopInteractiveSessionSilently(sessionKey string) bool {
 }
 
 func (e *Engine) stopInteractiveSessionWithOptions(sessionKey string, notifyQueued bool) bool {
+	// All explicit stop paths (including card actions and recall) preserve the
+	// cancellation in the same snapshot. Engine shutdown uses cleanup instead.
+	if err := e.stopFileTurns(sessionKey); err != nil {
+		slog.Error("file supplement stop could not be saved", "error", err)
+	}
 	e.interactiveMu.Lock()
 	state, ok := e.interactiveStates[sessionKey]
 	if !ok || state == nil {

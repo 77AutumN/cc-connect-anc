@@ -373,6 +373,10 @@ type Message struct {
 	// Set only by an opted-in, authenticated file transport.
 	ParentMessageID    string
 	ControlledFileWork bool
+	// FileWorkPrivate is set only by an authenticated private-chat transport.
+	FileWorkPrivate bool
+	fileTurn        *FileTurn
+	fileSession     *Session
 
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string

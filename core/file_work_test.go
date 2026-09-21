@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,15 @@ func (h *fileHostStub) Tool(_ context.Context, _ string, _ json.RawMessage, _ Ac
 }
 
 type filePlatformStub struct{ stubPlatformEngine }
+
+func (*filePlatformStub) SetFileWorkReplyObserver(func(Message, string) error) {}
+func (*filePlatformStub) FileWorkReplyContext(raw json.RawMessage) (any, error) {
+	return string(raw), nil
+}
+func (*fileHostStub) RecordReply(context.Context, ActionPrincipal, string) error { return nil }
+func (*fileHostStub) ActivateInputs(context.Context, ActionPrincipal, string) (FileWorkContext, error) {
+	return FileWorkContext{}, nil
+}
 
 func (p *filePlatformStub) SetFileWorkEnabled(bool, func(Message, string) bool) error { return nil }
 func (p *filePlatformStub) FileReplyRoute(any) (json.RawMessage, error) {
@@ -147,5 +157,50 @@ func TestFileWorkDisabledAndLostSessionCounter(t *testing.T) {
 	two := &Session{ID: "s1", CreatedAt: time.Unix(2, 0)}
 	if fileNativeSessionID(one) == fileNativeSessionID(two) {
 		t.Fatal("lost session counter reused old work")
+	}
+}
+
+func TestFilePrivateConversationContinuesUntilExplicitNewWork(t *testing.T) {
+	p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+	a := &fileAgentStub{}
+	e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
+	t.Cleanup(e.cancel)
+	h := &fileHostStub{}
+	root := t.TempDir()
+	if err := e.SetFileWorkHost(h, func(id string) (string, int, error) { return filepath.Join(root, id), 0, nil }); err != nil {
+		t.Fatal(err)
+	}
+	msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", ControlledFileWork: true, FileWorkPrivate: true}
+	for i, content := range []string{"Prepare a banquet proposal", "Reduce the budget", "换个事，准备下周获客安排"} {
+		msg.MessageID, msg.Content = fmt.Sprintf("request-%d", i), content
+		e.ReceiveMessage(p, &msg)
+	}
+	if len(h.bindings) != 3 || h.bindings[0].SessionID != h.bindings[1].SessionID || h.bindings[1].SessionID == h.bindings[2].SessionID {
+		t.Fatalf("private work continuation/new-work selection: %+v", h.bindings)
+	}
+	if len(e.sessions.ListSessions(msg.SessionKey)) != 2 {
+		t.Fatal("new work discarded old session")
+	}
+	msg.FileWorkPrivate = false
+	msg.Content = "Revise this"
+	for _, id := range []string{"group-one", "group-two"} {
+		msg.MessageID = id
+		e.ReceiveMessage(p, &msg)
+	}
+	if h.bindings[3].SessionID == h.bindings[4].SessionID {
+		t.Fatal("unlinked group messages inferred a recent work")
+	}
+}
+
+func TestFileConversationIntentUsesOnlyExplicitUserClause(t *testing.T) {
+	for text, want := range map[string]string{
+		"换个事，做执行清单": "new", "另开一件事：做分析": "new", "新任务": "new",
+		"先停下。": "stop", "停止当前工作": "stop", "先暂停": "stop",
+		"他说“换个事”": "", "请把标题改为新任务": "", "先停下这段文字应该如何表达": "",
+		"预算再降一点": "", "客户回复：\n换个事": "",
+	} {
+		if got := fileConversationIntent(text); got != want {
+			t.Errorf("%q: %q, want %q", text, got, want)
+		}
 	}
 }
