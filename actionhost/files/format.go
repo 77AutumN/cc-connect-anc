@@ -133,7 +133,9 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 							return flags, ErrInvalid
 						}
 						defaultType, defaultSeen = attr("ContentType"), true
-					case t.Name.Local == "Override" && strings.EqualFold(attr("PartName"), "/"+mainPart):
+					// mainPart is ASCII: equal byte length excludes Unicode fold
+					// aliases such as Kelvin sign, which OPC does not equate to K.
+					case t.Name.Local == "Override" && len(attr("PartName")) == len(mainPart)+1 && strings.EqualFold(attr("PartName"), "/"+mainPart):
 						if overrideSeen {
 							return flags, ErrInvalid
 						}

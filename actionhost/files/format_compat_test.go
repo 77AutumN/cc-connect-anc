@@ -28,6 +28,7 @@ func TestOOXMLBOMAndDefaultContentType(t *testing.T) {
 			wrongOverride := strings.Replace(override, "ContentType=\"", "ContentType=\"wrong/", 1)
 			wrongDefault := strings.Replace(defaultType, "ContentType=\"", "ContentType=\"wrong/", 1)
 			upperOverride := strings.NewReplacer("/word/document.xml", "/WORD/DOCUMENT.XML", "/xl/workbook.xml", "/XL/WORKBOOK.XML").Replace(override)
+			unicodeOverride := strings.NewReplacer("/word/document.xml", "/word/docuKent.xml", "/xl/workbook.xml", "/xl/worKbook.xml").Replace(override)
 			for _, tc := range []struct {
 				name, types, prefix, suffix string
 				valid                       bool
@@ -42,6 +43,7 @@ func TestOOXMLBOMAndDefaultContentType(t *testing.T) {
 				{"mixed_case_override", upperOverride + wrongDefault, "", "", true},
 				{"mixed_case_wrong_override", defaultType + strings.Replace(upperOverride, "ContentType=\"", "ContentType=\"wrong/", 1), "", "", false},
 				{"mixed_case_duplicate_override", override + upperOverride, "", "", false},
+				{"unicode_part_not_equivalent", unicodeOverride + wrongDefault, "", "", false},
 				{"duplicate_default", defaultType + defaultType, "", "", false},
 				{"duplicate_override", override + override, "", "", false},
 				{"foreign_default", strings.Replace(defaultType, "Default ", "Default xmlns=\"urn:foreign\" ", 1), "", "", false},
