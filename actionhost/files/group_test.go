@@ -114,6 +114,14 @@ func TestCUJ_GroupFile_ExplicitArtifactHandoffKeepsActorsAndOtherWorkSeparate(t 
 		}
 	}
 	if err := f.store.change(context.Background(), func(st *state) error {
+		if st.Schema != 2 || !validState(*st) {
+			t.Fatal("group provenance lost its ledger version")
+		}
+		old := *st
+		old.Schema = 1
+		if validState(old) {
+			t.Fatal("group provenance accepted without downgrade protection")
+		}
 		if len(st.Works[a.work.WorkID].Deliveries) != 1 || len(st.Works[b.work.WorkID].Deliveries) != 2 {
 			t.Fatal("old versions changed")
 		}
@@ -126,6 +134,14 @@ func TestCUJ_GroupFile_ExplicitArtifactHandoffKeepsActorsAndOtherWorkSeparate(t 
 func TestGroupArtifactRejectsUnknownScopeAndDamagedSnapshot(t *testing.T) {
 	f := newFixture(t, nil)
 	ctx := context.Background()
+	if err := f.store.change(ctx, func(st *state) error {
+		if st.Schema != 1 {
+			t.Fatal("default-off private ledger version changed")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	realm := hash([]byte("fixture-bot-group"))
 	if err := f.host.SetGroupReferences(realm); err != nil {
 		t.Fatal(err)

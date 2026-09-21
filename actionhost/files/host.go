@@ -228,6 +228,11 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			result.IncomingInputs = append([]Input(nil), pending...)
 		}
 		w.Messages[b.Principal.MessageID] = true
+		if w.GroupRealm != "" {
+			// Older binaries discard unknown JSON fields on every ledger write.
+			// Mark group provenance so they refuse rather than erase it on rollback.
+			st.Schema = 2
+		}
 		st.Works[w.ID] = w
 		incoming := result.IncomingInputs
 		result = workContext(w)
