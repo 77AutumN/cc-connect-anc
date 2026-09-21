@@ -42,6 +42,7 @@ type work struct {
 	Route                                                            json.RawMessage
 	OwnerUID                                                         int
 	Inputs                                                           []Input
+	PendingInputs                                                    map[string][]Input `json:",omitempty"`
 	Version                                                          int
 	Deliveries                                                       map[string]*delivery
 	Messages                                                         map[string]bool
@@ -158,6 +159,9 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			w = &work{ID: uuid.NewString(), SessionID: b.SessionID, Root: b.WorkRoot, RootIdentity: identity(rootInfo), InputIdentity: identity(inputInfo), OutputIdentity: identity(outputInfo), Principal: b.Principal, Route: append(json.RawMessage{}, b.Route...), OwnerUID: b.OwnerUID, Inputs: []Input{}, Deliveries: map[string]*delivery{}, Messages: map[string]bool{}}
 		}
 		if !w.Messages[b.Principal.MessageID] {
+			if b.DeferInputs && len(w.PendingInputs) >= 128 {
+				return ErrUnavailable
+			}
 			for index, f := range b.Inputs {
 				digest := hash(f.Data)
 				id := hash([]byte(fmt.Sprintf("%s:%s:%d:%s", w.ID, b.Principal.MessageID, index, digest)))
@@ -165,14 +169,100 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 				if err := writeNew(h.snapshots, "input_"+name, f.Data, 0400); err != nil {
 					return err
 				}
-				if err := writeNew(inputs, name, f.Data, 0440); err != nil {
-					return err
+				input := Input{ID: id, Name: f.FileName, Path: filepath.Join(b.WorkRoot, "inputs", name), SHA256: digest}
+				if b.DeferInputs {
+					if w.PendingInputs == nil {
+						w.PendingInputs = map[string][]Input{}
+					}
+					w.PendingInputs[b.Principal.MessageID] = append(w.PendingInputs[b.Principal.MessageID], input)
+				} else {
+					if err := writeNew(inputs, name, f.Data, 0440); err != nil {
+						return err
+					}
+					w.Inputs = append(w.Inputs, input)
 				}
-				w.Inputs = append(w.Inputs, Input{ID: id, Name: f.FileName, Path: filepath.Join(b.WorkRoot, "inputs", name), SHA256: digest})
+				result.IncomingInputs = append(result.IncomingInputs, input)
 			}
+		} else if pending := w.PendingInputs[b.Principal.MessageID]; len(pending) > 0 {
+			result.IncomingInputs = append([]Input(nil), pending...)
 		}
 		w.Messages[b.Principal.MessageID] = true
 		st.Works[w.ID] = w
+		incoming := result.IncomingInputs
+		result = workContext(w)
+		result.IncomingInputs = incoming
+		return nil
+	})
+	return result, err
+}
+
+// ActivateInputs publishes only this accepted turn's preserved attachments.
+// The caller is the engine at dequeue/reconciliation, never a model tool.
+func (h *Host) ActivateInputs(ctx context.Context, p core.ActionPrincipal, workID string) (WorkContext, error) {
+	var result WorkContext
+	if !validPrincipal(p) {
+		return result, ErrInvalid
+	}
+	err := h.store.change(ctx, func(st *state) error {
+		w := st.Works[workID]
+		if w == nil || scope(w.Principal) != scope(p) || !w.Messages[p.MessageID] {
+			return ErrScope
+		}
+		if len(w.PendingInputs[p.MessageID]) == 0 {
+			result = workContext(w)
+			return nil
+		}
+		r, err := protectedRoot(w.Root)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = r.Close() }()
+		info, err := r.Stat(".")
+		if err != nil || identity(info) != w.RootIdentity {
+			return ErrScope
+		}
+		inputs, info, err := childRoot(r, "inputs", os.Geteuid(), false)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = inputs.Close() }()
+		if identity(info) != w.InputIdentity {
+			return ErrScope
+		}
+		for _, input := range w.PendingInputs[p.MessageID] {
+			name := filepath.Base(input.Path)
+			f, err := h.snapshots.Open("input_" + name)
+			if err != nil {
+				return err
+			}
+			data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+			_ = f.Close()
+			if err != nil || len(data) > MaxFileBytes || hash(data) != input.SHA256 {
+				return ErrInvalid
+			}
+			if info, statErr := inputs.Lstat(name); statErr == nil {
+				// A crash may occur after the durable copy but before the ledger
+				// commit. Reconcile identical host-owned files without rewriting.
+				if !info.Mode().IsRegular() || info.Mode().Perm() != 0440 || checkOwner(info, os.Geteuid(), true) != nil {
+					return ErrScope
+				}
+				f, err := inputs.Open(name)
+				if err != nil {
+					return err
+				}
+				existing, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+				_ = f.Close()
+				if err != nil || hash(existing) != input.SHA256 {
+					return ErrInvalid
+				}
+			} else if !errors.Is(statErr, os.ErrNotExist) {
+				return statErr
+			} else if err := writeNew(inputs, name, data, 0440); err != nil {
+				return err
+			}
+			w.Inputs = append(w.Inputs, input)
+		}
+		delete(w.PendingInputs, p.MessageID)
 		result = workContext(w)
 		return nil
 	})

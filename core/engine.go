@@ -3943,6 +3943,15 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
 		return
 	}
+	if msg.fileTurn != nil && len(msg.fileTurn.Inputs) > 0 {
+		e.actionMu.RLock()
+		host := e.fileWorkHost
+		e.actionMu.RUnlock()
+		if _, err := host.ActivateInputs(e.ctx, msg.fileTurn.Principal, msg.fileTurn.WorkID); err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileUnfinished))
+			return
+		}
+	}
 
 	sendStart := time.Now()
 	state.mu.Lock()
@@ -6145,7 +6154,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 
 			if err := sessions.setFileTurnStatus(session, msgID, "completed"); err != nil {
 				e.reply(p, replyCtx, e.i18n.T(MsgFileUnfinished))
-				e.notifyDroppedQueuedMessages(state, err)
+				e.notifyDroppedQueuedMessages(state, errors.New(e.i18n.T(MsgFileUnfinished)))
 				return
 			}
 

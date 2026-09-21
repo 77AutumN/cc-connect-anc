@@ -13,12 +13,13 @@ import (
 // FileWorkBinding is assembled only from the authenticated transport and host
 // filesystem configuration. None of these fields are model tool arguments.
 type FileWorkBinding struct {
-	Principal ActionPrincipal
-	SessionID string
-	Route     json.RawMessage
-	WorkRoot  string
-	OwnerUID  int
-	Inputs    []FileAttachment
+	Principal   ActionPrincipal
+	SessionID   string
+	Route       json.RawMessage
+	WorkRoot    string
+	OwnerUID    int
+	Inputs      []FileAttachment
+	DeferInputs bool // Keep busy-turn attachments in host-only snapshots until dequeue.
 }
 
 type FileWorkInput struct {
@@ -39,13 +40,14 @@ type FileWorkArtifact struct {
 }
 
 type FileWorkContext struct {
-	Enabled       bool               `json:"enabled"`
-	WorkID        string             `json:"work_id"`
-	WorkRoot      string             `json:"-"`
-	Inputs        []FileWorkInput    `json:"inputs"`
-	OutputDir     string             `json:"output_dir"`
-	LatestVersion int                `json:"latest_version"`
-	Artifacts     []FileWorkArtifact `json:"artifacts"`
+	Enabled        bool               `json:"enabled"`
+	WorkID         string             `json:"work_id"`
+	WorkRoot       string             `json:"-"`
+	Inputs         []FileWorkInput    `json:"inputs"`
+	OutputDir      string             `json:"output_dir"`
+	LatestVersion  int                `json:"latest_version"`
+	Artifacts      []FileWorkArtifact `json:"artifacts"`
+	IncomingInputs []FileWorkInput    `json:"-"` // Host intake receipt, never model-visible pending materials.
 }
 
 type FileWorkRef struct{ WorkID, SessionID string }
@@ -54,6 +56,7 @@ type FileWorkHost interface {
 	Bind(context.Context, FileWorkBinding) (FileWorkContext, error)
 	FindByMessage(context.Context, ActionPrincipal, string) (FileWorkRef, error)
 	RecordReply(context.Context, ActionPrincipal, string) error
+	ActivateInputs(context.Context, ActionPrincipal, string) (FileWorkContext, error)
 	Tool(context.Context, string, json.RawMessage, ActionPrincipal, string) (map[string]any, error)
 }
 
@@ -195,7 +198,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		return fail(MsgPreviousProcessing)
 	}
 	for _, turn := range session.fileTurns() {
-		if turn.Principal.MessageID == msg.MessageID {
+		if turn.Principal.MessageID == msg.MessageID || turn.ResumeMessageID == msg.MessageID {
 			runMessageAccepted(msg)
 			return true
 		}
@@ -204,7 +207,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	if err != nil {
 		return fail(MsgFileWorkUnavailable)
 	}
-	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files})
+	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files, DeferInputs: busy != nil || session.hasUnfinishedFileTurns()})
 	if err != nil {
 		if message, ok := FileErrorMessage(err, e.i18n); ok {
 			e.reply(p, msg.ReplyCtx, message)
@@ -219,10 +222,10 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	msg.fileSession = session
 	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued"}
 	if len(msg.Files) > 0 {
-		if len(work.Inputs) < len(msg.Files) {
+		if len(work.IncomingInputs) != len(msg.Files) {
 			return fail(MsgFileInputSaveFailed)
 		}
-		msg.fileTurn.Inputs = append([]FileWorkInput(nil), work.Inputs[len(work.Inputs)-len(msg.Files):]...)
+		msg.fileTurn.Inputs = append([]FileWorkInput(nil), work.IncomingInputs...)
 		msg.Content += "\n[Host: selected files were preserved for this work. Read work-context and the registered input paths before answering.]"
 		msg.fileTurn.Content = msg.Content
 	}

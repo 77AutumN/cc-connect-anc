@@ -41,6 +41,9 @@ func (*filePlatformStub) FileWorkReplyContext(raw json.RawMessage) (any, error) 
 	return string(raw), nil
 }
 func (*fileHostStub) RecordReply(context.Context, ActionPrincipal, string) error { return nil }
+func (*fileHostStub) ActivateInputs(context.Context, ActionPrincipal, string) (FileWorkContext, error) {
+	return FileWorkContext{}, nil
+}
 
 func (p *filePlatformStub) SetFileWorkEnabled(bool, func(Message, string) bool) error { return nil }
 func (p *filePlatformStub) FileReplyRoute(any) (json.RawMessage, error) {

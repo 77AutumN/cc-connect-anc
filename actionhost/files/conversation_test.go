@@ -95,6 +95,9 @@ func TestCUJ_FilePrivateConversation_SupplementTextReplyAndNewWork(t *testing.T)
 	}
 	e.ReceiveMessage(p, naturalMessage("supplement", "", "Reduce the budget"))
 	first := nextFileResult(t, shared)
+	if len(first.Inputs) != 1 {
+		t.Fatal("busy supplement became visible in the current turn")
+	}
 	second := nextFileResult(t, shared)
 	awaitFileIdle(t, e)
 	if first.WorkID != second.WorkID || len(second.Inputs) != 2 {
@@ -134,7 +137,7 @@ func TestCUJ_FileSupplements_RestartWaitsForContinueWithoutReplay(t *testing.T) 
 			e := conversationEngine(t, f, p, shared, base, path)
 			e.ReceiveMessage(p, naturalMessage("original", "", "Prepare the fictional plan"))
 			awaitFileCondition(t, func() bool { return shared.turns.Load() == 1 })
-			e.ReceiveMessage(p, naturalMessage("pending", "", "Use 22 tables instead"))
+			e.ReceiveMessage(p, naturalMessage("pending", "", "Use 22 tables instead", core.FileAttachment{FileName: "revised.xlsx", Data: packageBytes(t, documentParts("xlsx"))}))
 			if crashState == "started" {
 				nextFileResult(t, shared)
 				awaitFileCondition(t, func() bool { return shared.turns.Load() == 2 })
@@ -151,11 +154,18 @@ func TestCUJ_FileSupplements_RestartWaitsForContinueWithoutReplay(t *testing.T) 
 				t.Fatal("restart lost supplement or automatically ran model")
 			}
 			restored.ReceiveMessage(p, naturalMessage("resume", "", "continue"))
-			nextFileResult(t, shared)
+			resumed := nextFileResult(t, shared)
+			if len(resumed.Inputs) != 1 {
+				t.Fatal("restart lost saved attachment")
+			}
 			awaitFileIdle(t, restored)
 			_, visible = p.snapshot()
 			if !strings.Contains(strings.Join(visible, " "), "FILE-CUJ-DONE:resume") || shared.turns.Load() != before+1 {
 				t.Fatal("continue replayed old turns or produced no answer")
+			}
+			restored.ReceiveMessage(p, naturalMessage("resume", "", "continue"))
+			if shared.turns.Load() != before+1 {
+				t.Fatal("redelivered recovery request ran another turn")
 			}
 		})
 	}

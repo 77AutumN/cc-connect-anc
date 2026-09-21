@@ -4495,11 +4495,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "Requisito adicional guardado. Lo incorporaré en la siguiente versión al terminar este turno.",
 	},
 	MsgFileSupplementSaveFailed: {
-		LangEnglish:            "I could not confirm that the supplement was saved. Processing is paused; keep this message until storage is checked.",
-		LangChinese:            "未能确认补充要求已保存，已暂停继续处理。请保留这条消息，待存储检查后核对再继续。",
-		LangTraditionalChinese: "未能確認補充要求已儲存，已暫停繼續處理。請保留這則訊息，待儲存檢查後核對再繼續。",
-		LangJapanese:           "追加の要望の保存を確認できません。処理を一時停止しました。保存先の確認までこのメッセージを残してください。",
-		LangSpanish:            "No pude confirmar que se guardó el requisito. Procesamiento pausado; conserve este mensaje hasta revisar el almacenamiento.",
+		LangEnglish:            "I could not confirm that the supplement was saved. Keep this message until storage is checked before continuing it.",
+		LangChinese:            "未能确认补充要求已保存。请保留这条消息，待存储检查后核对再继续处理这项补充。",
+		LangTraditionalChinese: "未能確認補充要求已儲存。請保留這則訊息，待儲存檢查後核對再繼續處理這項補充。",
+		LangJapanese:           "追加の要望の保存を確認できません。保存先を確認してから続行するため、このメッセージを残してください。",
+		LangSpanish:            "No pude confirmar que se guardó el requisito. Conserve este mensaje hasta revisar el almacenamiento antes de continuarlo.",
 	},
 	MsgFileUnfinished: {
 		LangEnglish:            "Unfinished supplements are retained. Reply “continue” to reconcile existing results and continue; completed or uncertain sends will not be replayed.",

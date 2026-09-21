@@ -31,10 +31,12 @@ func (e *Engine) beginQueuedFileTurn(state *interactiveState, session *Session, 
 		}
 	}
 	if started && e.sessions.setFileTurnStatus(session, queued.messageID, "started") == nil {
-		return true
+		if _, err := host.ActivateInputs(e.ctx, queued.principal, queued.fileWorkID); err == nil {
+			return true
+		}
 	}
 	e.reply(queued.platform, queued.replyCtx, e.i18n.T(MsgFileUnfinished))
-	e.notifyDroppedQueuedMessages(state, errors.New("file supplement requires recovery"))
+	e.notifyDroppedQueuedMessages(state, errors.New(e.i18n.T(MsgFileUnfinished)))
 	return false
 }
 
@@ -117,6 +119,9 @@ func (e *Engine) prepareFileRecovery(p Platform, msg *Message, session *Session,
 		}
 	}
 	var notes []map[string]string
+	e.actionMu.RLock()
+	host := e.fileWorkHost
+	e.actionMu.RUnlock()
 	err := e.sessions.updateFileTurns(session, func(turns *[]FileTurn) error {
 		for i := range *turns {
 			t := &(*turns)[i]
@@ -125,6 +130,16 @@ func (e *Engine) prepareFileRecovery(p Platform, msg *Message, session *Session,
 			}
 			if t.WorkID != work.WorkID || !sameFilePrincipal(t.Principal, msg.fileTurn.Principal) {
 				return errFileTurnStorage
+			}
+			if len(t.Inputs) > 0 {
+				if host == nil {
+					return errFileTurnStorage
+				}
+				var err error
+				work, err = host.ActivateInputs(e.ctx, t.Principal, t.WorkID)
+				if err != nil {
+					return err
+				}
 			}
 			for _, input := range t.Inputs {
 				found := false
