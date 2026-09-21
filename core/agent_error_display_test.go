@@ -10,7 +10,11 @@ func TestUnsolicitedReader_BlockedOperationUsesLocalizedInterruption(t *testing.
 	p := &stubPlatformEngine{n: "test"}
 	sess := newControllableSession("blocked-operation")
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangChinese)
-	defer e.Stop()
+	t.Cleanup(func() {
+		if err := e.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
 	session := e.sessions.GetOrCreateActive("test:blocked:u1")
 	state := &interactiveState{agentSession: sess, platform: p, replyCtx: "ctx"}
 	e.startUnsolicitedReader(state, session, e.sessions, "test:blocked:u1", "")
