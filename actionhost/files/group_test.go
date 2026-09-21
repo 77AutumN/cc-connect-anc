@@ -164,7 +164,7 @@ func TestGroupArtifactRejectsUnknownScopeAndDamagedSnapshot(t *testing.T) {
 		}
 	}
 	check(recipient, "receipt-fictional", nil)
-	check(recipient, "group-task", ErrScope)
+	check(recipient, "group-task", core.ErrFileWorkNeedsArtifact)
 	for _, field := range []string{"platform", "chat"} {
 		p := recipient
 		if field == "platform" {

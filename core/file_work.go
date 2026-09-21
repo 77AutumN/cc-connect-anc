@@ -76,7 +76,7 @@ type FileWorkHost interface {
 // FileWorkReceiver opts a transport into bounded intake. Reply authorization
 // happens before downloading an unmentioned group attachment.
 type FileWorkReceiver interface {
-	SetFileWorkEnabled(bool, func(Message, string) bool) error
+	SetFileWorkEnabled(bool, func(Message, string) error) error
 	SetFileWorkReplyObserver(func(Message, string) error)
 	FileWorkReplyContext(json.RawMessage) (any, error)
 }
@@ -93,6 +93,8 @@ func isFileWorkCommand(command string) bool {
 
 var errFileWorkUnavailable = errors.New("controlled file work unavailable")
 var ErrFileWorkNotFound = errors.New("file work not found")
+var ErrFileWorkNeedsArtifact = errors.New("group file receipt required")
+var ErrFileWorkUnconfirmed = errors.New("file_delivery_requires_reconciliation")
 
 // SetFileWorkHost is called only during startup, after protected configuration
 // and runtime support have been checked. A nil host leaves legacy behavior off.
@@ -114,9 +116,12 @@ func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string
 		if _, ok := p.(FileReceiptSender); !ok {
 			return errFileWorkUnavailable
 		}
-		if err := receiver.SetFileWorkEnabled(true, func(msg Message, parent string) bool {
+		if err := receiver.SetFileWorkEnabled(true, func(msg Message, parent string) error {
 			ref, err := host.FindByMessage(e.ctx, e.actionPrincipalForMessage(&msg), parent)
-			return err == nil && (!ref.Import || !msg.FileWorkPrivate)
+			if msg.FileWorkPrivate && (ref.Import || errors.Is(err, ErrFileWorkNeedsArtifact) || errors.Is(err, ErrFileWorkUnconfirmed)) {
+				return ErrFileWorkNotFound
+			}
+			return err
 		}); err != nil {
 			return err
 		}
@@ -188,6 +193,9 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		lookup = msg.MessageID
 	}
 	ref, lookupErr := host.FindByMessage(e.ctx, principal, lookup)
+	if errors.Is(lookupErr, ErrFileWorkUnconfirmed) {
+		return fail(MsgFileRecoveryUnknown)
+	}
 	sourceReceipt := ""
 	if lookupErr == nil && ref.Import {
 		if msg.FileWorkPrivate || msg.ParentMessageID == "" {

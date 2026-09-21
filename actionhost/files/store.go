@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/chenhg5/cc-connect/core"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -21,7 +23,7 @@ var (
 	ErrInvalid     = errors.New("invalid_file_request")
 	ErrFormat      = errors.New("file_format_unsupported")
 	ErrVersion     = errors.New("file_version_conflict")
-	ErrUncertain   = errors.New("file_delivery_requires_reconciliation")
+	ErrUncertain   = core.ErrFileWorkUnconfirmed
 )
 
 type Store struct {

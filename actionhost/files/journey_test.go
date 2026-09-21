@@ -255,7 +255,7 @@ type fileJourneyPlatform struct {
 	mu         sync.Mutex
 	deliveries []fileJourneyDelivery
 	replies    []string
-	authorize  func(core.Message, string) bool
+	authorize  func(core.Message, string) error
 	observe    func(core.Message, string) error
 }
 
@@ -272,7 +272,7 @@ func (*fileJourneyPlatform) FileWorkReplyContext(raw json.RawMessage) (any, erro
 }
 func (*fileJourneyPlatform) Start(core.MessageHandler) error { return nil }
 func (*fileJourneyPlatform) Stop() error                     { return nil }
-func (p *fileJourneyPlatform) SetFileWorkEnabled(enabled bool, authorize func(core.Message, string) bool) error {
+func (p *fileJourneyPlatform) SetFileWorkEnabled(enabled bool, authorize func(core.Message, string) error) error {
 	if !enabled {
 		return fmt.Errorf("file capability unexpectedly disabled")
 	}
@@ -428,7 +428,7 @@ func runFileJourney(t *testing.T, base string, modelUID int, configure func(*fil
 		}
 	}
 	for _, msg := range []*core.Message{makeMessage("unknown-reply", "unknown-origin", "staff-a"), makeMessage("cross-person", first.artifact.MessageReceipt, "staff-b")} {
-		if platform.authorize(*msg, msg.ParentMessageID) {
+		if platform.authorize(*msg, msg.ParentMessageID) == nil {
 			t.Fatal("transport authorized an unbound reply")
 		}
 		before := shared.turns.Load()

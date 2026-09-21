@@ -373,7 +373,7 @@ func (h *Host) groupArtifact(st *state, p core.ActionPrincipal, receipt string) 
 		}
 	}
 	if result == nil {
-		return nil, nil, ErrScope
+		return nil, nil, core.ErrFileWorkNeedsArtifact
 	}
 	return selected, result, nil
 }
