@@ -167,14 +167,14 @@ func TestNormalizePermissionMode(t *testing.T) {
 func TestClaudeSessionSetLiveMode(t *testing.T) {
 	cs := &claudeSession{}
 	cs.setPermissionMode("default")
-	if cs.autoApprove.Load() || cs.acceptEditsOnly.Load() || cs.dontAsk.Load() {
+	if cs.acceptEditsOnly.Load() || cs.dontAsk.Load() {
 		t.Fatal("expected default mode flags to be off")
 	}
 
 	if !cs.SetLiveMode("acceptEdits") {
 		t.Fatal("SetLiveMode(acceptEdits) = false, want true")
 	}
-	if !cs.acceptEditsOnly.Load() || cs.autoApprove.Load() || cs.dontAsk.Load() {
+	if !cs.acceptEditsOnly.Load() || cs.dontAsk.Load() {
 		t.Fatal("acceptEdits flags not set correctly")
 	}
 
@@ -183,13 +183,12 @@ func TestClaudeSessionSetLiveMode(t *testing.T) {
 	}
 
 	cs.SetLiveMode("dontAsk")
-	if !cs.dontAsk.Load() || cs.autoApprove.Load() || cs.acceptEditsOnly.Load() {
+	if !cs.dontAsk.Load() || cs.acceptEditsOnly.Load() {
 		t.Fatal("dontAsk flags not set correctly")
 	}
 
-	cs.SetLiveMode("bypassPermissions")
-	if !cs.autoApprove.Load() || cs.acceptEditsOnly.Load() || cs.dontAsk.Load() {
-		t.Fatal("bypassPermissions alias flags not set correctly")
+	if cs.SetLiveMode("bypassPermissions") {
+		t.Fatal("bypassPermissions requires restarting the native CLI")
 	}
 }
 
@@ -544,7 +543,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 	// PATH. WorkspaceAgentOptions only reads fields that the production
 	// New() also writes; this just verifies the snapshot shape.
 	a := &Agent{
-		cmd:           "my-cli",
+		cmd:              "my-cli",
 		cliExtraArgs:     []string{"--add-dir", "/parent"},
 		cmdArgsFlag:      "-a",
 		model:            "claude-opus-4-7",
@@ -560,7 +559,7 @@ func TestWorkspaceAgentOptions_FullSnapshot(t *testing.T) {
 
 	want := map[string]any{
 		"mode":               "acceptEdits",
-		"cmd":           "my-cli --add-dir /parent",
+		"cmd":                "my-cli --add-dir /parent",
 		"cmd_args_flag":      "-a",
 		"model":              "claude-opus-4-7",
 		"reasoning_effort":   "high",
@@ -622,7 +621,7 @@ func TestWorkspaceAgentOptions_RoundTripsThroughNew(t *testing.T) {
 		t.Skip("run_as_user-based LookPath bypass is Unix-only")
 	}
 	parent := &Agent{
-		cmd:           "my-cli",
+		cmd:              "my-cli",
 		cliExtraArgs:     []string{"code", "--add-dir", "/parent"},
 		cmdArgsFlag:      "-a",
 		model:            "claude-opus-4-7",

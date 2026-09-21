@@ -26,8 +26,8 @@ import (
 // claudeSession manages a long-running Claude Code process using
 // --input-format stream-json and --permission-prompt-tool stdio.
 //
-// In "auto" mode, permission requests are auto-approved internally
-// (avoiding --dangerously-skip-permissions which fails under root).
+// Native Claude permission modes decide ordinary tool access. Questions still
+// need employee answers, including in bypassPermissions mode.
 type claudeSession struct {
 	cmd             *exec.Cmd
 	stdin           io.WriteCloser
@@ -35,7 +35,6 @@ type claudeSession struct {
 	events          chan core.Event
 	sessionID       atomic.Value // stores string
 	permissionMode  atomic.Value // stores string
-	autoApprove     atomic.Bool
 	acceptEditsOnly atomic.Bool
 	dontAsk         atomic.Bool
 	workDir         string
@@ -224,7 +223,7 @@ func newClaudeSession(ctx context.Context, workDir, cliBin string, cliExtraArgs 
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	// Claude Code rejects bypassPermissions when running as root.
-	// Downgrade to "auto" which auto-approves internally in cc-connect.
+	// Downgrade to Claude's native automatic permission classifier.
 	var rootDowngradeWarning string
 	if mode == "bypassPermissions" && os.Geteuid() == 0 {
 		slog.Warn("claudeSession: bypassPermissions not allowed under root, downgrading to auto mode")
@@ -886,12 +885,25 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 	toolName, _ := request["tool_name"].(string)
 	input, _ := request["input"].(map[string]any)
 
-	if cs.autoApprove.Load() {
-		slog.Debug("claudeSession: auto-approving", "request_id", requestID, "tool", toolName)
-		_ = cs.RespondPermission(requestID, core.PermissionResult{
-			Behavior:     "allow",
-			UpdatedInput: input,
-		})
+	if toolName == "AskUserQuestion" {
+		cs.emitPermissionRequest(requestID, toolName, input)
+		return
+	}
+	if cs.permissionModeValue() == "bypassPermissions" {
+		// Ordinary tools already run under native bypass. A remaining request
+		// is an explicit exception; never override it or ask an employee to
+		// approve shell code. Let Claude continue with existing permissions.
+		if err := cs.RespondPermission(requestID, core.PermissionResult{
+			Behavior: "deny",
+			Message:  "This operation requires permission outside the configured unattended workflow. This is an environment restriction, not a user rejection. Continue using already permitted methods without bypassing restrictions; if necessary, explain the unfinished work in plain language without commands or permission instructions.",
+		}); err != nil {
+			slog.Error("claudeSession: unattended permission response failed", "error", err)
+			select {
+			case cs.events <- core.Event{Type: core.EventError, Error: fmt.Errorf("agent session could not complete the operation")}:
+			case <-cs.ctx.Done():
+			}
+			cs.cancel()
+		}
 		return
 	}
 	if cs.dontAsk.Load() {
@@ -934,6 +946,10 @@ func (cs *claudeSession) handleControlRequest(raw map[string]any) {
 		return
 	}
 
+	cs.emitPermissionRequest(requestID, toolName, input)
+}
+
+func (cs *claudeSession) emitPermissionRequest(requestID, toolName string, input map[string]any) {
 	slog.Info("claudeSession: permission request", "request_id", requestID, "tool", toolName)
 	evt := core.Event{
 		Type:         core.EventPermissionRequest,
@@ -1154,14 +1170,14 @@ func isClaudeEditTool(toolName string) bool {
 
 func (cs *claudeSession) setPermissionMode(mode string) {
 	cs.permissionMode.Store(mode)
-	cs.autoApprove.Store(mode == "bypassPermissions")
 	cs.acceptEditsOnly.Store(mode == "acceptEdits")
 	cs.dontAsk.Store(mode == "dontAsk")
 }
 
 func (cs *claudeSession) SetLiveMode(mode string) bool {
 	current, _ := cs.permissionMode.Load().(string)
-	if mode == "auto" || mode == "plan" || current == "auto" || current == "plan" {
+	if mode == "auto" || mode == "plan" || mode == "bypassPermissions" ||
+		current == "auto" || current == "plan" || current == "bypassPermissions" {
 		return false
 	}
 	cs.setPermissionMode(mode)
