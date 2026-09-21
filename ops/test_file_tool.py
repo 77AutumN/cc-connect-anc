@@ -1,6 +1,7 @@
 """Offline file-client contract, using a fake Unix socket and real HTTP parser."""
-import io
+import base64
 import hashlib
+import io
 import json
 import os
 import socket
@@ -112,12 +113,33 @@ class FileClientTests(unittest.TestCase):
         self.assertIn(b'Authorization: Bearer fixture-token', peer.sent)
         self.assertTrue(peer.closed)
         for proxy in ('', 'http://remote.invalid:80', 'https://127.0.0.1:80',
-                      'http://user:password@localhost:80', 'http://localhost:80/other',
+                      'http://user@localhost:80', 'http://user:@localhost:80',
+                      'http://user:%0d%0asecret@localhost:80', 'http://user:password@remote.invalid:80',
+                      'http://localhost:80/other',
                       'http://localhost:80?endpoint=other', 'http://localhost:99999'):
             code, result, factory = self.invoke(['work-context'], b'{}', Peer({}),
                 {'CC_FILE_TRANSPORT':'native', 'HTTP_PROXY':proxy})
             self.assertEqual((code,result['code']), (1,'file_transport_disabled'))
             factory.assert_not_called()
+
+    def test_native_authenticated_proxy_keeps_proxy_and_session_credentials_separate(self):
+        expected = {"enabled": True, "work_id": "fictional", "inputs": [], "output_dir": "/fixture/outputs"}
+        peer = Peer(expected)
+        with (patch.object(socket, "create_connection", return_value=peer) as connect,
+              patch.dict(os.environ, {'CC_FILE_ACTION_TOKEN': 'fixture-token',
+                  'CC_FILE_TRANSPORT': 'native', 'HTTP_PROXY': 'http://srt:fixture%2Bproxy@127.0.0.1:43123',
+                  'NO_PROXY': '*'}, clear=True)):
+            output = io.StringIO()
+            code = file_tool.main(["work-context"], stdin=io.BytesIO(b'{}'), stdout=output)
+            result = json.loads(output.getvalue())
+        self.assertEqual((code, result), (0, expected))
+        request = bytes(peer.sent)
+        self.assertEqual(connect.call_args.args[0], ("127.0.0.1", 43123))
+        self.assertTrue(request.startswith(b'POST http://127.0.0.1:18743/tool HTTP/1.1'))
+        self.assertIn(b'Proxy-Authorization: Basic ' + base64.b64encode(b'srt:fixture+proxy'), request)
+        self.assertIn(b'Authorization: Bearer fixture-token', request)
+        self.assertNotIn(b'fixture%2Bproxy', request)
+        self.assertTrue(peer.closed)
 
     @unittest.skipUnless(os.name == 'posix', 'POSIX publication')
     def test_native_publishes_selected_work_with_employee_cwd_unchanged(self):

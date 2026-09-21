@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Narrow model-side file client; no management API, credentials or recipients."""
 
-import http.client
+import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -56,14 +57,24 @@ def transport():
         proxy = os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY", "")
         parsed = urllib.parse.urlsplit(proxy)
         if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-                or not parsed.port or parsed.username is not None or parsed.password is not None
+                or not parsed.port
                 or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
                 or any(ord(c) <= 32 or ord(c) >= 127 for c in proxy)):
             raise ValueError("native loopback proxy required")
-        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=35), ENDPOINT
+        headers = {}
+        if parsed.username is not None or parsed.password is not None:
+            if not parsed.username or not parsed.password:
+                raise ValueError("incomplete proxy authentication")
+            user, password = (urllib.parse.unquote(v) for v in (parsed.username, parsed.password))
+            if ':' in user or any(ord(c) <= 32 or ord(c) >= 127 for c in user + password):
+                raise ValueError("invalid proxy authentication")
+            # Match the existing knowledge/CRM clients: authenticate to the
+            # local sandbox proxy, independently of the host session token.
+            headers["Proxy-Authorization"] = "Basic " + base64.b64encode((user + ':' + password).encode()).decode()
+        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=35), ENDPOINT, headers
     if os.environ.get("CC_FILE_TRANSPORT", "") or os.environ.get("CC_ACTION_TOOLS_SOCKET") != SOCKET:
         raise ValueError("file transport disabled")
-    return SessionHTTP("localhost", timeout=35), "/tool"
+    return SessionHTTP("localhost", timeout=35), "/tool", {}
 
 
 def emit(stdout, result, code):
@@ -139,7 +150,7 @@ def main(argv=None, *, stdin=None, stdout=None):
     if not token or len(token) > 1024 or any(ord(c) <= 32 or ord(c) >= 127 for c in token):
         return emit(stdout, {"status": "blocked", "code": "invalid_session"}, 2)
     try:
-        conn, target = transport()
+        conn, target, headers = transport()
     except ValueError:
         return emit(stdout, {"status": "unavailable", "code": "file_transport_disabled"}, 1)
     try:
@@ -162,8 +173,8 @@ def main(argv=None, *, stdin=None, stdout=None):
             return emit(stdout, {"status": "blocked", "code": "file_access_not_prepared"}, 2)
 
     try:
-        conn.request("POST", target, body, {"Authorization": "Bearer " + token,
-                                            "Content-Type": "application/json"})
+        headers.update({"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        conn.request("POST", target, body, headers)
         response = conn.getresponse()
         raw = response.read(MAX_RESPONSE + 1)
         if len(raw) > MAX_RESPONSE or response.headers.get_content_type() != "application/json":
