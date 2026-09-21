@@ -45,7 +45,7 @@ func (*fileHostStub) ActivateInputs(context.Context, ActionPrincipal, string) (F
 	return FileWorkContext{}, nil
 }
 
-func (p *filePlatformStub) SetFileWorkEnabled(bool, func(Message, string) bool) error { return nil }
+func (p *filePlatformStub) SetFileWorkEnabled(bool, func(Message, string) error) error { return nil }
 func (p *filePlatformStub) FileReplyRoute(any) (json.RawMessage, error) {
 	return json.RawMessage(`{"route":"fixture"}`), nil
 }

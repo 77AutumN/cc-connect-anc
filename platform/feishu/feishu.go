@@ -135,7 +135,7 @@ type Platform struct {
 	allowChat                  string
 	strictRoutes               bool // Set by the host for fixed multi-project routing.
 	fileWorkEnabled            bool // Host opt-in, protected by mu.
-	fileReplyAuthorized        func(core.Message, string) bool
+	fileReplyAuthorized        func(core.Message, string) error
 	fileReplyObserver          func(core.Message, string) error
 	groupOnly                  bool
 	groupReplyAll              bool
@@ -1649,15 +1649,23 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	p.mu.RLock()
 	controlledFiles, authorizeFileReply := p.fileWorkEnabled, p.fileReplyAuthorized
 	p.mu.RUnlock()
+	if controlledFiles && chatType != "p2p" && chatType != "group" && chatType != "topic_group" {
+		return nil
+	}
 	knownFileParent := false
+	var fileReplyError error
 	if controlledFiles && parentID != "" && authorizeFileReply != nil {
-		knownFileParent = authorizeFileReply(core.Message{
+		fileReplyError = authorizeFileReply(core.Message{
 			Platform: p.Name(), SessionKey: sessionKey, ChannelID: chatID,
 			UserID: userID, MessageID: messageID, ParentMessageID: parentID,
 			ControlledFileWork: true,
+			FileWorkPrivate:    chatType == "p2p",
 		}, parentID)
+		knownFileParent = fileReplyError == nil
 	}
-	fileContinuation := controlledFiles && knownFileParent
+	// Known group references that cannot be imported still receive a location
+	// or uncertainty hint. They never authorize resource downloads or a model.
+	fileContinuation := controlledFiles && (knownFileParent || errors.Is(fileReplyError, core.ErrFileWorkNeedsArtifact) || errors.Is(fileReplyError, core.ErrFileWorkUnconfirmed))
 	isGroup := chatType == "group" || (controlledFiles && chatType == "topic_group")
 	if p.strictRoutes && isGroup && !fileContinuation &&
 		(p.getBotOpenID() == "" || !isBotMentioned(msg.Mentions, p.getBotOpenID())) {

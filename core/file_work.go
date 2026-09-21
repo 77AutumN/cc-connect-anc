@@ -13,20 +13,30 @@ import (
 // FileWorkBinding is assembled only from the authenticated transport and host
 // filesystem configuration. None of these fields are model tool arguments.
 type FileWorkBinding struct {
-	Principal   ActionPrincipal
-	SessionID   string
-	Route       json.RawMessage
-	WorkRoot    string
-	OwnerUID    int
-	Inputs      []FileAttachment
-	DeferInputs bool // Keep busy-turn attachments in host-only snapshots until dequeue.
+	Principal     ActionPrincipal
+	SessionID     string
+	Route         json.RawMessage
+	WorkRoot      string
+	OwnerUID      int
+	Inputs        []FileAttachment
+	DeferInputs   bool   // Keep busy-turn attachments in host-only snapshots until dequeue.
+	Group         bool   // Authenticated transport chat type, never a model argument.
+	SourceReceipt string // Explicit group reply to one delivered artifact.
 }
 
 type FileWorkInput struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Path   string          `json:"path"`
+	SHA256 string          `json:"sha256"`
+	Source *FileWorkSource `json:"source,omitempty"`
+}
+
+type FileWorkSource struct {
+	WorkID         string `json:"work_id"`
+	DeliveryID     string `json:"delivery_id"`
+	Version        int    `json:"version"`
+	MessageReceipt string `json:"message_receipt"`
 }
 
 type FileWorkArtifact struct {
@@ -50,7 +60,10 @@ type FileWorkContext struct {
 	IncomingInputs []FileWorkInput    `json:"-"` // Host intake receipt, never model-visible pending materials.
 }
 
-type FileWorkRef struct{ WorkID, SessionID string }
+type FileWorkRef struct {
+	WorkID, SessionID string
+	Import            bool // Copy a group artifact into the requesting actor's own work.
+}
 
 type FileWorkHost interface {
 	Bind(context.Context, FileWorkBinding) (FileWorkContext, error)
@@ -63,7 +76,7 @@ type FileWorkHost interface {
 // FileWorkReceiver opts a transport into bounded intake. Reply authorization
 // happens before downloading an unmentioned group attachment.
 type FileWorkReceiver interface {
-	SetFileWorkEnabled(bool, func(Message, string) bool) error
+	SetFileWorkEnabled(bool, func(Message, string) error) error
 	SetFileWorkReplyObserver(func(Message, string) error)
 	FileWorkReplyContext(json.RawMessage) (any, error)
 }
@@ -80,6 +93,8 @@ func isFileWorkCommand(command string) bool {
 
 var errFileWorkUnavailable = errors.New("controlled file work unavailable")
 var ErrFileWorkNotFound = errors.New("file work not found")
+var ErrFileWorkNeedsArtifact = errors.New("group file receipt required")
+var ErrFileWorkUnconfirmed = errors.New("file_delivery_requires_reconciliation")
 
 // SetFileWorkHost is called only during startup, after protected configuration
 // and runtime support have been checked. A nil host leaves legacy behavior off.
@@ -101,9 +116,12 @@ func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string
 		if _, ok := p.(FileReceiptSender); !ok {
 			return errFileWorkUnavailable
 		}
-		if err := receiver.SetFileWorkEnabled(true, func(msg Message, parent string) bool {
-			_, err := host.FindByMessage(e.ctx, e.actionPrincipalForMessage(&msg), parent)
-			return err == nil
+		if err := receiver.SetFileWorkEnabled(true, func(msg Message, parent string) error {
+			ref, err := host.FindByMessage(e.ctx, e.actionPrincipalForMessage(&msg), parent)
+			if msg.FileWorkPrivate && (ref.Import || errors.Is(err, ErrFileWorkNeedsArtifact) || errors.Is(err, ErrFileWorkUnconfirmed)) {
+				return ErrFileWorkNotFound
+			}
+			return err
 		}); err != nil {
 			return err
 		}
@@ -175,7 +193,20 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		lookup = msg.MessageID
 	}
 	ref, lookupErr := host.FindByMessage(e.ctx, principal, lookup)
-	if lookupErr == nil {
+	if errors.Is(lookupErr, ErrFileWorkUnconfirmed) {
+		return fail(MsgFileRecoveryUnknown)
+	}
+	sourceReceipt := ""
+	if lookupErr == nil && ref.Import {
+		if msg.FileWorkPrivate || msg.ParentMessageID == "" {
+			return fail(MsgFileWorkAssociationRequired)
+		}
+		if busy != nil {
+			return fail(MsgPreviousProcessing)
+		}
+		sourceReceipt = msg.ParentMessageID
+		session = e.sessions.NewSession(msg.SessionKey, "file work")
+	} else if lookupErr == nil {
 		for _, existing := range e.sessions.ListSessions(msg.SessionKey) {
 			if fileNativeSessionID(existing) == ref.SessionID {
 				session = existing
@@ -207,7 +238,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	if err != nil {
 		return fail(MsgFileWorkUnavailable)
 	}
-	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files, DeferInputs: busy != nil || session.hasUnfinishedFileTurns()})
+	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files, DeferInputs: busy != nil || session.hasUnfinishedFileTurns(), Group: !msg.FileWorkPrivate, SourceReceipt: sourceReceipt})
 	if err != nil {
 		if message, ok := FileErrorMessage(err, e.i18n); ok {
 			e.reply(p, msg.ReplyCtx, message)
@@ -221,12 +252,19 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	// Originals are durable in the host before acknowledging a supplement.
 	msg.fileSession = session
 	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued"}
-	if len(msg.Files) > 0 {
-		if len(work.IncomingInputs) != len(msg.Files) {
+	inputCount := len(msg.Files)
+	if sourceReceipt != "" {
+		inputCount++
+	}
+	if inputCount > 0 {
+		if len(work.IncomingInputs) != inputCount {
 			return fail(MsgFileInputSaveFailed)
 		}
 		msg.fileTurn.Inputs = append([]FileWorkInput(nil), work.IncomingInputs...)
 		msg.Content += "\n[Host: selected files were preserved for this work. Read work-context and the registered input paths before answering.]"
+		if sourceReceipt != "" {
+			msg.Content += "\n[Host: this group reply continues the one delivered file recorded in input.source. Use its preserved input snapshot; the original actor's conversation and other files are not shared. Produce a new revision without claiming a shared conversation or global version.]"
+		}
 		msg.fileTurn.Content = msg.Content
 	}
 	msg.Files = nil

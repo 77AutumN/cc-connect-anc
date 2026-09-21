@@ -34,3 +34,32 @@ func TestFileWorkConfigurationCannotMountAnotherSocket(t *testing.T) {
 		t.Fatal("default-off configuration changed startup")
 	}
 }
+
+func TestGroupFileRealmPinsBotAndGroup(t *testing.T) {
+	p := config.ProjectConfig{FileWork: config.FileWorkConfig{Runtime: "native"}, Platforms: []config.PlatformConfig{{Type: "feishu", Options: map[string]any{"app_id": "fixture-app", "allow_chat": "fixture-group"}}}}
+	want, err := fileGroupRealm(p)
+	if err != nil || len(want) != 64 {
+		t.Fatal("valid group rejected", err)
+	}
+	p.Platforms[0].Options["domain"] = "HTTPS://OPEN.FEISHU.CN/"
+	if got, err := fileGroupRealm(p); err != nil || got != want {
+		t.Fatal("equivalent endpoint changed realm")
+	}
+	for _, key := range []string{"app_id", "allow_chat", "domain"} {
+		old := p.Platforms[0].Options[key]
+		p.Platforms[0].Options[key] = "other-fixture"
+		if got, err := fileGroupRealm(p); err != nil || got == want {
+			t.Fatal("another Bot/group shared realm", key)
+		}
+		p.Platforms[0].Options[key] = old
+	}
+	p.Platforms[0].Options["allow_chat"] = "*"
+	if _, err := fileGroupRealm(p); err == nil {
+		t.Fatal("wildcard group accepted")
+	}
+	p.Platforms[0].Options["allow_chat"] = "fixture-group"
+	p.FileWork.Runtime = ""
+	if _, err := fileGroupRealm(p); err == nil {
+		t.Fatal("non-native runtime accepted")
+	}
+}

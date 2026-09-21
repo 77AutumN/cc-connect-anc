@@ -23,7 +23,12 @@ func fileWorkFixture(t *testing.T, authorize func(core.Message, string) bool, re
 	p.sharedGroup = &sharedWSGroup{platforms: []*Platform{p}}
 	got := make(chan *core.Message, 8)
 	p.handler = func(_ core.Platform, msg *core.Message) { got <- msg }
-	if err := p.SetFileWorkEnabled(true, authorize); err != nil {
+	if err := p.SetFileWorkEnabled(true, func(m core.Message, parent string) error {
+		if authorize(m, parent) {
+			return nil
+		}
+		return core.ErrFileWorkNotFound
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return p, got
@@ -68,7 +73,7 @@ func TestFileWorkTextReceiptsUseTriggerEvenWhenAssociationFails(t *testing.T) {
 	for _, mode := range []string{"reply", "create", "preview"} {
 		t.Run(mode, func(t *testing.T) {
 			p, observed := fileDeliveryFixture(t, "success")
-			if err := p.SetFileWorkEnabled(true, func(core.Message, string) bool { return true }); err != nil {
+			if err := p.SetFileWorkEnabled(true, func(core.Message, string) error { return nil }); err != nil {
 				t.Fatal(err)
 			}
 			calls := 0
@@ -126,6 +131,56 @@ func TestFileWorkKnownParentAllowsUnmentionedTextAndBoundedFile(t *testing.T) {
 	}
 	if authorizationCalls.Load() != 2 || requests.Load() != 1 {
 		t.Fatal("unexpected authorization or resource request count")
+	}
+}
+
+func TestFileWorkReplyAuthorizationCarriesChatType(t *testing.T) {
+	var seen []bool
+	p, got := fileWorkFixture(t, func(msg core.Message, _ string) bool {
+		seen = append(seen, msg.FileWorkPrivate)
+		return true
+	}, func(http.ResponseWriter, *http.Request) { t.Error("unexpected resource download") })
+	for _, kind := range []string{"p2p", "group", "topic_group"} {
+		receiveFileWorkMessage(t, p, got, fileWorkEvent(kind, "text", `{"text":"Revise this"}`, kind, "receipt", false))
+	}
+	if len(seen) != 3 || !seen[0] || seen[1] || seen[2] {
+		t.Fatal("private reply entered group authorization", seen)
+	}
+	if err := p.onMessage(context.Background(), fileWorkEvent("unknown-kind", "text", `{"text":"Revise this"}`, "unknown", "receipt", true)); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 3 {
+		t.Fatal("unknown chat type acquired a group association")
+	}
+}
+
+func TestGroupFileKnownUnimportableReplyReachesHintWithoutDownloads(t *testing.T) {
+	p, got := fileWorkFixture(t, func(core.Message, string) bool { return false }, func(http.ResponseWriter, *http.Request) { t.Error("hint downloaded an attachment") })
+	if err := p.SetFileWorkEnabled(true, func(_ core.Message, parent string) error {
+		switch parent {
+		case "known-task", "known-bot-text":
+			return core.ErrFileWorkNeedsArtifact
+		case "known-uncertain":
+			return core.ErrFileWorkUnconfirmed
+		default:
+			return core.ErrFileWorkNotFound
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, parent := range []string{"known-task", "known-bot-text", "known-uncertain"} {
+		m := receiveFileWorkMessage(t, p, got, fileWorkEvent("reply-"+parent, "file", `{"file_key":"must-not-fetch","file_name":"sample.docx"}`, "group", parent, false))
+		if m.Content != "" || len(m.Files) != 0 {
+			t.Fatal("hint path carried unselected material")
+		}
+	}
+	if err := p.onMessage(context.Background(), fileWorkEvent("foreign", "file", `{"file_key":"must-not-fetch","file_name":"sample.docx"}`, "group", "foreign", false)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-got:
+		t.Fatal("unrelated unmentioned reply dispatched")
+	default:
 	}
 }
 
@@ -233,7 +288,7 @@ func TestFileWorkOptInRequiresFixedReceiverAndKeepsLegacyDefault(t *testing.T) {
 	} {
 		p := &Platform{strictRoutes: true, allowFrom: "sender", allowChat: "chat"}
 		mutate(p)
-		if p.SetFileWorkEnabled(true, func(core.Message, string) bool { return true }) == nil || p.fileWorkEnabled {
+		if p.SetFileWorkEnabled(true, func(core.Message, string) error { return nil }) == nil || p.fileWorkEnabled {
 			t.Fatal("unsupported receiver enabled controlled file intake")
 		}
 	}
@@ -244,7 +299,7 @@ func TestFileWorkOptInRequiresFixedReceiverAndKeepsLegacyDefault(t *testing.T) {
 	if p.fileWorkEnabled || p.fileReplyAuthorized != nil {
 		t.Fatal("controlled intake enabled by default")
 	}
-	if err := p.SetFileWorkEnabled(true, func(core.Message, string) bool { return true }); err != nil {
+	if err := p.SetFileWorkEnabled(true, func(core.Message, string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SetFileWorkEnabled(false, nil); err != nil || p.fileWorkEnabled || p.fileReplyAuthorized != nil {

@@ -50,7 +50,7 @@ func (p *Platform) observeFileWorkReply(rc replyContext, receipt string) {
 
 // SetFileWorkEnabled is a host-only startup setting. Prepare still verifies
 // uniqueness across the complete receiver group before any events are accepted.
-func (p *Platform) SetFileWorkEnabled(enabled bool, authorizeReply func(core.Message, string) bool) error {
+func (p *Platform) SetFileWorkEnabled(enabled bool, authorizeReply func(core.Message, string) error) error {
 	if enabled {
 		if !p.strictRoutes || p.shareSessionInChannel || p.threadIsolation || p.shouldUseWebhookMode() || authorizeReply == nil {
 			return errors.New("controlled file intake requires a fixed isolated receiver")

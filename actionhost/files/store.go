@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/chenhg5/cc-connect/core"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -21,7 +23,7 @@ var (
 	ErrInvalid     = errors.New("invalid_file_request")
 	ErrFormat      = errors.New("file_format_unsupported")
 	ErrVersion     = errors.New("file_version_conflict")
-	ErrUncertain   = errors.New("file_delivery_requires_reconciliation")
+	ErrUncertain   = core.ErrFileWorkUnconfirmed
 )
 
 type Store struct {
@@ -177,6 +179,9 @@ func validState(st state) bool {
 			return false
 		}
 		key := scope(w.Principal) + ":" + w.SessionID
+		if w.GroupRealm != "" && !validHash(w.GroupRealm) {
+			return false
+		}
 		if sessions[key] || roots[w.RootIdentity] {
 			return false
 		}
@@ -194,6 +199,16 @@ func validState(st state) bool {
 		for _, i := range allInputs {
 			if !validHash(i.ID) || i.Path != filepath.Join(w.Root, "inputs", i.ID+filepath.Ext(i.Path)) || !safeName(i.Name) || !validHash(i.SHA256) {
 				return false
+			}
+			if i.Source != nil {
+				source := st.Works[i.Source.WorkID]
+				if source == nil || w.GroupRealm == "" || source.GroupRealm != w.GroupRealm || source.Principal.Platform != w.Principal.Platform || source.Principal.ChatID != w.Principal.ChatID {
+					return false
+				}
+				d := source.Deliveries[i.Source.DeliveryID]
+				if d == nil || d.Status != "accepted" || d.Version != i.Source.Version || d.MessageReceipt != i.Source.MessageReceipt || d.SHA256 != i.SHA256 || d.Name != i.Name {
+					return false
+				}
 			}
 		}
 		versions := map[int]bool{}
