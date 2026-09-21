@@ -18,3 +18,9 @@ counter. Other actors' task/text replies can be ambiguous; reference the exact
 file instead. Unrelated group chatter is not ingested. Private/cross-group or
 other-Bot references, unknown delivery results and corrupt snapshots are refused.
 No new endpoint, database, queue, dependencies or runtime identity is introduced.
+
+The first group work marks the existing ledger as version 2 so older binaries
+cannot silently erase source metadata. Private-only ledgers retain version 1.
+After that mark, rollback disables group routes while keeping a version-2-aware
+gateway; if a binary rollback is necessary, pause file processing until a compatible
+build is available. Never downgrade the ledger or restore an older business snapshot.

@@ -170,7 +170,7 @@ func (s *Store) storageError(ctx context.Context) error {
 }
 
 func validState(st state) bool {
-	if st.Schema != 1 || st.Works == nil {
+	if (st.Schema != 1 && st.Schema != 2) || st.Works == nil {
 		return false
 	}
 	sessions, roots := map[string]bool{}, map[string]bool{}
@@ -179,7 +179,7 @@ func validState(st state) bool {
 			return false
 		}
 		key := scope(w.Principal) + ":" + w.SessionID
-		if w.GroupRealm != "" && !validHash(w.GroupRealm) {
+		if w.GroupRealm != "" && (st.Schema < 2 || !validHash(w.GroupRealm)) {
 			return false
 		}
 		if sessions[key] || roots[w.RootIdentity] {
