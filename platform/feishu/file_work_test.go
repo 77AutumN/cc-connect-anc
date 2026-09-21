@@ -2,6 +2,7 @@ package feishu
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -60,6 +61,38 @@ func receiveFileWorkMessage(t *testing.T, p *Platform, got <-chan *core.Message,
 	case <-time.After(2 * time.Second):
 		t.Fatal("controlled event was not dispatched")
 		return nil
+	}
+}
+
+func TestFileWorkTextReceiptsUseTriggerEvenWhenAssociationFails(t *testing.T) {
+	for _, mode := range []string{"reply", "create", "preview"} {
+		t.Run(mode, func(t *testing.T) {
+			p, observed := fileDeliveryFixture(t, "success")
+			if err := p.SetFileWorkEnabled(true, func(core.Message, string) bool { return true }); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			p.SetFileWorkReplyObserver(func(msg core.Message, receipt string) error {
+				calls++
+				if msg.MessageID != "origin-message" || msg.UserID != "sender-fixture" || receipt != "accepted-file" {
+					t.Error("text reply was associated with another trigger")
+				}
+				return errors.New("simulated storage failure")
+			})
+			rc := fileDeliverySource()
+			rc.controlledFileWork = true
+			p.noReplyToTrigger = mode == "create"
+			var err error
+			if mode == "preview" {
+				p.useInteractiveCard = true
+				_, err = p.SendPreviewStart(context.Background(), rc, "fictional result")
+			} else {
+				err = p.Reply(context.Background(), rc, "fictional result")
+			}
+			if err != nil || calls != 1 || len(observed.paths) != 1 {
+				t.Fatalf("association failure retried a sent message: %v, callbacks=%d, requests=%d", err, calls, len(observed.paths))
+			}
+		})
 	}
 }
 

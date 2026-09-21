@@ -18,11 +18,11 @@ const ContinueSession = "__continue__"
 
 // Session tracks one conversation between a user and the agent.
 type Session struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	AgentSessionID      string         `json:"agent_session_id"`
-	AgentType           string         `json:"agent_type,omitempty"`
-	PastAgentSessionIDs []string       `json:"past_agent_session_ids,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	AgentSessionID      string   `json:"agent_session_id"`
+	AgentType           string   `json:"agent_type,omitempty"`
+	PastAgentSessionIDs []string `json:"past_agent_session_ids,omitempty"`
 	// ActiveProvider is the agent provider name that was active when this
 	// session last took a turn. It is restored before --resume so that a
 	// cc-connect process restart does not silently drop a user's
@@ -38,7 +38,9 @@ type Session struct {
 	// unsolicited agent output), this field is only updated when the engine
 	// processes an actual incoming user message. It is used by reset_on_idle_mins
 	// so that automated activity cannot prevent idle session rotation.
-	LastUserActivity time.Time `json:"last_user_activity,omitempty"`
+	LastUserActivity     time.Time  `json:"last_user_activity,omitempty"`
+	FileTurns            []FileTurn `json:"file_turns,omitempty"`
+	fileRecoveryNotified bool
 
 	mu   sync.Mutex `json:"-"`
 	busy bool       `json:"-"`
@@ -288,6 +290,7 @@ type SessionManager struct {
 	userMeta      map[string]*UserMeta // sessionKey → display info
 	counter       int64
 	storePath     string // empty = no persistence
+	loadErr       error  // Preserve an unreadable snapshot; never replace it with empty state.
 
 	// legacyData is true when sessions were loaded from a snapshot that
 	// predates PastAgentSessionIDs tracking. In this state, many sessions
@@ -565,7 +568,7 @@ func (sm *SessionManager) FindByID(id string) *Session {
 func (sm *SessionManager) DeleteByID(id string) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	if _, ok := sm.sessions[id]; !ok {
+	if s, ok := sm.sessions[id]; !ok || s.hasUnfinishedFileTurns() {
 		return false
 	}
 	sm.deleteByIDLocked(id)
@@ -585,6 +588,9 @@ func (sm *SessionManager) DeleteByAgentSessionID(agentSessionID string) int {
 
 	removed := 0
 	for id, s := range sm.sessions {
+		if s.hasUnfinishedFileTurns() {
+			continue
+		}
 		s.mu.Lock()
 		matched := s.AgentSessionID == agentSessionID
 		s.mu.Unlock()
@@ -617,14 +623,23 @@ func (sm *SessionManager) deleteByIDLocked(id string) {
 
 // Save persists current state to disk. Safe to call from outside (e.g. after message processing).
 func (sm *SessionManager) Save() {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 	sm.saveLocked()
 }
 
 func (sm *SessionManager) saveLocked() {
+	if err := sm.saveLockedError(); err != nil {
+		slog.Error("session: failed to save", "error", err)
+	}
+}
+
+func (sm *SessionManager) saveLockedError() error {
+	if sm.loadErr != nil {
+		return fmt.Errorf("session snapshot unavailable: %w", sm.loadErr)
+	}
 	if sm.storePath == "" {
-		return
+		return nil
 	}
 
 	// Build a deep-copy snapshot to avoid racing with concurrent Session mutations.
@@ -645,6 +660,9 @@ func (sm *SessionManager) saveLocked() {
 			History:             append([]HistoryEntry(nil), s.History...),
 			CreatedAt:           s.CreatedAt,
 			UpdatedAt:           s.UpdatedAt,
+			ActiveProvider:      s.ActiveProvider,
+			LastUserActivity:    s.LastUserActivity,
+			FileTurns:           cloneFileTurns(s.FileTurns),
 		}
 		s.mu.Unlock()
 	}
@@ -677,29 +695,32 @@ func (sm *SessionManager) saveLocked() {
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
-		slog.Error("session: failed to marshal", "error", err)
-		return
+		return fmt.Errorf("marshal session: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(sm.storePath), 0o755); err != nil {
-		slog.Error("session: failed to create dir", "error", err)
-		return
+		return fmt.Errorf("create session directory: %w", err)
 	}
-	if err := AtomicWriteFile(sm.storePath, data, 0o644); err != nil {
-		slog.Error("session: failed to write", "path", sm.storePath, "error", err)
-	}
+	return AtomicWriteFile(sm.storePath, data, 0o600)
 }
 
 func (sm *SessionManager) load() {
 	data, err := os.ReadFile(sm.storePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
+			sm.loadErr = err
 			slog.Error("session: failed to read", "path", sm.storePath, "error", err)
 		}
 		return
 	}
 	var snap sessionSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
+		sm.loadErr = err
 		slog.Error("session: failed to unmarshal", "path", sm.storePath, "error", err)
+		return
+	}
+	if err := validateFileTurns(snap.Sessions); err != nil {
+		sm.loadErr = err
+		slog.Error("session: invalid file supplements")
 		return
 	}
 	sm.sessions = snap.Sessions
@@ -828,7 +849,7 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 	defer sm.mu.Unlock()
 
 	// Group sessions by baseChat
-	chatSessions := make(map[string][]*Session) // baseChat -> sessions
+	chatSessions := make(map[string][]*Session)  // baseChat -> sessions
 	sessionToBaseChat := make(map[string]string) // session.ID -> baseChat
 
 	for userKey, sessionIDs := range sm.userSessions {
@@ -849,6 +870,13 @@ func (sm *SessionManager) PruneDuplicateSessions(mergeHistory bool) PruneResult 
 	// For each baseChat with multiple sessions, decide which to keep
 	for baseChat, sessions := range chatSessions {
 		if len(sessions) <= 1 {
+			continue
+		}
+		pending := false
+		for _, s := range sessions {
+			pending = pending || s.hasUnfinishedFileTurns()
+		}
+		if pending {
 			continue
 		}
 		result.ChatsAffected++
@@ -952,6 +980,9 @@ func (sm *SessionManager) PruneEmptySessions() int {
 
 	removed := 0
 	for _, s := range sm.sessions {
+		if s.hasUnfinishedFileTurns() {
+			continue
+		}
 		s.mu.Lock()
 		isEmpty := len(s.History) == 0
 		s.mu.Unlock()

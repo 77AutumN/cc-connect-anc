@@ -136,6 +136,7 @@ type Platform struct {
 	strictRoutes               bool // Set by the host for fixed multi-project routing.
 	fileWorkEnabled            bool // Host opt-in, protected by mu.
 	fileReplyAuthorized        func(core.Message, string) bool
+	fileReplyObserver          func(core.Message, string) error
 	groupOnly                  bool
 	groupReplyAll              bool
 	respondToAtEveryoneAndHere bool
@@ -3998,7 +3999,11 @@ func (p *Platform) sendNewMessageToChat(ctx context.Context, rc replyContext, ms
 	if rc.chatID == "" {
 		return fmt.Errorf("%s: chatID is empty, cannot send new message", p.tag())
 	}
-	return p.createMessage(ctx, rc.chatID, msgType, content, "send")
+	id, err := p.createMessageResult(ctx, rc.chatID, msgType, content, "send", false)
+	if err == nil {
+		p.observeFileWorkReply(rc, id)
+	}
+	return err
 }
 
 func (p *Platform) buildReplyMessageReqBody(rc replyContext, msgType, content string) *larkim.ReplyMessageReqBody {
@@ -4056,6 +4061,9 @@ func (p *Platform) replyMessageResultWithUUID(ctx context.Context, rc replyConte
 			return nil
 		})
 	}, uuid != "")
+	if err == nil {
+		p.observeFileWorkReply(rc, messageID)
+	}
 	return messageID, err
 }
 
@@ -4976,6 +4984,7 @@ func (p *Platform) SendPreviewStart(ctx context.Context, rctx any, content strin
 		return nil, fmt.Errorf("%s: send preview: no message ID returned", p.tag())
 	}
 
+	p.observeFileWorkReply(rc, msgID)
 	return &feishuPreviewHandle{messageID: msgID, chatID: chatID, cardID: cardID}, nil
 }
 

@@ -36,6 +36,12 @@ func (h *fileHostStub) Tool(_ context.Context, _ string, _ json.RawMessage, _ Ac
 
 type filePlatformStub struct{ stubPlatformEngine }
 
+func (*filePlatformStub) SetFileWorkReplyObserver(func(Message, string) error) {}
+func (*filePlatformStub) FileWorkReplyContext(raw json.RawMessage) (any, error) {
+	return string(raw), nil
+}
+func (*fileHostStub) RecordReply(context.Context, ActionPrincipal, string) error { return nil }
+
 func (p *filePlatformStub) SetFileWorkEnabled(bool, func(Message, string) bool) error { return nil }
 func (p *filePlatformStub) FileReplyRoute(any) (json.RawMessage, error) {
 	return json.RawMessage(`{"route":"fixture"}`), nil

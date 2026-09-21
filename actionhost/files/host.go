@@ -204,6 +204,35 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 	return result, err
 }
 
+// RecordReply binds a transport-issued text/card receipt to its original work.
+// It is not exposed as a model tool and cannot change the work's delivery route.
+func (h *Host) RecordReply(ctx context.Context, p core.ActionPrincipal, receipt string) error {
+	if !validPrincipal(p) || receipt == "" || len(receipt) > 256 {
+		return ErrInvalid
+	}
+	return h.store.change(ctx, func(st *state) error {
+		var selected *work
+		for _, w := range st.Works {
+			if w.Messages[p.MessageID] {
+				if scope(w.Principal) != scope(p) || selected != nil {
+					return ErrScope
+				}
+				selected = w
+			}
+		}
+		if selected == nil {
+			return core.ErrFileWorkNotFound
+		}
+		for _, w := range st.Works {
+			if w.ID != selected.ID && w.Messages[receipt] {
+				return ErrScope
+			}
+		}
+		selected.Messages[receipt] = true
+		return nil
+	})
+}
+
 type deliverRequest struct {
 	WorkID          string `json:"work_id"`
 	Path            string `json:"path"`

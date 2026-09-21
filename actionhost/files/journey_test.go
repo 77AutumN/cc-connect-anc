@@ -46,11 +46,12 @@ type fileJourneyAgent struct {
 	token  string
 	events chan core.Event
 	closed atomic.Bool
+	done   chan struct{}
 }
 
 func (*fileJourneyAgent) Name() string { return "offline-file-fixture" }
 func (a *fileJourneyAgent) ForFileWork(root string) (core.Agent, error) {
-	return &fileJourneyAgent{shared: a.shared, root: root, events: make(chan core.Event, 4)}, nil
+	return &fileJourneyAgent{shared: a.shared, root: root, events: make(chan core.Event, 4), done: make(chan struct{})}, nil
 }
 func (a *fileJourneyAgent) SetSessionEnv(env []string) {
 	for _, item := range env {
@@ -69,7 +70,12 @@ func (*fileJourneyAgent) Stop() error                 { return nil }
 func (a *fileJourneyAgent) Events() <-chan core.Event { return a.events }
 func (a *fileJourneyAgent) CurrentSessionID() string  { return "fixture-" + hash([]byte(a.root)) }
 func (a *fileJourneyAgent) Alive() bool               { return !a.closed.Load() }
-func (a *fileJourneyAgent) Close() error              { a.closed.Store(true); return nil }
+func (a *fileJourneyAgent) Close() error {
+	if !a.closed.Swap(true) && a.done != nil {
+		close(a.done)
+	}
+	return nil
+}
 func (*fileJourneyAgent) RespondPermission(string, core.PermissionResult) error {
 	return fmt.Errorf("unexpected permission flow")
 }
@@ -91,7 +97,13 @@ func (a *fileJourneyAgent) tool(command string, input any, result any) error {
 
 func (a *fileJourneyAgent) Send(_ string, messageID string, _ []core.ImageAttachment, files []core.FileAttachment) error {
 	a.shared.turns.Add(1)
-	result := a.perform(<-a.shared.steps, files)
+	var step fileJourneyStep
+	select {
+	case step = <-a.shared.steps:
+	case <-a.done:
+		return fmt.Errorf("fixture process stopped")
+	}
+	result := a.perform(step, files)
 	a.shared.results <- result
 	a.events <- core.Event{Type: core.EventResult, Content: "FILE-CUJ-DONE:" + messageID, Done: true}
 	return nil
@@ -244,9 +256,20 @@ type fileJourneyPlatform struct {
 	deliveries []fileJourneyDelivery
 	replies    []string
 	authorize  func(core.Message, string) bool
+	observe    func(core.Message, string) error
 }
 
-func (*fileJourneyPlatform) Name() string                    { return "fixture" }
+func (*fileJourneyPlatform) Name() string { return "fixture" }
+func (p *fileJourneyPlatform) SetFileWorkReplyObserver(observe func(core.Message, string) error) {
+	p.mu.Lock()
+	p.observe = observe
+	p.mu.Unlock()
+}
+func (*fileJourneyPlatform) FileWorkReplyContext(raw json.RawMessage) (any, error) {
+	var route fileJourneyRoute
+	err := json.Unmarshal(raw, &route)
+	return route, err
+}
 func (*fileJourneyPlatform) Start(core.MessageHandler) error { return nil }
 func (*fileJourneyPlatform) Stop() error                     { return nil }
 func (p *fileJourneyPlatform) SetFileWorkEnabled(enabled bool, authorize func(core.Message, string) bool) error {
@@ -270,10 +293,14 @@ func (p *fileJourneyPlatform) SendFileWithReceipt(_ context.Context, raw json.Ra
 	p.deliveries = append(p.deliveries, fileJourneyDelivery{route, file, receipt})
 	return receipt, nil
 }
-func (p *fileJourneyPlatform) Reply(_ context.Context, _ any, text string) error {
+func (p *fileJourneyPlatform) Reply(_ context.Context, target any, text string) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.replies = append(p.replies, text)
+	observe := p.observe
+	p.mu.Unlock()
+	if route, ok := target.(fileJourneyRoute); ok && observe != nil {
+		_ = observe(core.Message{Platform: "fixture", UserID: route.Recipient, ChannelID: "room", SessionKey: "fixture:room:" + route.Recipient, MessageID: route.Thread}, "text-"+route.Thread)
+	}
 	return nil
 }
 func (p *fileJourneyPlatform) Send(ctx context.Context, target any, text string) error {
