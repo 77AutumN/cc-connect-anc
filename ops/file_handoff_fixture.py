@@ -38,6 +38,13 @@ def main():
         with tempfile.TemporaryDirectory(prefix="cc-file-identities-") as temporary:
             root = Path(temporary)
             root.chmod(0o755)
+            employee_home = root / 'employee'
+            employee_home.mkdir(mode=0o750)
+            os.chown(employee_home, agent.pw_uid, agent.pw_gid)
+            subprocess.run(['usermod', '--home', str(employee_home), '--shell', '/bin/sh', model], check=True)
+            employee_work = employee_home / 'work'
+            employee_work.mkdir(mode=0o750)
+            os.chown(employee_work, agent.pw_uid, agent.pw_gid)
             binary = root / "handoff.test"
             shutil.copyfile(args.test_binary, binary)
             binary.chmod(0o555)
@@ -51,7 +58,7 @@ def main():
             bundle = workspace / 'launcher'
             bundle.mkdir(mode=0o750)
             os.chown(bundle, gw.pw_uid, agent.pw_gid)
-            for name in ('work_sandbox.py', 'file_tool.py', 'file_handoff_probe.py'):
+            for name in ('work_sandbox.py', 'file_tool.py', 'file_handoff_probe.py', 'native_file_fixture.py'):
                 destination = bundle / name
                 shutil.copyfile(Path(__file__).with_name(name), destination)
                 os.chown(destination, gw.pw_uid, agent.pw_gid)
@@ -67,7 +74,9 @@ def main():
             with sudoers.open('x', encoding='utf-8') as stream:
                 sudoers_created = True
                 stream.write(f'Defaults:{gateway} env_keep += "CC_FILE_ACTION_TOKEN"\n'
-                    f'{gateway} ALL=({model}) NOPASSWD: /usr/bin/python3 -I -B {bundle}/work_sandbox.py --config {config} --work-root {workspace}/works/* -- {command} -c *\n')
+                    f'{gateway} ALL=({model}) NOPASSWD: /usr/bin/python3 -I -B {bundle}/work_sandbox.py --config {config} --work-root {workspace}/works/* -- {command} -c *\n'
+                    f'{gateway} ALL=({model}) NOPASSWD: /usr/bin/true\n'
+                    f'{gateway} ALL=({model}) NOPASSWD: SETENV: /bin/sh -c *\n')
             sudoers.chmod(0o440)
             subprocess.run(['visudo', '-cf', str(sudoers)], check=True)
             # Ubuntu hosted runners restrict ordinary user namespaces through
@@ -83,13 +92,15 @@ def main():
             settings = root / "fixture.json"
             settings.write_text(json.dumps({"Root": str(workspace), "GatewayUID": gw.pw_uid, "ModelUID": agent.pw_uid,
                 'Model':model, 'Command':command, 'Launcher':str(bundle/'work_sandbox.py'),
-                'Config':str(config), 'Probe':str(bundle/'file_handoff_probe.py')}), encoding="utf-8")
+                'Config':str(config), 'Probe':str(bundle/'file_handoff_probe.py'),
+                'EmployeeWork':str(employee_work), 'NativeCLI':str(bundle/'native_file_fixture.py'),
+                'Client':str(bundle/'file_tool.py')}), encoding="utf-8")
             settings.chmod(0o444)
             env = {"PATH": "/usr/bin:/bin", "TMPDIR": str(workspace / "tmp"),
                    "CC_FILE_HANDOFF_FIXTURE": str(settings)}
             result = subprocess.run(["setpriv", "--reuid", str(gw.pw_uid), "--regid", str(gw.pw_gid),
                 "--init-groups", "--inh-caps=-all", "--ambient-caps=-all", "--",
-                str(binary), "-test.run=^TestWorkHandoffOrdinaryIdentities$", "-test.v", "-test.timeout=90s"], env=env, timeout=100)
+                str(binary), "-test.run=^Test(WorkHandoff|NativeFileWork)OrdinaryIdentities$", "-test.v", "-test.timeout=150s"], env=env, timeout=160)
             return result.returncode
     finally:
         if previous_policy is not None:
