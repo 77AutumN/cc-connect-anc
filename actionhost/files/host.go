@@ -46,12 +46,24 @@ type work struct {
 	Version                                                          int
 	Deliveries                                                       map[string]*delivery
 	Messages                                                         map[string]bool
+	GroupRealm                                                       string `json:",omitempty"`
 }
 
 type Host struct {
-	store     *Store
-	snapshots *os.Root
-	send      Sender
+	store      *Store
+	snapshots  *os.Root
+	send       Sender
+	groupRealm string
+}
+
+// SetGroupReferences is a startup-only opt-in for one fixed Bot/group realm.
+// The host never derives sharing authority from model-supplied arguments.
+func (h *Host) SetGroupReferences(realm string) error {
+	if !validHash(realm) {
+		return ErrInvalid
+	}
+	h.groupRealm = realm
+	return nil
 }
 
 func New(store *Store, snapshotDir string, send Sender) (*Host, error) {
@@ -139,6 +151,31 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 	}
 	_ = outputs.Close()
 	err = h.store.change(ctx, func(st *state) error {
+		var source *core.FileWorkSource
+		if b.SourceReceipt != "" {
+			if !b.Group {
+				return ErrScope
+			}
+			w, d, err := h.groupArtifact(st, b.Principal, b.SourceReceipt)
+			if err != nil {
+				return err
+			}
+			f, err := h.snapshots.Open(d.Snapshot)
+			if err != nil {
+				return ErrUnavailable
+			}
+			data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
+			_ = f.Close()
+			if err != nil || len(data) > MaxFileBytes || total+len(data) > 2*MaxFileBytes || len(b.Inputs) >= 4 || hash(data) != d.SHA256 || validateOOXML(d.Name, data) != nil {
+				return ErrInvalid
+			}
+			source = &core.FileWorkSource{WorkID: w.ID, DeliveryID: d.DeliveryID, Version: d.Version, MessageReceipt: d.MessageReceipt}
+			b.Inputs = append(append([]core.FileAttachment(nil), b.Inputs...), core.FileAttachment{FileName: d.Name, Data: data})
+		}
+		realm := ""
+		if b.Group {
+			realm = h.groupRealm
+		}
 		var w *work
 		for _, old := range st.Works {
 			if scope(old.Principal) == scope(b.Principal) && old.SessionID == b.SessionID {
@@ -147,7 +184,7 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			}
 		}
 		if w != nil {
-			if w.Root != b.WorkRoot || w.RootIdentity != identity(rootInfo) || w.InputIdentity != identity(inputInfo) || w.OutputIdentity != identity(outputInfo) || w.OwnerUID != b.OwnerUID {
+			if w.Root != b.WorkRoot || w.RootIdentity != identity(rootInfo) || w.InputIdentity != identity(inputInfo) || w.OutputIdentity != identity(outputInfo) || w.OwnerUID != b.OwnerUID || w.GroupRealm != realm {
 				return ErrScope
 			}
 		} else {
@@ -157,6 +194,7 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 				}
 			}
 			w = &work{ID: uuid.NewString(), SessionID: b.SessionID, Root: b.WorkRoot, RootIdentity: identity(rootInfo), InputIdentity: identity(inputInfo), OutputIdentity: identity(outputInfo), Principal: b.Principal, Route: append(json.RawMessage{}, b.Route...), OwnerUID: b.OwnerUID, Inputs: []Input{}, Deliveries: map[string]*delivery{}, Messages: map[string]bool{}}
+			w.GroupRealm = realm
 		}
 		if !w.Messages[b.Principal.MessageID] {
 			if b.DeferInputs && len(w.PendingInputs) >= 128 {
@@ -170,6 +208,9 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 					return err
 				}
 				input := Input{ID: id, Name: f.FileName, Path: filepath.Join(b.WorkRoot, "inputs", name), SHA256: digest}
+				if source != nil && index == len(b.Inputs)-1 {
+					input.Source = source
+				}
 				if b.DeferInputs {
 					if w.PendingInputs == nil {
 						w.PendingInputs = map[string][]Input{}
@@ -276,10 +317,14 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 	}
 	err := h.store.change(ctx, func(st *state) error {
 		for _, w := range st.Works {
-			if w.Messages[messageID] {
-				if scope(w.Principal) != scope(p) {
-					return ErrScope
-				}
+			if scope(w.Principal) != scope(p) {
+				continue
+			}
+			matches := w.Messages[messageID]
+			for _, input := range w.Inputs {
+				matches = matches || (input.Source != nil && input.Source.MessageReceipt == messageID)
+			}
+			if matches {
 				if result.WorkID != "" {
 					return ErrScope
 				}
@@ -287,11 +332,50 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 			}
 		}
 		if result.WorkID == "" {
-			return core.ErrFileWorkNotFound
+			if _, _, err := h.groupArtifact(st, p, messageID); err != nil {
+				return err
+			}
+			result.Import = true
 		}
 		return nil
 	})
 	return result, err
+}
+
+// Only a confirmed file receipt in the configured Bot/group can cross actor
+// boundaries. Original requests and text replies do not identify one artifact.
+func (h *Host) groupArtifact(st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
+	var selected *work
+	for _, w := range st.Works {
+		if w.Messages[receipt] {
+			if selected != nil {
+				return nil, nil, ErrScope
+			}
+			selected = w
+		}
+	}
+	if selected == nil {
+		return nil, nil, core.ErrFileWorkNotFound
+	}
+	if h.groupRealm == "" || selected.GroupRealm != h.groupRealm || selected.Principal.Platform != p.Platform || selected.Principal.ChatID != p.ChatID || scope(selected.Principal) == scope(p) {
+		return nil, nil, ErrScope
+	}
+	var result *delivery
+	for _, d := range selected.Deliveries {
+		if d.Status == "unknown" || d.Status == "submitted" {
+			return nil, nil, ErrUncertain
+		}
+		if d.Status == "accepted" && d.MessageReceipt == receipt {
+			if result != nil {
+				return nil, nil, ErrScope
+			}
+			result = d
+		}
+	}
+	if result == nil {
+		return nil, nil, ErrScope
+	}
+	return selected, result, nil
 }
 
 // RecordReply binds a transport-issued text/card receipt to its original work.

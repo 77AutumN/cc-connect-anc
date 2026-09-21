@@ -1649,12 +1649,16 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 	p.mu.RLock()
 	controlledFiles, authorizeFileReply := p.fileWorkEnabled, p.fileReplyAuthorized
 	p.mu.RUnlock()
+	if controlledFiles && chatType != "p2p" && chatType != "group" && chatType != "topic_group" {
+		return nil
+	}
 	knownFileParent := false
 	if controlledFiles && parentID != "" && authorizeFileReply != nil {
 		knownFileParent = authorizeFileReply(core.Message{
 			Platform: p.Name(), SessionKey: sessionKey, ChannelID: chatID,
 			UserID: userID, MessageID: messageID, ParentMessageID: parentID,
 			ControlledFileWork: true,
+			FileWorkPrivate:    chatType == "p2p",
 		}, parentID)
 	}
 	fileContinuation := controlledFiles && knownFileParent

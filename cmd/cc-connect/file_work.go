@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/chenhg5/cc-connect/actionhost/files"
 	"github.com/chenhg5/cc-connect/config"
@@ -73,6 +76,13 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 		return nil, noop, err
 	}
 	closeHost := func() { _ = host.Close(); _ = store.Close() }
+	if cfg.GroupReferences {
+		realm, err := fileGroupRealm(project)
+		if err != nil || host.SetGroupReferences(realm) != nil {
+			closeHost()
+			return nil, noop, errInvalid
+		}
+	}
 	if err := engine.SetFileWorkHost(host, func(sessionID string) (string, int, error) {
 		root, err := files.PrepareWork(cfg.WorkBaseDir, sessionID, uid)
 		return root, uid, err
@@ -89,6 +99,26 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 		return nil, noop, err
 	}
 	return server, func() { _ = server.Close(); closeHost() }, nil
+}
+
+func fileGroupRealm(project config.ProjectConfig) (string, error) {
+	if project.FileWork.Runtime != "native" || len(project.Platforms) != 1 || project.Platforms[0].Type != "feishu" {
+		return "", files.ErrInvalid
+	}
+	opts := project.Platforms[0].Options
+	app, _ := opts["app_id"].(string)
+	chat, _ := opts["allow_chat"].(string)
+	if app == "" || chat == "" || strings.ContainsAny(chat, "*, \t\r\n") {
+		return "", files.ErrInvalid
+	}
+	domain, _ := opts["domain"].(string)
+	domain = strings.TrimRight(strings.ToLower(strings.TrimSpace(domain)), "/")
+	if domain == "" {
+		domain = "https://open.feishu.cn"
+	}
+	raw, _ := json.Marshal([]string{domain, app, chat})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func fileRuntimeMatches(raw []byte, cfg config.FileWorkConfig) bool {

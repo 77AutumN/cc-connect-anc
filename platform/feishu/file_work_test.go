@@ -129,6 +129,26 @@ func TestFileWorkKnownParentAllowsUnmentionedTextAndBoundedFile(t *testing.T) {
 	}
 }
 
+func TestFileWorkReplyAuthorizationCarriesChatType(t *testing.T) {
+	var seen []bool
+	p, got := fileWorkFixture(t, func(msg core.Message, _ string) bool {
+		seen = append(seen, msg.FileWorkPrivate)
+		return true
+	}, func(http.ResponseWriter, *http.Request) { t.Error("unexpected resource download") })
+	for _, kind := range []string{"p2p", "group", "topic_group"} {
+		receiveFileWorkMessage(t, p, got, fileWorkEvent(kind, "text", `{"text":"Revise this"}`, kind, "receipt", false))
+	}
+	if len(seen) != 3 || !seen[0] || seen[1] || seen[2] {
+		t.Fatal("private reply entered group authorization", seen)
+	}
+	if err := p.onMessage(context.Background(), fileWorkEvent("unknown-kind", "text", `{"text":"Revise this"}`, "unknown", "receipt", true)); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 3 {
+		t.Fatal("unknown chat type acquired a group association")
+	}
+}
+
 func TestFileWorkUnknownParentAndOtherPrincipalNeverDownload(t *testing.T) {
 	var authorizationCalls, requests atomic.Int32
 	p, got := fileWorkFixture(t, func(core.Message, string) bool {
