@@ -76,7 +76,10 @@ func validateOOXML(name string, data []byte) error {
 
 func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([3]bool, error) {
 	var flags [3]bool
-	d := xml.NewDecoder(bytes.NewReader(data))
+	// A UTF-8 BOM is an encoding signature only at the start of an XML part.
+	d := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})))
+	var defaultType, overrideType string
+	defaultSeen, overrideSeen := false, false
 	relations := strings.HasSuffix(strings.ToLower(name), ".rels")
 	depth, roots := 0, 0
 	formulaDepth := 0
@@ -123,8 +126,19 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 						return flags, ErrInvalid
 					}
 				}
-				if t.Name.Local == "Override" && t.Name.Space == "http://schemas.openxmlformats.org/package/2006/content-types" && attr("PartName") == "/"+mainPart && attr("ContentType") == mainType {
-					flags[0] = true
+				if depth == 2 && t.Name.Space == "http://schemas.openxmlformats.org/package/2006/content-types" {
+					switch {
+					case t.Name.Local == "Default" && strings.EqualFold(attr("Extension"), strings.TrimPrefix(path.Ext(mainPart), ".")):
+						if defaultSeen {
+							return flags, ErrInvalid
+						}
+						defaultType, defaultSeen = attr("ContentType"), true
+					case t.Name.Local == "Override" && attr("PartName") == "/"+mainPart:
+						if overrideSeen {
+							return flags, ErrInvalid
+						}
+						overrideType, overrideSeen = attr("ContentType"), true
+					}
 				}
 			}
 			if relations && t.Name.Local == "Relationship" {
@@ -166,6 +180,12 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 	}
 	if roots != 1 || depth != 0 {
 		return flags, ErrInvalid
+	}
+	// OPC resolves a part-specific override before its extension default,
+	// regardless of declaration order. A bad override cannot fall back.
+	flags[0] = defaultSeen && defaultType == mainType
+	if overrideSeen {
+		flags[0] = overrideType == mainType
 	}
 	return flags, nil
 }
