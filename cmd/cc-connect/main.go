@@ -533,7 +533,7 @@ func main() {
 		if len(platforms) == 1 {
 			reminderPlatforms[proj.Name] = platforms[0]
 		}
-		if toolsEnabled {
+		if toolsEnabled || (proj.FileWork.Enabled && proj.FileWork.Runtime == "native") {
 			actionToolEngines = append(actionToolEngines, engine)
 		}
 		// Wire display settings including show_context_indicator and reply_footer
@@ -2380,6 +2380,7 @@ func buildAgentOptions(dataDir string, proj config.ProjectConfig) map[string]any
 	}
 	opts["cc_data_dir"] = dataDir
 	opts["cc_project"] = proj.Name
+	opts["file_work_native"] = proj.FileWork.Enabled && proj.FileWork.Runtime == "native"
 	return opts
 }
 

@@ -9,8 +9,10 @@ import re
 import socket
 import stat
 import sys
+import urllib.parse
 
 SOCKET = "/run/cc-connect/action-tools.sock"
+ENDPOINT = "http://127.0.0.1:18743/tool"
 MAX_INPUT = 4096
 MAX_RESPONSE = 1024 * 1024
 FIELDS = {
@@ -47,6 +49,23 @@ class SessionHTTP(http.client.HTTPConnection):
         self.sock.connect(SOCKET)
 
 
+def transport():
+    if os.environ.get("CC_FILE_TRANSPORT") == "native":
+        # Use the existing Claude sandbox proxy, including for loopback. Do not
+        # honor NO_PROXY or follow redirects carrying the session capability.
+        proxy = os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY", "")
+        parsed = urllib.parse.urlsplit(proxy)
+        if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or not parsed.port or parsed.username is not None or parsed.password is not None
+                or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
+                or any(ord(c) <= 32 or ord(c) >= 127 for c in proxy)):
+            raise ValueError("native loopback proxy required")
+        return http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=35), ENDPOINT
+    if os.environ.get("CC_FILE_TRANSPORT", "") or os.environ.get("CC_ACTION_TOOLS_SOCKET") != SOCKET:
+        raise ValueError("file transport disabled")
+    return SessionHTTP("localhost", timeout=35), "/tool"
+
+
 def emit(stdout, result, code):
     print(json.dumps(result, ensure_ascii=False), file=stdout)
     return code
@@ -78,7 +97,13 @@ def prepare_delivery(value):
     authorization boundary and cannot select a recipient or a host directory.
     """
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    directory = os.open("outputs", flags | os.O_DIRECTORY)
+    output = "outputs"
+    if os.environ.get("CC_FILE_TRANSPORT") == "native":
+        root = os.environ.get("CC_FILE_WORK_ROOT", "")
+        if not os.path.isabs(root) or os.path.realpath(root) != root:
+            raise ValueError("invalid native work root")
+        output = os.path.join(root, "outputs")
+    directory = os.open(output, flags | os.O_DIRECTORY)
     try:
         group = os.fstat(directory).st_gid
         parts = value["path"].split("/")
@@ -113,7 +138,9 @@ def main(argv=None, *, stdin=None, stdout=None):
     token = os.environ.get("CC_FILE_ACTION_TOKEN", "")
     if not token or len(token) > 1024 or any(ord(c) <= 32 or ord(c) >= 127 for c in token):
         return emit(stdout, {"status": "blocked", "code": "invalid_session"}, 2)
-    if os.environ.get("CC_ACTION_TOOLS_SOCKET") != SOCKET:
+    try:
+        conn, target = transport()
+    except ValueError:
         return emit(stdout, {"status": "unavailable", "code": "file_transport_disabled"}, 1)
     try:
         raw = stdin.read(MAX_INPUT + 1)
@@ -134,9 +161,8 @@ def main(argv=None, *, stdin=None, stdout=None):
         except (ValueError, OSError, AttributeError):
             return emit(stdout, {"status": "blocked", "code": "file_access_not_prepared"}, 2)
 
-    conn = SessionHTTP("localhost", timeout=35)
     try:
-        conn.request("POST", "/tool", body, {"Authorization": "Bearer " + token,
+        conn.request("POST", target, body, {"Authorization": "Bearer " + token,
                                             "Content-Type": "application/json"})
         response = conn.getresponse()
         raw = response.read(MAX_RESPONSE + 1)

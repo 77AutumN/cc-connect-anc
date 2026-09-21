@@ -11,16 +11,16 @@ import (
 
 var _ core.FileWorkAgent = (*Agent)(nil)
 
-// ForFileWork always invokes the protected, fail-closed namespace launcher.
-// Its configuration fixes the native executable and work base; the launcher
-// verifies ownership and creates the boundary before that executable starts.
-// There is deliberately no direct-CLI fallback.
+// Native mode is an explicit opt-in to the existing employee runtime, not a
+// fallback when the isolated launcher fails. Work authority stays with the host.
 func (a *Agent) ForFileWork(root string) (core.Agent, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	if runtime.GOOS != "linux" || !filepath.IsAbs(root) ||
-		!filepath.IsAbs(a.fileWorkLauncher) || !filepath.IsAbs(a.fileWorkConfig) ||
+	if runtime.GOOS != "linux" || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
 		!filepath.IsAbs(a.cmd) || a.spawnOpts.RunAsUser == "" || a.cmdArgsFlag != "" {
+		return nil, errors.New("claudecode: isolated file runtime is not configured")
+	}
+	if !a.fileWorkNative && (!filepath.IsAbs(a.fileWorkLauncher) || !filepath.IsAbs(a.fileWorkConfig)) {
 		return nil, errors.New("claudecode: isolated file runtime is not configured")
 	}
 	args := []string{a.fileWorkLauncher, "--config", a.fileWorkConfig, "--work-root", root, "--", a.cmd}
@@ -30,14 +30,27 @@ func (a *Agent) ForFileWork(root string) (core.Agent, error) {
 	// The deployment's existing env_keep policy must explicitly permit this
 	// capability; do not put token values in sudo's command audit records.
 	spawn.SudoEnvKeep = append(append([]string{}, spawn.SudoEnvKeep...), "CC_FILE_ACTION_TOKEN")
-	return &Agent{
+	child := &Agent{
 		workDir: root, cmd: "/usr/bin/python3", cliExtraArgs: args,
 		mode: a.mode, model: a.model, reasoningEffort: a.reasoningEffort,
 		allowedTools: append([]string{}, a.allowedTools...), disallowedTools: append([]string{}, a.disallowedTools...),
 		maxContextTokens: a.maxContextTokens, activeIdx: -1,
 		systemPrompt: a.systemPrompt, appendSystemPrompt: a.appendSystemPrompt,
 		spawnOpts: spawn,
-	}, nil
+	}
+	if a.fileWorkNative {
+		// Keep the original project cwd so existing auth, managed policy, Skills
+		// and knowledge clients stay available. Only the selected work is added.
+		child.workDir, child.cmd = a.workDir, a.cmd
+		child.cliExtraArgs = append(append([]string{}, a.cliExtraArgs...), "--add-dir", root)
+		child.configEnv = append(append([]string{}, a.configEnv...), "CC_FILE_TRANSPORT=native", "CC_FILE_WORK_ROOT="+root)
+		child.spawnOpts.EnvAllowlist = append(child.spawnOpts.EnvAllowlist, "CC_FILE_TRANSPORT", "CC_FILE_WORK_ROOT")
+		child.providers, child.activeIdx = append([]core.ProviderConfig{}, a.providers...), a.activeIdx
+		child.routerURL, child.routerAPIKey = a.routerURL, a.routerAPIKey
+		child.pluginDirs = append([]string{}, a.pluginDirs...)
+		child.platformPrompt, child.ccDataDir = a.platformPrompt, a.ccDataDir
+	}
+	return child, nil
 }
 
 func fileWorkSession(env []string) bool {

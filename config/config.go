@@ -557,9 +557,10 @@ type ProjectConfig struct {
 }
 
 // FileWorkConfig is disabled by default. Enabling requires a separately
-// provisioned ledger, protected directories and an isolated agent launcher.
+// provisioned ledger, protected directories and an explicitly selected runtime.
 type FileWorkConfig struct {
 	Enabled     bool   `toml:"enabled"`
+	Runtime     string `toml:"runtime"` // empty: isolated launcher; native: existing managed Claude
 	Ledger      string `toml:"ledger"`
 	Snapshots   string `toml:"snapshots"`
 	WorkBaseDir string `toml:"work_base_dir"`

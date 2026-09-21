@@ -25,6 +25,9 @@ class Peer:
     def settimeout(self, timeout):
         self.timeout = timeout
 
+    def setsockopt(self, *_args):
+        pass
+
     def connect(self, address):
         self.address = address
 
@@ -89,9 +92,49 @@ class FileClientTests(unittest.TestCase):
             environment.update(env)
         with (patch.dict(os.environ, environment, clear=True),
               patch.object(socket, "AF_UNIX", getattr(socket, "AF_UNIX", 99), create=True),
+              patch.object(socket, "create_connection", return_value=peer),
               patch.object(socket, "socket", return_value=peer) as factory):
             code = file_tool.main(command, stdin=io.BytesIO(raw), stdout=output)
         return code, json.loads(output.getvalue()), factory
+
+    def test_native_uses_only_fixed_endpoint_through_existing_proxy(self):
+        expected = {"enabled": True, "work_id": "fictional", "inputs": [], "output_dir": "/fixture/outputs"}
+        peer = Peer(expected)
+        with patch.object(socket, "create_connection", return_value=peer) as connect:
+            with patch.dict(os.environ, {"CC_FILE_ACTION_TOKEN": "fixture-token",
+                    "CC_FILE_TRANSPORT": "native", "HTTP_PROXY": "http://127.0.0.1:43123",
+                    "NO_PROXY": "*"}, clear=True):
+                output = io.StringIO()
+                code = file_tool.main(["work-context"], stdin=io.BytesIO(b'{}'), stdout=output)
+        self.assertEqual((code, json.loads(output.getvalue())), (0, expected))
+        self.assertEqual(connect.call_args.args[0], ("127.0.0.1", 43123))
+        self.assertTrue(bytes(peer.sent).startswith(b'POST http://127.0.0.1:18743/tool HTTP/1.1'))
+        self.assertIn(b'Authorization: Bearer fixture-token', peer.sent)
+        self.assertTrue(peer.closed)
+        for proxy in ('', 'http://remote.invalid:80', 'https://127.0.0.1:80',
+                      'http://user:password@localhost:80', 'http://localhost:80/other',
+                      'http://localhost:80?endpoint=other', 'http://localhost:99999'):
+            code, result, factory = self.invoke(['work-context'], b'{}', Peer({}),
+                {'CC_FILE_TRANSPORT':'native', 'HTTP_PROXY':proxy})
+            self.assertEqual((code,result['code']), (1,'file_transport_disabled'))
+            factory.assert_not_called()
+
+    @unittest.skipUnless(os.name == 'posix', 'POSIX publication')
+    def test_native_publishes_selected_work_with_employee_cwd_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'outputs').mkdir()
+            artifact = root / 'outputs' / 'result.docx'
+            artifact.write_bytes(b'fictional-output')
+            artifact.chmod(0o600)
+            previous = os.getcwd()
+            with patch.dict(os.environ, {'CC_FILE_TRANSPORT':'native', 'CC_FILE_WORK_ROOT':str(root)}):
+                file_tool.prepare_delivery({'path':'result.docx', 'sha256':hashlib.sha256(artifact.read_bytes()).hexdigest()})
+                self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o640)
+                self.assertEqual(previous, os.getcwd())
+            with patch.dict(os.environ, {'CC_FILE_TRANSPORT':'native', 'CC_FILE_WORK_ROOT':''}):
+                with self.assertRaises(ValueError):
+                    file_tool.prepare_delivery({'path':'result.docx'})
 
     def test_only_fixed_socket_and_business_envelope_are_sent(self):
         expected = {"enabled": True, "work_id": "fictional", "inputs": [], "output_dir": "/fixture/outputs"}
