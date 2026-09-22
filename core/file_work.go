@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -144,7 +145,15 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	if host == nil && !msg.ControlledFileWork {
 		return false
 	}
-	fail := func(key MsgKey) bool { e.reply(p, msg.ReplyCtx, e.i18n.T(key)); return true }
+	reject := func(reason MsgKey, reply string) bool {
+		e.reply(p, msg.ReplyCtx, reply)
+		// This intake did not dispatch or enqueue a model turn. A reply receipt
+		// binding failure is a separate outbound event, not a completion signal.
+		slog.Info("file work intake rejected", "msg_id", msg.MessageID,
+			"platform", msg.Platform, "session", msg.SessionKey, "reason", reason)
+		return true
+	}
+	fail := func(key MsgKey) bool { return reject(key, e.i18n.T(key)) }
 	if host == nil || prepare == nil || !msg.ControlledFileWork {
 		return fail(MsgFileWorkUnavailable)
 	}
@@ -241,8 +250,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	work, err := host.Bind(e.ctx, FileWorkBinding{Principal: principal, SessionID: fileNativeSessionID(session), Route: route, WorkRoot: root, OwnerUID: uid, Inputs: msg.Files, DeferInputs: busy != nil || session.hasUnfinishedFileTurns(), Group: !msg.FileWorkPrivate, SourceReceipt: sourceReceipt})
 	if err != nil {
 		if message, ok := FileErrorMessage(err, e.i18n); ok {
-			e.reply(p, msg.ReplyCtx, message)
-			return true
+			return reject(MsgFileInputSaveFailed, message)
 		}
 		return fail(MsgFileInputSaveFailed)
 	}

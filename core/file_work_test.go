@@ -1,15 +1,67 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, tc := range []struct {
+		name, parent string
+		bindErr      error
+		reason       MsgKey
+	}{
+		{"unknown reply", "unknown", nil, MsgFileWorkAssociationRequired},
+		{"save failure", "", errors.New("fixture disk error"), MsgFileInputSaveFailed},
+		{"unsupported input", "", NewFileInputError(MsgFileInputFormatUnsupported), MsgFileInputSaveFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs.Reset()
+			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+			a := &fileAgentStub{}
+			e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
+			defer e.cancel()
+			h := &fileHostStub{bindErr: tc.bindErr}
+			if err := e.SetFileWorkHost(h, func(id string) (string, int, error) { return filepath.Join(t.TempDir(), id), 0, nil }); err != nil {
+				t.Fatal(err)
+			}
+			msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "request", ControlledFileWork: true, ParentMessageID: tc.parent, Content: "Prepare files"}
+			e.ReceiveMessage(p, &msg)
+			terminals := 0
+			for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+				t.Log(line) // Synthetic journal rows also exercise the paired maintenance reader.
+				var event map[string]any
+				if err := json.Unmarshal([]byte(line), &event); err != nil {
+					t.Fatal(err)
+				}
+				if event["msg"] == "turn complete" {
+					t.Fatal("rejection reported as a completed model turn")
+				}
+				if event["msg"] == "file work intake rejected" {
+					terminals++
+					if event["msg_id"] != msg.MessageID || event["session"] != msg.SessionKey || event["platform"] != msg.Platform || event["reason"] != string(tc.reason) {
+						t.Fatalf("uncorrelated rejection: %v", event)
+					}
+				}
+			}
+			if terminals != 1 || a.attempts != 0 || len(p.getSent()) != 1 {
+				t.Fatalf("rejection terminals=%d, model attempts=%d, replies=%d", terminals, a.attempts, len(p.getSent()))
+			}
+		})
+	}
+}
 
 type fileHostStub struct {
 	bindErr    error
