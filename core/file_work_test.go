@@ -33,7 +33,11 @@ func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer logs.Close()
+			t.Cleanup(func() {
+				if err := logs.Close(); err != nil {
+					t.Error(err)
+				}
+			})
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
 			defer slog.SetDefault(previous)
