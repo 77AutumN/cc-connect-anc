@@ -113,6 +113,7 @@ func (e *Engine) prepareFileRecovery(p Platform, msg *Message, session *Session,
 	if intent != "继续" && intent != "接着做" && intent != "继续处理" && intent != "继续刚才的工作" && !strings.EqualFold(intent, "continue") {
 		if err := e.sessions.addFileTurn(session, *msg.fileTurn, e.maxQueuedMessages); err != nil {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+			logFileWorkRejected(msg, MsgFileSupplementSaveFailed)
 		} else {
 			runMessageAccepted(msg)
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileUnfinished))
@@ -167,6 +168,7 @@ func (e *Engine) prepareFileRecovery(p Platform, msg *Message, session *Session,
 	})
 	if err != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+		logFileWorkRejected(msg, MsgFileSupplementSaveFailed)
 		return true
 	}
 	data, _ := json.Marshal(notes)

@@ -97,6 +97,14 @@ var ErrFileWorkNotFound = errors.New("file work not found")
 var ErrFileWorkNeedsArtifact = errors.New("group file receipt required")
 var ErrFileWorkUnconfirmed = errors.New("file_delivery_requires_reconciliation")
 
+// Call only for a rejected intake, never an accepted, queued or started turn.
+func logFileWorkRejected(msg *Message, reason MsgKey) {
+	if msg.ControlledFileWork {
+		slog.Info("file work intake rejected", "msg_id", msg.MessageID,
+			"platform", msg.Platform, "session", msg.SessionKey, "reason", reason)
+	}
+}
+
 // SetFileWorkHost is called only during startup, after protected configuration
 // and runtime support have been checked. A nil host leaves legacy behavior off.
 func (e *Engine) SetFileWorkHost(host FileWorkHost, prepare func(string) (string, int, error)) error {
@@ -149,8 +157,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		e.reply(p, msg.ReplyCtx, reply)
 		// This intake did not dispatch or enqueue a model turn. A reply receipt
 		// binding failure is a separate outbound event, not a completion signal.
-		slog.Info("file work intake rejected", "msg_id", msg.MessageID,
-			"platform", msg.Platform, "session", msg.SessionKey, "reason", reason)
+		logFileWorkRejected(msg, reason)
 		return true
 	}
 	fail := func(key MsgKey) bool { return reject(key, e.i18n.T(key)) }

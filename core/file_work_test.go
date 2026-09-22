@@ -1,12 +1,12 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,21 +14,29 @@ import (
 )
 
 func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
 	for _, tc := range []struct {
-		name, parent string
-		bindErr      error
-		reason       MsgKey
+		name, parent, helper string
+		bindErr              error
+		reason               MsgKey
 	}{
-		{"unknown reply", "unknown", nil, MsgFileWorkAssociationRequired},
-		{"save failure", "", errors.New("fixture disk error"), MsgFileInputSaveFailed},
-		{"unsupported input", "", NewFileInputError(MsgFileInputFormatUnsupported), MsgFileInputSaveFailed},
+		{"unknown reply", "unknown", "", nil, MsgFileWorkAssociationRequired},
+		{"save failure", "", "", errors.New("fixture disk error"), MsgFileInputSaveFailed},
+		{"unsupported input", "", "", NewFileInputError(MsgFileInputFormatUnsupported), MsgFileInputSaveFailed},
+		{"queue full", "", "queue-full", nil, MsgQueueFull},
+		{"queue save failure", "", "queue-save", nil, MsgFileSupplementSaveFailed},
+		{"recovery supplement save failure", "", "recover-save", nil, MsgFileSupplementSaveFailed},
+		{"recovery continue save failure", "", "recover-continue", nil, MsgFileSupplementSaveFailed},
+		{"ordinary queue full", "", "legacy-queue-full", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			logs.Reset()
+			logs, err := os.CreateTemp(t.TempDir(), "journal-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logs.Close()
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+			defer slog.SetDefault(previous)
 			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
 			a := &fileAgentStub{}
 			e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
@@ -38,9 +46,45 @@ func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
 				t.Fatal(err)
 			}
 			msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "request", ControlledFileWork: true, ParentMessageID: tc.parent, Content: "Prepare files"}
-			e.ReceiveMessage(p, &msg)
+			if tc.helper == "" {
+				e.ReceiveMessage(p, &msg)
+			} else {
+				turn := fixtureFileTurn(msg.MessageID)
+				msg.fileTurn, msg.fileSession = &turn, e.sessions.GetOrCreateActive(msg.SessionKey)
+				state := &interactiveState{fileWorkID: turn.WorkID}
+				e.interactiveStates[msg.SessionKey] = state
+				switch tc.helper {
+				case "queue-full", "legacy-queue-full", "queue-save":
+					if tc.helper != "queue-save" {
+						e.maxQueuedMessages = 0
+					}
+					if tc.helper == "legacy-queue-full" {
+						msg.ControlledFileWork = false
+					}
+					if !e.queueMessageForBusySession(p, &msg, msg.SessionKey) {
+						t.Fatal("queue refusal not handled")
+					}
+				default:
+					if tc.helper == "recover-continue" {
+						msg.Content = "continue"
+					}
+					if !e.prepareFileRecovery(p, &msg, msg.fileSession, FileWorkContext{}) {
+						t.Fatal("recovery save refusal not handled")
+					}
+				}
+				if len(state.pendingMessages) != 0 || msg.fileSession.hasUnfinishedFileTurns() {
+					t.Fatal("rejected intake was saved or queued")
+				}
+			}
+			body, err := os.ReadFile(logs.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
 			terminals := 0
-			for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+			for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+				if line == "" {
+					continue
+				}
 				t.Log(line) // Synthetic journal rows also exercise the paired maintenance reader.
 				var event map[string]any
 				if err := json.Unmarshal([]byte(line), &event); err != nil {
@@ -56,7 +100,11 @@ func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
 					}
 				}
 			}
-			if terminals != 1 || a.attempts != 0 || len(p.getSent()) != 1 {
+			wanted := 1
+			if tc.reason == "" {
+				wanted = 0
+			}
+			if terminals != wanted || a.attempts != 0 || len(p.getSent()) != 1 {
 				t.Fatalf("rejection terminals=%d, model attempts=%d, replies=%d", terminals, a.attempts, len(p.getSent()))
 			}
 		})

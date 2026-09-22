@@ -3276,6 +3276,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 	if len(state.pendingMessages) >= e.maxQueuedMessages {
 		depth := len(state.pendingMessages)
 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgQueueFull), depth))
+		logFileWorkRejected(msg, MsgQueueFull)
 		return true // handled: queue-full reply sent
 	}
 	fileWorkID := ""
@@ -3285,6 +3286,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		}
 		if err := e.sessions.addFileTurn(msg.fileSession, *msg.fileTurn, e.maxQueuedMessages); err != nil {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+			logFileWorkRejected(msg, MsgFileSupplementSaveFailed)
 			return true
 		}
 		fileWorkID = msg.fileTurn.WorkID
