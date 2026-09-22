@@ -5,11 +5,115 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestFileWorkRejectedIntakeHasCorrelatedTerminalBeforeModel(t *testing.T) {
+	for _, tc := range []struct {
+		name, parent, helper string
+		bindErr              error
+		reason               MsgKey
+	}{
+		{"unknown reply", "unknown", "", nil, MsgFileWorkAssociationRequired},
+		{"save failure", "", "", errors.New("fixture disk error"), MsgFileInputSaveFailed},
+		{"unsupported input", "", "", NewFileInputError(MsgFileInputFormatUnsupported), MsgFileInputSaveFailed},
+		{"queue full", "", "queue-full", nil, MsgQueueFull},
+		{"queue save failure", "", "queue-save", nil, MsgFileSupplementSaveFailed},
+		{"recovery supplement save failure", "", "recover-save", nil, MsgFileSupplementSaveFailed},
+		{"recovery continue save failure", "", "recover-continue", nil, MsgFileSupplementSaveFailed},
+		{"ordinary queue full", "", "legacy-queue-full", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs, err := os.CreateTemp(t.TempDir(), "journal-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := logs.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+			defer slog.SetDefault(previous)
+			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+			a := &fileAgentStub{}
+			e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
+			defer e.cancel()
+			h := &fileHostStub{bindErr: tc.bindErr}
+			if err := e.SetFileWorkHost(h, func(id string) (string, int, error) { return filepath.Join(t.TempDir(), id), 0, nil }); err != nil {
+				t.Fatal(err)
+			}
+			msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "request", ControlledFileWork: true, ParentMessageID: tc.parent, Content: "Prepare files"}
+			if tc.helper == "" {
+				e.ReceiveMessage(p, &msg)
+			} else {
+				turn := fixtureFileTurn(msg.MessageID)
+				msg.fileTurn, msg.fileSession = &turn, e.sessions.GetOrCreateActive(msg.SessionKey)
+				state := &interactiveState{fileWorkID: turn.WorkID}
+				e.interactiveStates[msg.SessionKey] = state
+				switch tc.helper {
+				case "queue-full", "legacy-queue-full", "queue-save":
+					if tc.helper != "queue-save" {
+						e.maxQueuedMessages = 0
+					}
+					if tc.helper == "legacy-queue-full" {
+						msg.ControlledFileWork = false
+					}
+					if !e.queueMessageForBusySession(p, &msg, msg.SessionKey) {
+						t.Fatal("queue refusal not handled")
+					}
+				default:
+					if tc.helper == "recover-continue" {
+						msg.Content = "continue"
+					}
+					if !e.prepareFileRecovery(p, &msg, msg.fileSession, FileWorkContext{}) {
+						t.Fatal("recovery save refusal not handled")
+					}
+				}
+				if len(state.pendingMessages) != 0 || msg.fileSession.hasUnfinishedFileTurns() {
+					t.Fatal("rejected intake was saved or queued")
+				}
+			}
+			body, err := os.ReadFile(logs.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			terminals := 0
+			for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+				if line == "" {
+					continue
+				}
+				t.Log(line) // Synthetic journal rows also exercise the paired maintenance reader.
+				var event map[string]any
+				if err := json.Unmarshal([]byte(line), &event); err != nil {
+					t.Fatal(err)
+				}
+				if event["msg"] == "turn complete" {
+					t.Fatal("rejection reported as a completed model turn")
+				}
+				if event["msg"] == "file work intake rejected" {
+					terminals++
+					if event["msg_id"] != msg.MessageID || event["session"] != msg.SessionKey || event["platform"] != msg.Platform || event["reason"] != string(tc.reason) {
+						t.Fatalf("uncorrelated rejection: %v", event)
+					}
+				}
+			}
+			wanted := 1
+			if tc.reason == "" {
+				wanted = 0
+			}
+			if terminals != wanted || a.attempts != 0 || len(p.getSent()) != 1 {
+				t.Fatalf("rejection terminals=%d, model attempts=%d, replies=%d", terminals, a.attempts, len(p.getSent()))
+			}
+		})
+	}
+}
 
 type fileHostStub struct {
 	bindErr    error
