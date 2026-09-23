@@ -396,7 +396,12 @@ func TestHandleCronExec_TriggersJob(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(platform.getSent()) >= 2 {
+		// The reply precedes MarkRun's save; wait before TempDir cleanup.
+		_, finished, lastErr := cronJobRunStatus(store, job.ID)
+		if len(platform.getSent()) >= 2 && finished {
+			if lastErr != "" {
+				t.Fatalf("cron exec failed after reply: %s", lastErr)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -451,7 +456,12 @@ func TestHandleCronExec_RunAliasRouteTriggersJob(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(platform.getSent()) >= 2 {
+		// The reply precedes MarkRun's save; wait before TempDir cleanup.
+		_, finished, lastErr := cronJobRunStatus(store, job.ID)
+		if len(platform.getSent()) >= 2 && finished {
+			if lastErr != "" {
+				t.Fatalf("cron run alias failed after reply: %s", lastErr)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

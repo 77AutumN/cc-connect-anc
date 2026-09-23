@@ -8224,7 +8224,12 @@ func TestCmdCronExec_TriggersJob(t *testing.T) {
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
 				sent := platform.getSent()
-				if sentContains(sent, "triggered") && sentContains(sent, "manual run complete") {
+				// The reply precedes MarkRun's save; wait before TempDir cleanup.
+				_, finished, lastErr := cronJobRunStatus(store, job.ID)
+				if sentContains(sent, "triggered") && sentContains(sent, "manual run complete") && finished {
+					if lastErr != "" {
+						t.Fatalf("cron exec failed after reply: %s", lastErr)
+					}
 					return
 				}
 				time.Sleep(10 * time.Millisecond)
