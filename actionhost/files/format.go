@@ -47,7 +47,7 @@ func validateOOXML(name string, data []byte) error {
 
 func validateOffice(name string, data []byte, extended bool) error {
 	ext := strings.ToLower(path.Ext(name))
-	if len(data) == 0 || len(data) > MaxFileBytes || !(ext == ".docx" || ext == ".xlsx" || (extended && ext == ".pptx")) {
+	if len(data) == 0 || len(data) > MaxFileBytes || (ext != ".docx" && ext != ".xlsx" && (!extended || ext != ".pptx")) {
 		return ErrInvalid
 	}
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
