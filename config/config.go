@@ -559,13 +559,14 @@ type ProjectConfig struct {
 // FileWorkConfig is disabled by default. Enabling requires a separately
 // provisioned ledger, protected directories and an explicitly selected runtime.
 type FileWorkConfig struct {
-	Enabled         bool   `toml:"enabled"`
-	Runtime         string `toml:"runtime"` // empty: isolated launcher; native: existing managed Claude
-	Ledger          string `toml:"ledger"`
-	Snapshots       string `toml:"snapshots"`
-	WorkBaseDir     string `toml:"work_base_dir"`
-	ToolsSocket     string `toml:"tools_socket"`
-	GroupReferences bool   `toml:"group_references"` // opt-in: explicit replies to delivered group files
+	Enabled           bool   `toml:"enabled"`
+	Runtime           string `toml:"runtime"` // empty: isolated launcher; native: existing managed Claude
+	Ledger            string `toml:"ledger"`
+	Snapshots         string `toml:"snapshots"`
+	WorkBaseDir       string `toml:"work_base_dir"`
+	ToolsSocket       string `toml:"tools_socket"`
+	GroupReferences   bool   `toml:"group_references"`   // opt-in: explicit replies to delivered group files
+	DocumentValidator string `toml:"document_validator"` // empty: original DOCX/XLSX limits; protected PDF validator enables new formats
 }
 
 type AgentConfig struct {

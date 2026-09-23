@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -15,6 +16,18 @@ import (
 	"github.com/chenhg5/cc-connect/config"
 	"github.com/chenhg5/cc-connect/core"
 )
+
+// Standalone bounded stdin preflight; runs before config, logs or receivers.
+func checkOfficeInput(args []string, input io.Reader) error {
+	if len(args) != 1 || filepath.Base(args[0]) != args[0] {
+		return files.ErrInvalid
+	}
+	data, err := io.ReadAll(io.LimitReader(input, files.MaxFileBytes+1))
+	if err != nil {
+		return err
+	}
+	return files.ValidateOfficeDocument(args[0], data)
+}
 
 // configureFileWork opens only existing protected host state. It does not
 // initialize storage, install dependencies, or change an account's privileges.
@@ -76,6 +89,12 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 		return nil, noop, err
 	}
 	closeHost := func() { _ = host.Close(); _ = store.Close() }
+	if cfg.DocumentValidator != "" {
+		if err := host.SetDocumentFormats(cfg.DocumentValidator); err != nil {
+			closeHost()
+			return nil, noop, err
+		}
+	}
 	if cfg.GroupReferences {
 		realm, err := fileGroupRealm(project)
 		if err != nil || host.SetGroupReferences(realm) != nil {
@@ -89,6 +108,13 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 	}); err != nil {
 		closeHost()
 		return nil, noop, err
+	}
+	if cfg.DocumentValidator != "" {
+		receiver, ok := platforms[0].(interface{ SetFileWorkImagesEnabled(bool) error })
+		if !ok || receiver.SetFileWorkImagesEnabled(true) != nil {
+			closeHost()
+			return nil, noop, errInvalid
+		}
 	}
 	if cfg.Runtime == "native" {
 		return nil, closeHost, nil

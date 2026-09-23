@@ -135,6 +135,7 @@ type Platform struct {
 	allowChat                  string
 	strictRoutes               bool // Set by the host for fixed multi-project routing.
 	fileWorkEnabled            bool // Host opt-in, protected by mu.
+	fileWorkImages             bool // New format opt-in, protected by mu.
 	fileReplyAuthorized        func(core.Message, string) error
 	fileReplyObserver          func(core.Message, string) error
 	groupOnly                  bool

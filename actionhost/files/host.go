@@ -50,10 +50,11 @@ type work struct {
 }
 
 type Host struct {
-	store      *Store
-	snapshots  *os.Root
-	send       Sender
-	groupRealm string
+	store             *Store
+	snapshots         *os.Root
+	send              Sender
+	groupRealm        string
+	documentValidator string
 }
 
 // SetGroupReferences is a startup-only opt-in for one fixed Bot/group realm.
@@ -127,7 +128,10 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 		if f.ReceiveError != "" || len(f.Data) > MaxFileBytes || total > 2*MaxFileBytes || !safeName(f.FileName) {
 			return result, ErrInvalid
 		}
-		if validateOOXML(f.FileName, f.Data) != nil {
+		if err := h.validateFile(ctx, f.FileName, f.Data); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				return result, core.NewFileInputError(core.MsgFileInputUnavailable)
+			}
 			return result, core.NewFileInputError(core.MsgFileInputFormatUnsupported)
 		}
 	}
@@ -166,8 +170,11 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			}
 			data, err := io.ReadAll(io.LimitReader(f, MaxFileBytes+1))
 			_ = f.Close()
-			if err != nil || len(data) > MaxFileBytes || total+len(data) > 2*MaxFileBytes || len(b.Inputs) >= 4 || hash(data) != d.SHA256 || validateOOXML(d.Name, data) != nil {
+			if err != nil || len(data) > MaxFileBytes || total+len(data) > 2*MaxFileBytes || len(b.Inputs) >= 4 || hash(data) != d.SHA256 {
 				return ErrInvalid
+			}
+			if err := h.validateFile(ctx, d.Name, data); err != nil {
+				return err
 			}
 			source = &core.FileWorkSource{WorkID: w.ID, DeliveryID: d.DeliveryID, Version: d.Version, MessageReceipt: d.MessageReceipt}
 			b.Inputs = append(append([]core.FileAttachment(nil), b.Inputs...), core.FileAttachment{FileName: d.Name, Data: data})
@@ -565,7 +572,10 @@ func (h *Host) deliver(ctx context.Context, r deliverRequest, p core.ActionPrinc
 		if hash(data) != r.SHA256 {
 			return ErrInvalid
 		}
-		if validateOOXML(r.Path, data) != nil {
+		if err := h.validateFile(ctx, r.Path, data); err != nil {
+			if errors.Is(err, ErrUnavailable) {
+				return err
+			}
 			return ErrFormat
 		}
 		id := uuid.NewString()

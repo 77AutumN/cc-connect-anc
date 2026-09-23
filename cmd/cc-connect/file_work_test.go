@@ -1,11 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"github.com/chenhg5/cc-connect/config"
 	"path/filepath"
 	"testing"
 )
+
+func TestFileCheckRejectsBeforeRuntimeStartup(t *testing.T) {
+	for _, args := range [][]string{nil, {"../outside.docx"}, {"file.pdf"}, {"file.docx", "extra"}, {"file.docx"}} {
+		if checkOfficeInput(args, bytes.NewBufferString("not an office package")) == nil {
+			t.Fatal("invalid stdin accepted", args)
+		}
+	}
+}
 
 func TestFileWorkConfigurationCannotMountAnotherSocket(t *testing.T) {
 	dir := t.TempDir()

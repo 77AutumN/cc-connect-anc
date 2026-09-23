@@ -26,6 +26,10 @@ type fileReceiveBudget struct {
 }
 
 func (p *Platform) downloadFileBounded(ctx context.Context, messageID, key string, limit int64) ([]byte, error) {
+	return p.downloadResourceBounded(ctx, messageID, key, "file", limit)
+}
+
+func (p *Platform) downloadResourceBounded(ctx context.Context, messageID, key, kind string, limit int64) ([]byte, error) {
 	if messageID == "" || key == "" {
 		return nil, core.NewFileInputError(core.MsgFileInputUnavailable)
 	}
@@ -36,7 +40,7 @@ func (p *Platform) downloadFileBounded(ctx context.Context, messageID, key strin
 	defer cancel()
 	ctx = context.WithValue(ctx, fileDownloadLimitKey{}, limit)
 	resp, err := p.client.Im.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().
-		MessageId(messageID).FileKey(key).Type("file").Build())
+		MessageId(messageID).FileKey(key).Type(kind).Build())
 	if err != nil {
 		var inputErr *core.FileInputError
 		if errors.As(err, &inputErr) {
@@ -63,6 +67,10 @@ func (p *Platform) downloadFileBounded(ctx context.Context, messageID, key strin
 }
 
 func (p *Platform) receiveFile(ctx context.Context, messageID, key, name string, budget *fileReceiveBudget) core.FileAttachment {
+	return p.receiveResource(ctx, messageID, key, name, "file", budget)
+}
+
+func (p *Platform) receiveResource(ctx context.Context, messageID, key, name, kind string, budget *fileReceiveBudget) core.FileAttachment {
 	file := core.FileAttachment{FileName: name, RequireSave: true}
 	if budget == nil {
 		budget = &fileReceiveBudget{}
@@ -75,7 +83,7 @@ func (p *Platform) receiveFile(ctx context.Context, messageID, key, name string,
 		return file
 	}
 	budget.count++
-	data, err := p.downloadFileBounded(ctx, messageID, key, min(core.DefaultFileInputLimit, maxFileInputBatchBytes-budget.bytes))
+	data, err := p.downloadResourceBounded(ctx, messageID, key, kind, min(core.DefaultFileInputLimit, maxFileInputBatchBytes-budget.bytes))
 	if err != nil {
 		budget.failure = core.MsgFileInputUnavailable
 		var inputErr *core.FileInputError
