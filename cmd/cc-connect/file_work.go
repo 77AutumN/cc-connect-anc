@@ -76,6 +76,12 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 		return nil, noop, err
 	}
 	closeHost := func() { _ = host.Close(); _ = store.Close() }
+	if cfg.DocumentValidator != "" {
+		if err := host.SetDocumentFormats(cfg.DocumentValidator); err != nil {
+			closeHost()
+			return nil, noop, err
+		}
+	}
 	if cfg.GroupReferences {
 		realm, err := fileGroupRealm(project)
 		if err != nil || host.SetGroupReferences(realm) != nil {

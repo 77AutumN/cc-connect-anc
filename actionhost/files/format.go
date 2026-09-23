@@ -4,6 +4,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/xml"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"path"
 	"regexp"
@@ -13,17 +16,32 @@ import (
 const maxExpandedBytes = 100 << 20
 
 func mimeType(name string) string {
-	if strings.HasSuffix(strings.ToLower(name), ".docx") {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".docx":
 		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".pdf":
+		return "application/pdf"
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
 	}
-	return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	return "application/octet-stream"
 }
 
 // Validate existing OOXML packaging, not document creation. No macros, embedded
 // objects, external relationships, active fields/formulas or archive extraction.
 func validateOOXML(name string, data []byte) error {
+	return validateOffice(name, data, false)
+}
+
+func validateOffice(name string, data []byte, extended bool) error {
 	ext := strings.ToLower(path.Ext(name))
-	if len(data) == 0 || len(data) > MaxFileBytes || (ext != ".docx" && ext != ".xlsx") {
+	if len(data) == 0 || len(data) > MaxFileBytes || (ext != ".docx" && ext != ".xlsx" && !(extended && ext == ".pptx")) {
 		return ErrInvalid
 	}
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -33,6 +51,9 @@ func validateOOXML(name string, data []byte) error {
 	mainPart, mainType, rootTag := "word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", "document"
 	if ext == ".xlsx" {
 		mainPart, mainType, rootTag = "xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml", "workbook"
+	}
+	if ext == ".pptx" {
+		mainPart, mainType, rootTag = "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml", "presentation"
 	}
 	seen := map[string]bool{}
 	var expanded uint64
@@ -58,6 +79,9 @@ func validateOOXML(name string, data []byte) error {
 		part, readErr := io.ReadAll(io.LimitReader(r, int64(f.UncompressedSize64)+1))
 		closeErr := r.Close()
 		if readErr != nil || closeErr != nil || uint64(len(part)) != f.UncompressedSize64 {
+			return ErrInvalid
+		}
+		if ext == ".pptx" && strings.HasPrefix(lower, "ppt/media/") && validateImage(f.Name, part) != nil {
 			return ErrInvalid
 		}
 		if strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".rels") {
@@ -105,7 +129,7 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 				if (name == "[Content_Types].xml" && (t.Name.Local != "Types" || t.Name.Space != "http://schemas.openxmlformats.org/package/2006/content-types")) || (relations && (t.Name.Local != "Relationships" || t.Name.Space != "http://schemas.openxmlformats.org/package/2006/relationships")) {
 					return flags, ErrInvalid
 				}
-				if name == mainPart && t.Name.Local == rootTag && ((rootTag == "document" && t.Name.Space == "http://schemas.openxmlformats.org/wordprocessingml/2006/main") || (rootTag == "workbook" && t.Name.Space == "http://schemas.openxmlformats.org/spreadsheetml/2006/main")) {
+				if name == mainPart && t.Name.Local == rootTag && ((rootTag == "document" && t.Name.Space == "http://schemas.openxmlformats.org/wordprocessingml/2006/main") || (rootTag == "workbook" && t.Name.Space == "http://schemas.openxmlformats.org/spreadsheetml/2006/main") || (rootTag == "presentation" && t.Name.Space == "http://schemas.openxmlformats.org/presentationml/2006/main")) {
 					flags[2] = true
 				}
 			}
@@ -151,7 +175,7 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 					flags[1] = true
 				}
 			}
-			if t.Name.Local == "altChunk" || t.Name.Local == "object" || t.Name.Local == "oleObject" || t.Name.Local == "control" {
+			if t.Name.Local == "altChunk" || t.Name.Local == "object" || t.Name.Local == "oleObject" || t.Name.Local == "control" || t.Name.Local == "audio" || t.Name.Local == "video" || attr("action") != "" {
 				return flags, ErrInvalid
 			}
 			// Word fields can span runs and nested fields. This first boundary
@@ -190,6 +214,28 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 		flags[0] = overrideType == mainType
 	}
 	return flags, nil
+}
+
+// Decode the complete image after bounding its allocation, not just its magic.
+func validateImage(name string, data []byte) error {
+	if len(data) == 0 || len(data) > MaxFileBytes {
+		return ErrInvalid
+	}
+	want := strings.TrimPrefix(strings.ToLower(path.Ext(name)), ".")
+	if want == "jpg" {
+		want = "jpeg"
+	}
+	if want != "png" && want != "jpeg" {
+		return ErrInvalid
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || format != want || cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > 25_000_000 {
+		return ErrInvalid
+	}
+	if _, _, err = image.Decode(bytes.NewReader(data)); err != nil {
+		return ErrInvalid
+	}
+	return nil
 }
 
 var activeFunction = regexp.MustCompile(`(?i)(?:^|[^A-Z0-9_])(?:DDE(?:AUTO)?|INCLUDETEXT|INCLUDEPICTURE|WEBSERVICE|HYPERLINK|RTD|CALL|EXEC)(?:[^A-Z0-9_]|$)`)
