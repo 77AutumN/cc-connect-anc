@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/chenhg5/cc-connect/core"
 )
@@ -114,5 +117,73 @@ func TestNewFormatsUseExistingSnapshotsReceiptsAndVersions(t *testing.T) {
 		if err != nil || !bytes.Equal(original, data) {
 			t.Fatal("original lost", err)
 		}
+	}
+}
+
+func TestPPTXRejectsRelocatedUnsupportedObjects(t *testing.T) {
+	for _, tc := range []struct{ name, target, kind, body string }{
+		{"svg", "payload.svg", "image", `<svg xmlns="http://www.w3.org/2000/svg"/>`},
+		{"svg_as_xml", "payload.xml", "image", `<svg xmlns="http://www.w3.org/2000/svg"/>`},
+		{"embedded_workbook", "book.xlsx", "package", "embedded workbook"},
+		{"ole_object", "object.xml", "oleObject", `<object/>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := presentationParts()
+			p["ppt/assets/"+tc.target] = tc.body
+			p["ppt/slides/_rels/slide1.xml.rels"] = `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="r2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/` + tc.kind + `" Target="../assets/` + tc.target + `"/></Relationships>`
+			if validateOffice("relocated.pptx", packageBytes(t, p), true) == nil {
+				t.Fatal("relocated unsupported content accepted")
+			}
+		})
+	}
+	p := presentationParts()
+	p["ppt/slides/slide1.xml"] = `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:oleObj/></p:sld>`
+	if validateOffice("object.pptx", packageBytes(t, p), true) == nil {
+		t.Fatal("PowerPoint OLE element accepted")
+	}
+}
+
+func TestPDFValidatorProcessProtocolAndFailures(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("production executable contract is POSIX")
+	}
+	for _, tc := range []struct {
+		name, body string
+		want       error
+	}{
+		{"accepted", `test "$(cat)" = '%PDF-fictional' || exit 3
+test -z "$PYTHONPATH" || exit 4
+printf 'PDF_OK_V1\n'`, nil},
+		{"rejected", "exit 1", ErrInvalid},
+		{"crashed", "exit 2", ErrUnavailable},
+		{"wrong_protocol", "exit 0", ErrUnavailable},
+		{"timeout", "exec sleep 30", ErrUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			helper := filepath.Join(dir, "validator")
+			if err := os.WriteFile(helper, []byte("#!/bin/sh\n"+tc.body+"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			h := &Host{}
+			if err := h.SetDocumentFormats(helper); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if tc.name == "timeout" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
+				defer cancel()
+			}
+			if err := h.validateFile(ctx, "fictional.pdf", []byte("%PDF-fictional")); !errors.Is(err, tc.want) {
+				t.Fatalf("got %v want %v", err, tc.want)
+			}
+		})
+	}
+	if (&Host{}).SetDocumentFormats("/missing/validator") == nil {
+		t.Fatal("missing validator enabled")
 	}
 }

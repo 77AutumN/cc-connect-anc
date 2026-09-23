@@ -15,6 +15,12 @@ import (
 
 const maxExpandedBytes = 100 << 20
 
+// ValidateOfficeDocument also guards the local ordinary-user renderer before
+// LibreOffice opens a generated document. It performs no storage or delivery.
+func ValidateOfficeDocument(name string, data []byte) error {
+	return validateOffice(name, data, true)
+}
+
 func mimeType(name string) string {
 	switch strings.ToLower(path.Ext(name)) {
 	case ".docx":
@@ -41,7 +47,7 @@ func validateOOXML(name string, data []byte) error {
 
 func validateOffice(name string, data []byte, extended bool) error {
 	ext := strings.ToLower(path.Ext(name))
-	if len(data) == 0 || len(data) > MaxFileBytes || (ext != ".docx" && ext != ".xlsx" && !(extended && ext == ".pptx")) {
+	if len(data) == 0 || len(data) > MaxFileBytes || !(ext == ".docx" || ext == ".xlsx" || (extended && ext == ".pptx")) {
 		return ErrInvalid
 	}
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -81,11 +87,16 @@ func validateOffice(name string, data []byte, extended bool) error {
 		if readErr != nil || closeErr != nil || uint64(len(part)) != f.UncompressedSize64 {
 			return ErrInvalid
 		}
-		if ext == ".pptx" && strings.HasPrefix(lower, "ppt/media/") && validateImage(f.Name, part) != nil {
+		// OPC targets can live anywhere in a package. Restrict every binary
+		// part, rather than trusting the conventional ppt/media directory.
+		// python-pptx's stock template includes opaque, non-executable printer
+		// metadata. Keep it bounded; package/OLE relationships remain forbidden.
+		printerSettings := strings.HasPrefix(lower, "ppt/printersettings/") && strings.HasSuffix(lower, ".bin") && len(part) <= 64<<10
+		if ext == ".pptx" && !strings.HasSuffix(lower, ".xml") && !strings.HasSuffix(lower, ".rels") && !printerSettings && validateImage(f.Name, part) != nil {
 			return ErrInvalid
 		}
 		if strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".rels") {
-			flags, err := inspectXML(f.Name, part, mainPart, mainType, rootTag)
+			flags, err := inspectXML(f.Name, part, mainPart, mainType, rootTag, extended && ext == ".docx")
 			if err != nil {
 				return err
 			}
@@ -98,7 +109,7 @@ func validateOffice(name string, data []byte, extended bool) error {
 	return nil
 }
 
-func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([3]bool, error) {
+func inspectXML(name string, data []byte, mainPart, mainType, rootTag string, allowFields bool) ([3]bool, error) {
 	var flags [3]bool
 	// A UTF-8 BOM is an encoding signature only at the start of an XML part.
 	d := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})))
@@ -108,6 +119,7 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 	depth, roots := 0, 0
 	formulaDepth := 0
 	var formula strings.Builder
+	var fields wordFields
 	for {
 		token, err := d.Token()
 		if err == io.EOF {
@@ -171,16 +183,25 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 				if t.Name.Space != "http://schemas.openxmlformats.org/package/2006/relationships" || strings.EqualFold(attr("TargetMode"), "External") || strings.ContainsAny(attr("Target"), ":\\") || strings.HasPrefix(attr("Target"), "//") {
 					return flags, ErrInvalid
 				}
+				if rootTag == "presentation" {
+					switch path.Base(attr("Type")) {
+					case "oleObject", "package", "control", "audio", "video", "media":
+						return flags, ErrInvalid
+					case "image":
+						ext := strings.ToLower(path.Ext(attr("Target")))
+						if ext != ".png" && ext != ".jpeg" && ext != ".jpg" {
+							return flags, ErrInvalid
+						}
+					}
+				}
 				if name == "_rels/.rels" && strings.HasSuffix(attr("Type"), "/officeDocument") && strings.TrimPrefix(attr("Target"), "/") == mainPart {
 					flags[1] = true
 				}
 			}
-			if t.Name.Local == "altChunk" || t.Name.Local == "object" || t.Name.Local == "oleObject" || t.Name.Local == "control" || t.Name.Local == "audio" || t.Name.Local == "video" || attr("action") != "" {
+			if t.Name.Local == "altChunk" || t.Name.Local == "object" || t.Name.Local == "oleObject" || t.Name.Local == "oleObj" || t.Name.Local == "control" || t.Name.Local == "audio" || t.Name.Local == "video" || attr("action") != "" {
 				return flags, ErrInvalid
 			}
-			// Word fields can span runs and nested fields. This first boundary
-			// accepts static Word content rather than partially interpreting them.
-			if t.Name.Local == "fldSimple" || t.Name.Local == "fldChar" || t.Name.Local == "instrText" {
+			if fields.start(t, allowFields) != nil {
 				return flags, ErrInvalid
 			}
 			if t.Name.Local == "f" {
@@ -188,6 +209,9 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 				formula.Reset()
 			}
 		case xml.CharData:
+			if fields.text(t) != nil {
+				return flags, ErrInvalid
+			}
 			if formulaDepth > 0 {
 				formula.Write(t)
 			}
@@ -195,6 +219,9 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 				return flags, ErrInvalid
 			}
 		case xml.EndElement:
+			if t.Name.Local == "instrText" {
+				fields.instruction = false
+			}
 			if depth == formulaDepth {
 				if activeExpression(formula.String()) {
 					return flags, ErrInvalid
@@ -204,7 +231,7 @@ func inspectXML(name string, data []byte, mainPart, mainType, rootTag string) ([
 			depth--
 		}
 	}
-	if roots != 1 || depth != 0 {
+	if roots != 1 || depth != 0 || len(fields.stack) != 0 || fields.instruction {
 		return flags, ErrInvalid
 	}
 	// OPC resolves a part-specific override before its extension default,

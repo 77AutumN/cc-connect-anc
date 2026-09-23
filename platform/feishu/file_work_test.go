@@ -1,8 +1,11 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,6 +17,50 @@ import (
 	"github.com/chenhg5/cc-connect/core"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
+
+func TestFileWorkImagesUseCurrentResourceAndSharedFileBudget(t *testing.T) {
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	p, got := fileWorkFixture(t, func(_ core.Message, parent string) bool { return parent == "known" }, func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Query().Get("type") != "image" || !strings.Contains(r.URL.Path, "current-") {
+			t.Error("wrong resource owner/type", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(picture.Bytes())
+	})
+	if err := p.SetFileWorkImagesEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		id, kind, body string
+		count          int
+	}{
+		{"current-image", "image", `{"image_key":"fictional"}`, 1},
+		{"current-post", "post", `{"content":[[{"tag":"text","text":"Use this fictional material"},{"tag":"img","image_key":"fictional"}]]}`, 1},
+	} {
+		msg := receiveFileWorkMessage(t, p, got, fileWorkEvent(tc.id, tc.kind, tc.body, "group", "known", false))
+		if len(msg.Files) != tc.count || !bytes.Equal(msg.Files[0].Data, picture.Bytes()) || !strings.HasSuffix(msg.Files[0].FileName, ".png") || !msg.Files[0].RequireSave {
+			t.Fatal("image lost current work attachment")
+		}
+	}
+	before := requests.Load()
+	msg := receiveFileWorkMessage(t, p, got, fileWorkEvent("unknown-image", "image", `{"image_key":"not-selected"}`, "p2p", "unknown", false))
+	if len(msg.Files) != 0 || requests.Load() != before {
+		t.Fatal("unknown reply fetched image")
+	}
+	for _, body := range []string{
+		`{"content":[[{"tag":"img","image_key":"a"},{"tag":"img","image_key":"b"},{"tag":"img","image_key":"c"},{"tag":"img","image_key":"d"},{"tag":"img","image_key":"e"}]]}`,
+		`{"en_us":{"content":[[{"tag":"text","text":"hello"}]]},"zh_cn":{"content":[[{"tag":"img","image_key":"hidden"}]]}}`,
+	} {
+		if _, _, ok := p.fileWorkPostText(body, true); ok {
+			t.Fatal("oversize or inconsistent locale accepted")
+		}
+	}
+}
 
 func fileWorkFixture(t *testing.T, authorize func(core.Message, string) bool, resource func(http.ResponseWriter, *http.Request)) (*Platform, <-chan *core.Message) {
 	t.Helper()

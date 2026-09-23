@@ -3,6 +3,8 @@ package files
 import (
 	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"os/exec"
 	"path"
 	"strings"
@@ -40,8 +42,17 @@ func (h *Host) validateFile(ctx context.Context, name string, data []byte) error
 		cmd.WaitDelay = time.Second
 		var result bytes.Buffer
 		cmd.Stdout = &result
-		if cmd.Run() != nil || result.String() != "PDF_OK_V1\n" {
-			return ErrInvalid
+		if err := cmd.Run(); err != nil {
+			var rejected *exec.ExitError
+			if ctx.Err() == nil && errors.As(err, &rejected) && rejected.ExitCode() == 1 {
+				return ErrInvalid
+			}
+			slog.Warn("file work: PDF validator execution unavailable", "timed_out", ctx.Err() != nil)
+			return ErrUnavailable
+		}
+		if result.String() != "PDF_OK_V1\n" {
+			slog.Warn("file work: PDF validator returned an invalid protocol response")
+			return ErrUnavailable
 		}
 		return nil
 	default:

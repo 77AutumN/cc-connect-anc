@@ -238,6 +238,14 @@ var topLevelCommandHandlers = map[string]func([]string){
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "file-check" {
+		if err := checkOfficeInput(os.Args[2:], os.Stdin); err != nil {
+			fmt.Fprintln(os.Stderr, "office content rejected")
+			os.Exit(1)
+		}
+		fmt.Println("OFFICE_OK_V1")
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "files-init" {
 		if len(os.Args) != 3 || files.Initialize(os.Args[2]) != nil {
 			slog.Error("file ledger initialization refused")

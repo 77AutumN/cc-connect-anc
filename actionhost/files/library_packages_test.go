@@ -1,9 +1,12 @@
 package files
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -19,11 +22,25 @@ func TestPairedOfficeLibraries(t *testing.T) {
 from pathlib import Path
 from docx import Document
 from openpyxl import Workbook,load_workbook
+from pptx import Presentation
+from pptx.util import Inches
+from PIL import Image
+from pypdf import PdfWriter
 for line in Path(sys.argv[1]).read_text().splitlines():
     if line and not line.startswith('#'):
         name,version=line.split('==')
         assert m.version(name)==version, name
 root=Path(sys.argv[2])
+deck=Presentation()
+slide=deck.slides.add_slide(deck.slide_layouts[6])
+slide.shapes.add_textbox(Inches(1),Inches(1),Inches(4),Inches(1)).text='Fictional proposal'
+Image.new('RGB',(32,24),'#ab7858').save(root/'poster.png')
+Image.new('RGB',(32,24),'#ab7858').save(root/'material.jpg')
+slide.shapes.add_picture(str(root/'poster.png'),Inches(1),Inches(2))
+deck.save(root/'proposal.pptx')
+pdf=PdfWriter()
+pdf.add_blank_page(width=612,height=792)
+pdf.write(root/'material.pdf')
 for version in (1,2):
     doc=Document()
     doc.add_heading('Fictional analysis',0)
@@ -40,13 +57,36 @@ for version in (1,2):
 	if result, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("pinned document libraries: %v: %s", err, result)
 	}
-	for _, name := range []string{"analysis-v1.docx", "analysis-v1.xlsx", "analysis-v2.docx", "analysis-v2.xlsx"} {
-		data, err := os.ReadFile(filepath.Join(output, name))
+	host := &Host{documentValidator: "enabled-without-PDF-on-Windows"}
+	if runtime.GOOS != "windows" {
+		data, err := os.ReadFile(filepath.Join(crm, "ops", "runtime", "team_file_pdf.py"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = validateOOXML(name, data); err != nil {
-			t.Fatalf("real library output %s rejected: %v", name, err)
+		parts := strings.SplitN(string(data), "\n", 2)
+		helper := filepath.Join(output, "validator")
+		if err = os.Chmod(output, 0700); err != nil {
+			t.Fatal(err)
 		}
+		if err = os.WriteFile(helper, []byte("#!"+python+" -I\n"+parts[1]), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = host.SetDocumentFormats(helper); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"analysis-v1.docx", "analysis-v1.xlsx", "analysis-v2.docx", "analysis-v2.xlsx", "proposal.pptx", "poster.png", "material.jpg", "material.pdf"} {
+		t.Run(name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && name == "material.pdf" {
+				t.Skip("fixed POSIX PDF executable contract")
+			}
+			data, err := os.ReadFile(filepath.Join(output, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = host.validateFile(context.Background(), name, data); err != nil {
+				t.Fatalf("real library output %s rejected: %v", name, err)
+			}
+		})
 	}
 }
