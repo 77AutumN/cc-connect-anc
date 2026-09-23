@@ -118,6 +118,7 @@ type replyContext struct {
 	controlledFileWork   bool
 	fileWorkPrivate      bool
 	fileParentAuthorized bool
+	fileQuotedInput      bool // Explicit @bot selection of an unbound group upload.
 }
 
 type Platform struct {
@@ -1725,6 +1726,8 @@ func (p *Platform) onMessage(ctx context.Context, event *larkim.P2MessageReceive
 		messageID: messageID, chatID: chatID, sessionKey: sessionKey,
 		rootID: stringValue(msg.RootId), threadID: stringValue(msg.ThreadId), parentID: parentID,
 		controlledFileWork: controlledFiles, fileParentAuthorized: knownFileParent,
+		fileQuotedInput: controlledFiles && isGroup && errors.Is(fileReplyError, core.ErrFileWorkNotFound) &&
+			(msgType == "text" || msgType == "post") && isBotMentioned(mentions, p.getBotOpenID()),
 		fileWorkPrivate: chatType == "p2p",
 	}
 	slog.Debug(p.tag()+": routed inbound message",
@@ -1787,8 +1790,9 @@ func (p *Platform) dispatchMessageContent(ctx context.Context, msgType, content 
 	}
 	if rctx.controlledFileWork {
 		p.dispatchFileWork(ctx, msgType, content, mentions, &core.Message{
-			FileWorkPrivate: rctx.fileWorkPrivate,
-			Platform:        p.Name(), SessionKey: sessionKey, ChannelID: chatID,
+			FileWorkPrivate:  rctx.fileWorkPrivate,
+			FileWorkNewInput: rctx.fileQuotedInput,
+			Platform:         p.Name(), SessionKey: sessionKey, ChannelID: chatID,
 			UserID: userID, MessageID: messageID, ReplyCtx: rctx,
 			ParentMessageID: rctx.parentID, ControlledFileWork: true,
 			UserMessageTimeMs: createTimeMs,

@@ -101,12 +101,13 @@ func (p *Platform) SetFileWorkEnabled(enabled bool, authorizeReply func(core.Mes
 	return nil
 }
 
-// Controlled intake never reads quoted/forwarded resources. The host resolves
-// an explicit parent to an owned work before this path downloads current files.
+// A known parent continues its host-owned work. An explicitly selected, owned
+// standalone group upload can instead supply the material for a new work.
 func (p *Platform) dispatchFileWork(ctx context.Context, msgType, content string, mentions []*larkim.MentionEvent, msg *core.Message, parentAuthorized bool) {
 	if msg.ParentMessageID != "" && !parentAuthorized {
+		p.dispatchQuotedWorkFile(ctx, msgType, content, mentions, msg)
 		// Private or explicitly mentioned unknown replies reach the host only
-		// for its location hint. Unmentioned group replies were already dropped.
+		// for its location hint unless one owned attachment was verified.
 		p.dispatchCoreMessage(msg)
 		return
 	}
