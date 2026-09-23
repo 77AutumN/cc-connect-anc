@@ -205,7 +205,9 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		return fail(MsgPreviousProcessing)
 	}
 	lookup := msg.ParentMessageID
-	if lookup == "" {
+	// A selected upload is material, not a work reference. The instruction's
+	// own ID recovers its durable binding if transport redelivers after restart.
+	if lookup == "" || msg.FileWorkNewInput {
 		lookup = msg.MessageID
 	}
 	ref, lookupErr := host.FindByMessage(e.ctx, principal, lookup)
@@ -232,7 +234,10 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		if session == nil {
 			return fail(MsgFileWorkAssociationRequired)
 		}
-	} else if msg.ParentMessageID == "" && errors.Is(lookupErr, ErrFileWorkNotFound) {
+	} else if (msg.ParentMessageID == "" || (msg.FileWorkNewInput && !msg.FileWorkPrivate && len(msg.Files) == 1)) && errors.Is(lookupErr, ErrFileWorkNotFound) {
+		if busy != nil && msg.FileWorkNewInput {
+			return fail(MsgPreviousProcessing)
+		}
 		if msg.FileWorkPrivate && intent != "new" {
 			session = e.sessions.GetOrCreateActive(msg.SessionKey)
 		} else {

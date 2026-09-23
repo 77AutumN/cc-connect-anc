@@ -123,6 +123,118 @@ type fileHostStub struct {
 	toolResult map[string]any
 }
 
+type selectedInputHost struct {
+	fileHostStub
+	find func(ActionPrincipal, string) (FileWorkRef, error)
+}
+
+func (h *selectedInputHost) FindByMessage(ctx context.Context, principal ActionPrincipal, id string) (FileWorkRef, error) {
+	if h.find != nil {
+		return h.find(principal, id)
+	}
+	return h.fileHostStub.FindByMessage(ctx, principal, id)
+}
+
+func (h *selectedInputHost) Bind(ctx context.Context, b FileWorkBinding) (FileWorkContext, error) {
+	work, err := h.fileHostStub.Bind(ctx, b)
+	for _, input := range b.Inputs {
+		work.IncomingInputs = append(work.IncomingInputs, FileWorkInput{ID: "selected", Name: input.FileName, Path: filepath.Join(b.WorkRoot, "inputs", input.FileName)})
+	}
+	return work, err
+}
+
+func TestFileWorkSelectedUploadDuplicateAfterRestartDoesNotRunAgain(t *testing.T) {
+	for _, uncertain := range []bool{false, true} {
+		t.Run(fmt.Sprint(uncertain), func(t *testing.T) {
+			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+			a := &fileAgentStub{}
+			e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
+			t.Cleanup(e.cancel)
+			path := filepath.Join(t.TempDir(), "sessions.json")
+			e.sessions = NewSessionManager(path)
+			turn := fixtureFileTurn("request")
+			turn.Status = "completed"
+			session := e.sessions.GetOrCreateActive(turn.Principal.SessionKey)
+			if err := e.sessions.addFileTurn(session, turn, 2); err != nil {
+				t.Fatal(err)
+			}
+			e.sessions = NewSessionManager(path)
+			h := &selectedInputHost{find: func(principal ActionPrincipal, id string) (FileWorkRef, error) {
+				if principal.UserID != "user" || principal.ChatID != "chat" || id != "request" {
+					return FileWorkRef{}, ErrFileWorkNotFound
+				}
+				if uncertain {
+					return FileWorkRef{}, ErrFileWorkUnconfirmed
+				}
+				return FileWorkRef{SessionID: fileNativeSessionID(session)}, nil
+			}}
+			if err := e.SetFileWorkHost(h, func(string) (string, int, error) { return t.TempDir(), 0, nil }); err != nil {
+				t.Fatal(err)
+			}
+			msg := Message{Platform: "fixture", SessionKey: turn.Principal.SessionKey, UserID: "user", ChannelID: "chat", MessageID: "request", ParentMessageID: "standalone-upload", ControlledFileWork: true, FileWorkNewInput: true, Files: []FileAttachment{{FileName: "fictional.pdf", RequireSave: true}}}
+			if !e.handleFileWorkMessage(p, &msg) || len(h.bindings) != 0 || a.attempts != 0 || len(e.sessions.ListSessions(msg.SessionKey)) != 1 {
+				t.Fatal("replayed material selection started another work")
+			}
+			if uncertain && len(p.getSent()) != 1 {
+				t.Fatal("unknown delivery lost its recovery hint")
+			}
+		})
+	}
+}
+
+func TestFileWorkExplicitlySelectedUploadStartsOwnWork(t *testing.T) {
+	for _, mode := range []string{"selected", "unverified", "private", "no-file", "save-failure", "busy"} {
+		t.Run(mode, func(t *testing.T) {
+			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+			a := &fileAgentStub{}
+			e := NewEngine("fixture-project", a, []Platform{p}, "", LangEnglish)
+			t.Cleanup(e.cancel)
+			h := &selectedInputHost{}
+			if mode == "save-failure" {
+				h.bindErr = NewFileInputError(MsgFileInputSaveFailed)
+			}
+			root := t.TempDir()
+			if err := e.SetFileWorkHost(h, func(id string) (string, int, error) { return filepath.Join(root, id), 0, nil }); err != nil {
+				t.Fatal(err)
+			}
+			msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "request", ParentMessageID: "standalone-upload", ControlledFileWork: true, FileWorkNewInput: mode != "unverified", FileWorkPrivate: mode == "private", Content: "Use this file", Files: []FileAttachment{{FileName: "fictional.pdf", Data: []byte("fixture"), RequireSave: true}}}
+			if mode == "no-file" {
+				msg.Files = nil
+			}
+			if mode == "busy" {
+				active := e.sessions.GetOrCreateActive(msg.SessionKey)
+				if !active.TryLock() {
+					t.Fatal("fixture session is already busy")
+				}
+				defer active.Unlock()
+			}
+			if !e.handleFileWorkMessage(p, &msg) {
+				t.Fatal("selected upload escaped controlled intake")
+			}
+			if mode == "selected" || mode == "save-failure" {
+				if len(h.bindings) != 1 || h.bindings[0].Principal.MessageID != "request" || h.bindings[0].SourceReceipt != "" || len(h.bindings[0].Inputs) != 1 || !h.bindings[0].Group {
+					t.Fatal("material selection changed principal or imported another work")
+				}
+				if msg.ParentMessageID != "standalone-upload" {
+					t.Fatal("original material reference was discarded")
+				}
+			} else if len(h.bindings) != 0 {
+				t.Fatal("unverified selection created work")
+			}
+			if mode == "busy" && len(e.sessions.ListSessions(msg.SessionKey)) != 1 {
+				t.Fatal("busy rejection changed the active work")
+			}
+			wantRuntime := 0
+			if mode == "selected" {
+				wantRuntime = 1
+			}
+			if a.attempts != wantRuntime {
+				t.Fatal("failed material reached runtime", a.attempts)
+			}
+		})
+	}
+}
+
 func (h *fileHostStub) Bind(_ context.Context, b FileWorkBinding) (FileWorkContext, error) {
 	h.bindings = append(h.bindings, b)
 	return FileWorkContext{Enabled: true, WorkID: "fixture-work", WorkRoot: b.WorkRoot}, h.bindErr

@@ -375,8 +375,11 @@ type Message struct {
 	ControlledFileWork bool
 	// FileWorkPrivate is set only by an authenticated private-chat transport.
 	FileWorkPrivate bool
-	fileTurn        *FileTurn
-	fileSession     *Session
+	// FileWorkNewInput marks an explicitly selected, same-sender attachment
+	// verified by the transport. Its parent is material, not an existing work.
+	FileWorkNewInput bool
+	fileTurn         *FileTurn
+	fileSession      *Session
 
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string
