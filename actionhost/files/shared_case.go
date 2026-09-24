@@ -27,6 +27,12 @@ func (h *Host) importCaseArtifact(ctx context.Context, p core.ActionPrincipal, w
 		if source.ID == w.ID {
 			return nil
 		}
+		if source.Principal.ChatID != p.ChatID {
+			if w.GroupRealm != "" || (w.ProjectImportRealm != "" && w.ProjectImportRealm != source.GroupRealm) {
+				return ErrScope
+			}
+			w.ProjectImportRealm = source.GroupRealm
+		}
 		for _, input := range append(append([]Input(nil), w.Inputs...), w.PendingInputs[p.MessageID]...) {
 			if input.Source != nil && input.Source.MessageReceipt == receipt {
 				return nil

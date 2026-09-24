@@ -182,6 +182,9 @@ func validState(st state) bool {
 		if w.GroupRealm != "" && (st.Schema < 2 || !validHash(w.GroupRealm)) {
 			return false
 		}
+		if w.ProjectImportRealm != "" && (st.Schema < 2 || w.GroupRealm != "" || !validHash(w.ProjectImportRealm)) {
+			return false
+		}
 		if sessions[key] || roots[w.RootIdentity] {
 			return false
 		}
@@ -202,7 +205,12 @@ func validState(st state) bool {
 			}
 			if i.Source != nil {
 				source := st.Works[i.Source.WorkID]
-				if source == nil || w.GroupRealm == "" || source.GroupRealm != w.GroupRealm || source.Principal.Platform != w.Principal.Platform || source.Principal.ChatID != w.Principal.ChatID {
+				if source == nil || source.Principal.Platform != w.Principal.Platform {
+					return false
+				}
+				sameGroup := w.GroupRealm != "" && source.GroupRealm == w.GroupRealm && source.Principal.ChatID == w.Principal.ChatID
+				privateImport := w.GroupRealm == "" && w.ProjectImportRealm != "" && source.GroupRealm == w.ProjectImportRealm && source.Principal.ChatID != w.Principal.ChatID
+				if !sameGroup && !privateImport {
 					return false
 				}
 				d := source.Deliveries[i.Source.DeliveryID]

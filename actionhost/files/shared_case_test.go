@@ -172,6 +172,40 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 	if err != nil || hash(actual) != hash(data) || filepath.Dir(imported.Inputs[0].Path) != filepath.Join(target.WorkRoot, "inputs") {
 		t.Fatal("private input is not the authorized snapshot", err)
 	}
+	// Reopening must accept only the host-recorded cross-chat grant. A pending
+	// import recovered after interruption must recheck membership before copying.
+	if err := f.store.change(ctx, func(st *state) error {
+		w := st.Works[work.WorkID]
+		grant := w.ProjectImportRealm
+		for _, invalid := range []string{"", hash([]byte("another-group"))} {
+			w.ProjectImportRealm = invalid
+			if validState(*st) {
+				t.Fatal("cross-chat input accepted without its exact grant")
+			}
+		}
+		w.ProjectImportRealm = grant
+		w.PendingInputs[target.Principal.MessageID], w.Inputs = w.Inputs, nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(imported.Inputs[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	granted = false
+	if _, err := f.host.ActivateInputs(ctx, target.Principal, work.WorkID); !errors.Is(err, ErrScope) {
+		t.Fatal("recovery bypassed project membership", err)
+	}
+	if _, err := os.Stat(imported.Inputs[0].Path); !os.IsNotExist(err) {
+		t.Fatal("denied recovery published bytes", err)
+	}
+	granted = true
+	if _, err := f.host.ActivateInputs(ctx, target.Principal, work.WorkID); err != nil {
+		t.Fatal("authorized recovery failed", err)
+	}
+	if _, err := f.host.Tool(ctx, "host-case-import", input, target.Principal, work.WorkID); err != nil {
+		t.Fatal("repeated import corrupted durable state", err)
+	}
 	// Even a project grant cannot turn an unknown transport outcome into proof.
 	if err := f.store.change(ctx, func(st *state) error {
 		for _, d := range st.Works[f.context.WorkID].Deliveries {

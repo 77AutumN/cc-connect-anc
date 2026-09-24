@@ -52,6 +52,7 @@ type work struct {
 	Deliveries                                                       map[string]*delivery
 	Messages                                                         map[string]bool
 	GroupRealm                                                       string `json:",omitempty"`
+	ProjectImportRealm                                               string `json:",omitempty"`
 }
 
 type Host struct {
@@ -304,6 +305,17 @@ func (h *Host) ActivateInputs(ctx context.Context, p core.ActionPrincipal, workI
 				if source == nil {
 					return ErrScope
 				}
+				if source.Principal.ChatID != p.ChatID {
+					// A queued/recovered private import must still have a live
+					// membership and same-project binding before publishing bytes.
+					authorized, _, err := h.sharedArtifact(ctx, st, p, input.Source.MessageReceipt, w.ID, true)
+					if err != nil {
+						return err
+					}
+					if authorized.ID != source.ID || authorized.GroupRealm != w.ProjectImportRealm {
+						return ErrScope
+					}
+				}
 				delivery := source.Deliveries[input.Source.DeliveryID]
 				if delivery == nil || delivery.Status != "accepted" || delivery.SHA256 != input.SHA256 || delivery.MessageReceipt != input.Source.MessageReceipt || delivery.Version != input.Source.Version {
 					return ErrScope
@@ -411,21 +423,6 @@ func (h *Host) sharedArtifact(ctx context.Context, st *state, p core.ActionPrinc
 	if selected.Principal.Platform != p.Platform {
 		return nil, nil, ErrScope
 	}
-	var result *delivery
-	for _, d := range selected.Deliveries {
-		if d.Status == "unknown" || d.Status == "submitted" {
-			return nil, nil, ErrUncertain
-		}
-		if d.Status == "accepted" && d.MessageReceipt == receipt {
-			if result != nil {
-				return nil, nil, ErrScope
-			}
-			result = d
-		}
-	}
-	if result == nil {
-		return nil, nil, core.ErrFileWorkNeedsArtifact
-	}
 	chat, realm := p.ChatID, h.groupRealm
 	if h.projectAccess != nil {
 		authorizedChat, authorizedRealm, err := h.projectAccess(ctx, p, workID, receipt, requireBinding)
@@ -444,6 +441,21 @@ func (h *Host) sharedArtifact(ctx context.Context, st *state, p core.ActionPrinc
 	}
 	if !validHash(realm) || selected.GroupRealm != realm || selected.Principal.ChatID != chat {
 		return nil, nil, ErrScope
+	}
+	var result *delivery
+	for _, d := range selected.Deliveries {
+		if d.Status == "unknown" || d.Status == "submitted" {
+			return nil, nil, ErrUncertain
+		}
+		if d.Status == "accepted" && d.MessageReceipt == receipt {
+			if result != nil {
+				return nil, nil, ErrScope
+			}
+			result = d
+		}
+	}
+	if result == nil {
+		return nil, nil, core.ErrFileWorkNeedsArtifact
 	}
 	return selected, result, nil
 }
