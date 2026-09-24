@@ -176,6 +176,14 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 	// import recovered after interruption must recheck membership before copying.
 	if err := f.store.change(ctx, func(st *state) error {
 		w := st.Works[work.WorkID]
+		if st.Schema != 3 || !validState(*st) {
+			t.Fatal("private import lacks its supported ledger version")
+		}
+		st.Schema = 2
+		if validState(*st) {
+			t.Fatal("private import accepted as an older ledger version")
+		}
+		st.Schema = 3
 		grant := w.ProjectImportRealm
 		for _, invalid := range []string{"", hash([]byte("another-group"))} {
 			w.ProjectImportRealm = invalid
