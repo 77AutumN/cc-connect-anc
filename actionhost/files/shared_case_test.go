@@ -184,7 +184,7 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 			}
 		}
 		w.ProjectImportRealm = grant
-		w.PendingInputs[target.Principal.MessageID], w.Inputs = w.Inputs, nil
+		w.PendingInputs, w.Inputs = map[string][]Input{target.Principal.MessageID: w.Inputs}, nil
 		return nil
 	}); err != nil {
 		t.Fatal(err)
