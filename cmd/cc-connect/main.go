@@ -1097,6 +1097,11 @@ func main() {
 			os.Exit(1)
 		}
 		defer closeFileHost()
+		if proj.FileWork.SharedCases && (!proj.FileWork.Enabled || proj.FileWork.Runtime != "native") {
+			slog.Error("shared cases require enabled native file work")
+			os.Exit(1)
+		}
+		engine.SetSharedCasesEnabled(proj.FileWork.SharedCases)
 		if fileServer != nil {
 			go func() { crmToolErrors <- fileServer.Serve() }()
 		}

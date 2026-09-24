@@ -380,6 +380,7 @@ type Message struct {
 	FileWorkNewInput bool
 	fileTurn         *FileTurn
 	fileSession      *Session
+	caseSources      []CaseSource
 
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string

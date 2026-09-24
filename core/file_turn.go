@@ -16,6 +16,7 @@ type FileTurn struct {
 	Inputs          []FileWorkInput `json:"inputs,omitempty"`
 	Status          string          `json:"status"` // queued, started, completed, stopped
 	ResumeMessageID string          `json:"resume_message_id,omitempty"`
+	CaseSources     []CaseSource    `json:"case_sources,omitempty"`
 }
 
 const retainedFileTurns = 128
@@ -29,6 +30,7 @@ func cloneFileTurns(turns []FileTurn) []FileTurn {
 	for i := range copy {
 		copy[i].Route = append(json.RawMessage(nil), copy[i].Route...)
 		copy[i].Inputs = append([]FileWorkInput(nil), copy[i].Inputs...)
+		copy[i].CaseSources = append([]CaseSource(nil), copy[i].CaseSources...)
 	}
 	return copy
 }
@@ -63,6 +65,14 @@ func validateFileTurns(sessions map[string]*Session) error {
 				return errFileTurnStorage
 			}
 			seen[p.MessageID] = true
+			if len(turn.CaseSources) > 1 {
+				return errFileTurnStorage
+			}
+			for _, source := range turn.CaseSources {
+				if source.MessageID != p.MessageID || len([]rune(source.Text)) > 16000 {
+					return errFileTurnStorage
+				}
+			}
 			switch turn.Status {
 			case "queued", "started", "completed", "stopped":
 			default:

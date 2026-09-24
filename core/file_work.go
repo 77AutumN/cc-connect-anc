@@ -271,7 +271,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	}
 	// Originals are durable in the host before acknowledging a supplement.
 	msg.fileSession = session
-	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued"}
+	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued", CaseSources: append([]CaseSource(nil), msg.caseSources...)}
 	inputCount := len(msg.Files)
 	if sourceReceipt != "" {
 		inputCount++

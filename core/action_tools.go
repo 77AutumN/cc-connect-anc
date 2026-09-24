@@ -89,6 +89,13 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "code": "request_cancelled"})
 			return
 		}
+		if isCaseCommand(command) {
+			ctx, principal, err = e.caseToolContext(ctx, token, principal, input)
+			if err != nil {
+				writeActionToolResult(w, http.StatusForbidden, map[string]any{"status": "blocked", "code": "case_source_unavailable_or_disabled"})
+				return
+			}
+		}
 		result, approval, err := tools.Tool(ctx, command, input, principal, token, e.i18n.CurrentLang())
 		if err == nil && approval != nil {
 			// A linked reminder edit stages a CRM approval through its existing host.
@@ -182,7 +189,7 @@ func decodeActionToolRequest(r io.Reader) (string, json.RawMessage, error) {
 	if err := json.Unmarshal(fields["command"], &command); err != nil {
 		return "", nil, err
 	}
-	if !isFileWorkCommand(command) && command != "open" && command != "customer" && command != "customers" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
+	if !isFileWorkCommand(command) && !isCaseCommand(command) && command != "open" && command != "customer" && command != "customers" && command != "stage" && command != "result" && command != "assignee" && command != "stage-customer-create" && command != "stage-customer-update" && command != "knowledge_catalog" && command != "knowledge_search" && command != "knowledge_read" && command != "knowledge_propose" && command != "knowledge_status" && command != "reminder-create" && command != "reminder-list" && command != "reminder-update" && command != "reminder-cancel" {
 		return "", nil, errors.New("unsupported tool")
 	}
 	input := bytes.TrimSpace(fields["input"])
