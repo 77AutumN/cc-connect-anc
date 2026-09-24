@@ -57,6 +57,14 @@ func (*caseJourneyFiles) Tool(context.Context, string, json.RawMessage, core.Act
 }
 
 func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
+	runCaseJourney(t, "shared-cases")
+}
+
+func TestCUJ_CASEIPC_ProjectMembershipAcrossPrivateEntries(t *testing.T) {
+	runCaseJourney(t, "project-context")
+}
+
+func runCaseJourney(t *testing.T, seed string) {
 	root := os.Getenv("MYANC_SPIKE_CRM_ROOT")
 	if root == "" {
 		t.Skip("set MYANC_SPIKE_CRM_ROOT for the paired offline journey")
@@ -84,7 +92,7 @@ func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
 		}
 		a.run = func(ctx context.Context, _ string, subcommand string, input []byte, env []string) ([]byte, error) {
 			cmd := exec.CommandContext(ctx, python, "-B", filepath.Join(root, "spikes", "host_tool_fixture.py"), subcommand)
-			cmd.Env = append(env, "MYANC_SPIKE_DIR="+scratch, "MYANC_SPIKE_SEED=shared-cases")
+			cmd.Env = append(env, "MYANC_SPIKE_DIR="+scratch, "MYANC_SPIKE_SEED="+seed)
 			cmd.Stdin = bytes.NewReader(input)
 			result, err := cmd.Output()
 			if exit, ok := err.(*exec.ExitError); ok {
@@ -97,6 +105,13 @@ func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
 		e := core.NewEngine("test", agent, []core.Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), core.LangEnglish)
 		e.SetActionHost(a)
 		e.SetSharedCasesEnabled(true)
+		// Exercise the real host-only bridge too: the CLI validates its context
+		// marker, host secret and registered transport principal before policy.
+		principal := core.ActionPrincipal{Platform: "mock", UserID: actor, ChatID: chat, Project: "test", SessionKey: "fixture-session", MessageID: "fixture-intake"}
+		_, accessErr := e.AuthorizeProjectFile(context.Background(), principal, "fixture-work", "unknown-receipt", true)
+		if (seed == "shared-cases" && accessErr != nil) || (seed == "project-context" && accessErr == nil) {
+			t.Fatal("host file authorization did not reach the expected policy", accessErr)
+		}
 		base := t.TempDir()
 		if err := e.SetFileWorkHost(&caseJourneyFiles{}, func(id string) (string, int, error) { return filepath.Join(base, id), 0, nil }); err != nil {
 			t.Fatal(err)
@@ -175,5 +190,28 @@ func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(scratch, "formal-never-opened.sqlite3")); !os.IsNotExist(err) {
 		t.Fatal("formal ledger opened")
+	}
+	if seed == "project-context" {
+		privateOps := newActor("sender-2", "private-2")
+		read = privateOps("林陈婚宴准备执行", "case-read", map[string]any{"case_name": "林陈婚宴"})
+		expect(read, "found")
+		if read["case"].(map[string]any)["project"].(map[string]any)["owner"] != "sender-1" {
+			t.Fatal("handoff changed owner", read)
+		}
+		owner := newActor("sender-1", "private-1")
+		other := update("22桌", 0)
+		other["case_name"] = "周许婚宴"
+		other["changes"].([]any)[0].(map[string]any)["quote"] = "周许婚宴桌数改为22桌"
+		expect(owner("请记入这场婚宴：周许婚宴桌数改为22桌", "case-update", other), "recorded")
+		outsider := newActor("sender-2", "private-2")
+		expect(outsider("周许婚宴准备执行", "case-read", map[string]any{"case_name": "周许婚宴"}), "not_found")
+		invite := map[string]any{"case_name": "周许婚宴", "expected_revision": 1, "member_name": "Fixture sender-2", "responsibility": "运营执行"}
+		expect(owner("周许婚宴，材料原文：\n让Fixture sender-2接手运营执行", "case-member-add", invite), "blocked")
+		expect(owner("请同步给执行：周许婚宴，请让Fixture sender-2接手运营执行\n仅同步这段材料，不要增加成员", "case-member-add", invite), "blocked")
+		expect(outsider("周许婚宴准备执行", "case-read", map[string]any{"case_name": "周许婚宴"}), "not_found")
+		expect(owner("周许婚宴，请让Fixture sender-2接手运营执行", "case-member-add", invite), "recorded")
+		expect(outsider("周许婚宴准备执行", "case-read", map[string]any{"case_name": "周许婚宴"}), "found")
+		invite["expected_revision"], invite["member_name"] = 2, "Fixture sender-1"
+		expect(outsider("周许婚宴，请让Fixture sender-1接手运营执行", "case-member-add", invite), "blocked")
 	}
 }

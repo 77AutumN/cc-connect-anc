@@ -19,8 +19,19 @@ file instead. Unrelated group chatter is not ingested. Private/cross-group or
 other-Bot references, unknown delivery results and corrupt snapshots are refused.
 No new endpoint, database, queue, dependencies or runtime identity is introduced.
 
+The optional paired CRM project-context policy adds one narrow exception:
+accepted project-group snapshots may enter a registered member's private work
+after host checks for membership, original group and same-project binding.
+Queued imports repeat that check before copying. No private-to-group send is added.
+
 The first group work marks the existing ledger as version 2 so older binaries
 cannot silently erase source metadata. Private-only ledgers retain version 1.
 After that mark, rollback disables group routes while keeping a version-2-aware
 gateway; if a binary rollback is necessary, pause file processing until a compatible
 build is available. Never downgrade the ledger or restore an older business snapshot.
+
+The first authorized cross-chat private import marks version 3. After this,
+a version-2-only gateway cannot open the shared file ledger even when the new
+project flag is off. Disable project entry points but keep a version-3-aware
+gateway; if replacing that binary is unavoidable, pause file processing until
+a compatible build is available. Keep all project history, receipts and files.

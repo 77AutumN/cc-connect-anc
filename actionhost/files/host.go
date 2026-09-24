@@ -22,6 +22,11 @@ const MaxFileBytes = 20 << 20
 
 type Sender func(context.Context, json.RawMessage, core.FileAttachment, string) (string, error)
 
+// ProjectAccess returns the source chat and Bot/group realm after the existing
+// CRM host checks the receipt, actor and destination project's membership.
+// Empty strings select the original same-group policy, never cross-chat access.
+type ProjectAccess func(context.Context, core.ActionPrincipal, string, string, bool) (string, string, error)
+
 type Binding = core.FileWorkBinding
 type Input = core.FileWorkInput
 type Artifact = core.FileWorkArtifact
@@ -47,6 +52,7 @@ type work struct {
 	Deliveries                                                       map[string]*delivery
 	Messages                                                         map[string]bool
 	GroupRealm                                                       string `json:",omitempty"`
+	ProjectImportRealm                                               string `json:",omitempty"`
 }
 
 type Host struct {
@@ -55,7 +61,11 @@ type Host struct {
 	send              Sender
 	groupRealm        string
 	documentValidator string
+	projectAccess     ProjectAccess
 }
+
+// SetProjectAccess is startup-only; it is not exposed through the agent tools.
+func (h *Host) SetProjectAccess(check ProjectAccess) { h.projectAccess = check }
 
 // SetGroupReferences is a startup-only opt-in for one fixed Bot/group realm.
 // The host never derives sharing authority from model-supplied arguments.
@@ -160,7 +170,7 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			if !b.Group {
 				return ErrScope
 			}
-			w, d, err := h.groupArtifact(st, b.Principal, b.SourceReceipt)
+			w, d, err := h.groupArtifact(ctx, st, b.Principal, b.SourceReceipt)
 			if err != nil {
 				return err
 			}
@@ -203,6 +213,11 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 			w = &work{ID: uuid.NewString(), SessionID: b.SessionID, Root: b.WorkRoot, RootIdentity: identity(rootInfo), InputIdentity: identity(inputInfo), OutputIdentity: identity(outputInfo), Principal: b.Principal, Route: append(json.RawMessage{}, b.Route...), OwnerUID: b.OwnerUID, Inputs: []Input{}, Deliveries: map[string]*delivery{}, Messages: map[string]bool{}}
 			w.GroupRealm = realm
 		}
+		if b.SourceReceipt != "" {
+			if _, _, err := h.sharedArtifact(ctx, st, b.Principal, b.SourceReceipt, w.ID, false); err != nil {
+				return err
+			}
+		}
 		if !w.Messages[b.Principal.MessageID] {
 			if b.DeferInputs && len(w.PendingInputs) >= 128 {
 				return ErrUnavailable
@@ -238,7 +253,9 @@ func (h *Host) Bind(ctx context.Context, b Binding) (WorkContext, error) {
 		if w.GroupRealm != "" {
 			// Older binaries discard unknown JSON fields on every ledger write.
 			// Mark group provenance so they refuse rather than erase it on rollback.
-			st.Schema = 2
+			if st.Schema < 2 {
+				st.Schema = 2
+			}
 		}
 		st.Works[w.ID] = w
 		incoming := result.IncomingInputs
@@ -289,6 +306,17 @@ func (h *Host) ActivateInputs(ctx context.Context, p core.ActionPrincipal, workI
 				source := st.Works[input.Source.WorkID]
 				if source == nil {
 					return ErrScope
+				}
+				if source.Principal.ChatID != p.ChatID {
+					// A queued/recovered private import must still have a live
+					// membership and same-project binding before publishing bytes.
+					authorized, _, err := h.sharedArtifact(ctx, st, p, input.Source.MessageReceipt, w.ID, true)
+					if err != nil {
+						return err
+					}
+					if authorized.ID != source.ID || authorized.GroupRealm != w.ProjectImportRealm {
+						return ErrScope
+					}
 				}
 				delivery := source.Deliveries[input.Source.DeliveryID]
 				if delivery == nil || delivery.Status != "accepted" || delivery.SHA256 != input.SHA256 || delivery.MessageReceipt != input.Source.MessageReceipt || delivery.Version != input.Source.Version {
@@ -361,7 +389,7 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 			}
 		}
 		if result.WorkID == "" {
-			if _, _, err := h.groupArtifact(st, p, messageID); err != nil {
+			if _, _, err := h.groupArtifact(ctx, st, p, messageID); err != nil {
 				return err
 			}
 			result.Import = true
@@ -373,15 +401,15 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 
 // Only a confirmed file receipt in the configured Bot/group can cross actor
 // boundaries. Original requests and text replies do not identify one artifact.
-func (h *Host) groupArtifact(st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
-	w, d, err := h.sharedArtifact(st, p, receipt)
+func (h *Host) groupArtifact(ctx context.Context, st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
+	w, d, err := h.sharedArtifact(ctx, st, p, receipt, "", false)
 	if err == nil && scope(w.Principal) == scope(p) {
 		return nil, nil, ErrScope
 	}
 	return w, d, err
 }
 
-func (h *Host) sharedArtifact(st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
+func (h *Host) sharedArtifact(ctx context.Context, st *state, p core.ActionPrincipal, receipt, workID string, requireBinding bool) (*work, *delivery, error) {
 	var selected *work
 	for _, w := range st.Works {
 		if w.Messages[receipt] {
@@ -394,7 +422,26 @@ func (h *Host) sharedArtifact(st *state, p core.ActionPrincipal, receipt string)
 	if selected == nil {
 		return nil, nil, core.ErrFileWorkNotFound
 	}
-	if h.groupRealm == "" || selected.GroupRealm != h.groupRealm || selected.Principal.Platform != p.Platform || selected.Principal.ChatID != p.ChatID {
+	if selected.Principal.Platform != p.Platform {
+		return nil, nil, ErrScope
+	}
+	chat, realm := p.ChatID, h.groupRealm
+	if h.projectAccess != nil {
+		authorizedChat, authorizedRealm, err := h.projectAccess(ctx, p, workID, receipt, requireBinding)
+		if err != nil {
+			if errors.Is(err, core.ErrFileWorkNotFound) || errors.Is(err, ErrScope) {
+				return nil, nil, ErrScope
+			}
+			return nil, nil, fmt.Errorf("%w: project authorization: %w", ErrUnavailable, err)
+		}
+		if authorizedChat != "" || authorizedRealm != "" {
+			chat, realm = authorizedChat, authorizedRealm
+			if selected.Principal.ChatID != p.ChatID && (!requireBinding || workID == "") {
+				return nil, nil, ErrScope
+			}
+		}
+	}
+	if !validHash(realm) || selected.GroupRealm != realm || selected.Principal.ChatID != chat {
 		return nil, nil, ErrScope
 	}
 	var result *delivery

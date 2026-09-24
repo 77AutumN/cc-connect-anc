@@ -13,7 +13,7 @@ import (
 // No filesystem marker, permission response, or agent stop is involved.
 func (a *Adapter) Tool(ctx context.Context, command string, input json.RawMessage, principal core.ActionPrincipal, token string, lang core.Language) (map[string]any, *core.ActionHostResult, error) {
 	stages := command == "stage" || command == "stage-customer-create" || command == "stage-customer-update"
-	caseTool := command == "case-list" || command == "case-read" || command == "case-update" || command == "case-artifact"
+	caseTool := command == "case-list" || command == "case-read" || command == "case-update" || command == "case-member-add" || command == "case-artifact" || command == "case-access"
 	if !a.toolsEnabled || token == "" || (!caseTool && !stages && command != "open" && command != "customer" && command != "customers" && command != "result" && command != "assignee") {
 		return map[string]any{"status": "blocked", "code": "unsupported_tool_or_session"}, nil, nil
 	}

@@ -170,7 +170,7 @@ func (s *Store) storageError(ctx context.Context) error {
 }
 
 func validState(st state) bool {
-	if (st.Schema != 1 && st.Schema != 2) || st.Works == nil {
+	if (st.Schema != 1 && st.Schema != 2 && st.Schema != 3) || st.Works == nil {
 		return false
 	}
 	sessions, roots := map[string]bool{}, map[string]bool{}
@@ -180,6 +180,9 @@ func validState(st state) bool {
 		}
 		key := scope(w.Principal) + ":" + w.SessionID
 		if w.GroupRealm != "" && (st.Schema < 2 || !validHash(w.GroupRealm)) {
+			return false
+		}
+		if w.ProjectImportRealm != "" && (st.Schema < 3 || w.GroupRealm != "" || !validHash(w.ProjectImportRealm)) {
 			return false
 		}
 		if sessions[key] || roots[w.RootIdentity] {
@@ -202,7 +205,12 @@ func validState(st state) bool {
 			}
 			if i.Source != nil {
 				source := st.Works[i.Source.WorkID]
-				if source == nil || w.GroupRealm == "" || source.GroupRealm != w.GroupRealm || source.Principal.Platform != w.Principal.Platform || source.Principal.ChatID != w.Principal.ChatID {
+				if source == nil || source.Principal.Platform != w.Principal.Platform {
+					return false
+				}
+				sameGroup := w.GroupRealm != "" && source.GroupRealm == w.GroupRealm && source.Principal.ChatID == w.Principal.ChatID
+				privateImport := w.GroupRealm == "" && w.ProjectImportRealm != "" && source.GroupRealm == w.ProjectImportRealm && source.Principal.ChatID != w.Principal.ChatID
+				if !sameGroup && !privateImport {
 					return false
 				}
 				d := source.Deliveries[i.Source.DeliveryID]
