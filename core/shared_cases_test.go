@@ -84,12 +84,8 @@ func TestCaseSelectionPersistsAndIsPinnedAtArrivalForOnlyThisEmployee(t *testing
 	e.sessions = NewSessionManager(path)
 	p := state.currentPrincipal
 	s := e.sessions.GetOrCreateActive(p.SessionKey)
-	turn := fixtureFileTurn(p.MessageID)
-	turn.Principal = p
-	if err := e.sessions.addFileTurn(s, turn, 3); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.WithValue(context.Background(), caseContextKey{}, CaseContext{WorkID: turn.WorkID})
+	state.fileWorkID, state.fileSession = "work", s
+	ctx := context.WithValue(context.Background(), caseContextKey{}, CaseContext{WorkID: "work", session: s, state: state})
 	e.rememberCase(ctx, p, map[string]any{"case": map[string]any{"name": "林陈婚宴"}})
 	e.sessions = NewSessionManager(path)
 	e.SetSharedCasesEnabled(true)
@@ -131,12 +127,7 @@ func TestCaseLateHostReplyCannotBindNewSession(t *testing.T) {
 			e.sessions = NewSessionManager(filepath.Join(t.TempDir(), "sessions.json"))
 			p := state.currentPrincipal
 			s := e.sessions.GetOrCreateActive(p.SessionKey)
-			turn := fixtureFileTurn(p.MessageID)
-			turn.Principal = p
-			if err := e.sessions.addFileTurn(s, turn, 3); err != nil {
-				t.Fatal(err)
-			}
-			state.fileWorkID = turn.WorkID
+			state.fileWorkID, state.fileSession = "work", s
 			state.caseSources = []CaseSource{{MessageID: p.MessageID, Text: "林陈婚宴", ShareAllowed: true}}
 			host := &blockedCaseHost{h, make(chan struct{}), make(chan struct{})}
 			e.SetActionHost(host)
@@ -147,9 +138,9 @@ func TestCaseLateHostReplyCannotBindNewSession(t *testing.T) {
 			<-host.started
 			next := e.sessions.NewSession(p.SessionKey, "another work")
 			if stopped {
-				if err := e.sessions.setFileTurnStatus(s, p.MessageID, "stopped"); err != nil {
-					t.Fatal(err)
-				}
+				state.mu.Lock()
+				state.stopped = true
+				state.mu.Unlock()
 			}
 			close(host.release)
 			if w := <-done; w.Code != 200 {

@@ -584,6 +584,7 @@ type interactiveState struct {
 	// different sender's tool authority when currentPrincipal changes.
 	actionPrincipal ActionPrincipal
 	fileWorkID      string
+	fileSession     *Session
 }
 
 // latestUserMessageWatermarkLocked returns the highest UserMessageTimeMs among
@@ -4375,6 +4376,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	newState := &interactiveState{
 		agentSession:     agentSession,
 		fileWorkID:       fileWorkID,
+		fileSession:      session,
 		platform:         p,
 		replyCtx:         replyCtx,
 		agent:            agent,

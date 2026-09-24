@@ -150,10 +150,15 @@ func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
 		if result["status"] != status {
 			t.Fatalf("want %s: %v", status, result)
 		}
+		if (status == "found" || status == "recorded") && result["session_binding"] != nil {
+			t.Fatalf("ordinary turn failed to retain its case: %v", result)
+		}
 	}
 	expect(sales("林陈婚宴桌数改为22桌", "case-update", update("22桌", 0)), "recorded")
+	expect(sales("继续核对当前婚宴", "case-read", map[string]any{}), "found")
 	read := operations("林陈婚宴准备执行", "case-read", map[string]any{"case_name": "林陈婚宴"})
 	expect(read, "found")
+	expect(operations("继续核对执行准备", "case-read", map[string]any{}), "found")
 	if read["case"].(map[string]any)["revision"] != float64(1) {
 		t.Fatal(read)
 	}

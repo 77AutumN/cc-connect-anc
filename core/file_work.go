@@ -339,6 +339,7 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	state := e.interactiveStates[msg.SessionKey]
 	state.mu.Lock()
 	state.fileWorkID = work.WorkID
+	state.fileSession = session
 	state.mu.Unlock()
 	e.interactiveMu.Unlock()
 	session.TouchUserActivity()

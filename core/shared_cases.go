@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -91,11 +92,13 @@ type CaseSource struct {
 }
 
 type CaseContext struct {
-	WorkID        string `json:"work_id"`
-	SourceText    string `json:"source_text"`
-	ShareAllowed  bool   `json:"share_allowed"`
-	SourceReceipt string `json:"source_receipt,omitempty"`
-	SelectedCase  string `json:"selected_case,omitempty"`
+	WorkID        string            `json:"work_id"`
+	SourceText    string            `json:"source_text"`
+	ShareAllowed  bool              `json:"share_allowed"`
+	SourceReceipt string            `json:"source_receipt,omitempty"`
+	SelectedCase  string            `json:"selected_case,omitempty"`
+	session       *Session          `json:"-"`
+	state         *interactiveState `json:"-"`
 }
 
 type CaseSelection struct {
@@ -105,7 +108,7 @@ type CaseSelection struct {
 
 func (e *Engine) rememberCase(ctx context.Context, p ActionPrincipal, result map[string]any) {
 	binding, ok := TrustedCaseContext(ctx)
-	if !ok || binding.WorkID == "" {
+	if !ok || binding.WorkID == "" || binding.session == nil || binding.state == nil {
 		result["session_binding"] = "unavailable"
 		return
 	}
@@ -116,24 +119,20 @@ func (e *Engine) rememberCase(ctx context.Context, p ActionPrincipal, result map
 	if json.Unmarshal(data, &record) != nil || record.Name == "" || len([]rune(record.Name)) > 120 {
 		return
 	}
+	binding.state.mu.Lock()
+	stale := binding.state.stopped || binding.state.fileWorkID != binding.WorkID || binding.state.fileSession != binding.session || !sameFilePrincipal(binding.state.actionPrincipal, p)
+	binding.state.mu.Unlock()
+	if stale {
+		result["session_binding"] = "unavailable"
+		return
+	}
 	sm := e.sessions
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	// Locate the original saved turn, never the active-session cursor after RPC.
-	// Switching work while the host replies must not bind the new conversation.
-	var s *Session
-	for _, candidate := range sm.sessions {
-		for _, turn := range candidate.fileTurns() {
-			if turn.WorkID == binding.WorkID && turn.Principal == p && turn.Status != "stopped" {
-				if s != nil && s != candidate {
-					result["session_binding"] = "conflict"
-					return
-				}
-				s = candidate
-			}
-		}
-	}
-	if s == nil || sm.loadErr != nil || sm.storePath == "" {
+	// Pinned when the file-work process started, including ordinary first turns
+	// which have no pending FileTurn. Never follow the active cursor after RPC.
+	s := binding.session
+	if sm.sessions[s.ID] != s || !slices.Contains(sm.userSessions[p.SessionKey], s.ID) || sm.loadErr != nil || sm.storePath == "" {
 		result["session_binding"] = "unavailable"
 		return
 	}
@@ -286,7 +285,7 @@ func (e *Engine) caseToolContext(ctx context.Context, token string, p ActionPrin
 		if state.actionToken == token && state.currentPrincipal == p && !state.stopped && state.fileWorkID != "" {
 			for _, source := range state.caseSources {
 				if source.MessageID == request.SourceMessageID {
-					binding := CaseContext{WorkID: state.fileWorkID, SourceText: source.Text, ShareAllowed: source.ShareAllowed, SourceReceipt: source.SourceReceipt, SelectedCase: source.SelectedCase}
+					binding := CaseContext{WorkID: state.fileWorkID, SourceText: source.Text, ShareAllowed: source.ShareAllowed, SourceReceipt: source.SourceReceipt, SelectedCase: source.SelectedCase, session: state.fileSession, state: state}
 					p.MessageID = source.MessageID
 					state.mu.Unlock()
 					return context.WithValue(ctx, caseContextKey{}, binding), p, nil
