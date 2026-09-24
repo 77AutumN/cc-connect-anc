@@ -172,6 +172,11 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 	if err != nil || hash(actual) != hash(data) || filepath.Dir(imported.Inputs[0].Path) != filepath.Join(target.WorkRoot, "inputs") {
 		t.Fatal("private input is not the authorized snapshot", err)
 	}
+	// A later group message must never downgrade private-source provenance.
+	source.Principal.MessageID = "group-after-private-import"
+	if _, err := f.host.Bind(ctx, source); err != nil {
+		t.Fatal("group continuation after private import failed", err)
+	}
 	// Reopening must accept only the host-recorded cross-chat grant. A pending
 	// import recovered after interruption must recheck membership before copying.
 	if err := f.store.change(ctx, func(st *state) error {
