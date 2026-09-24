@@ -129,7 +129,7 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			e.importCaseArtifacts(ctx, token, principal, result)
 		}
 		if isCaseCommand(command) && (result["status"] == "found" || result["status"] == "recorded") {
-			e.rememberCase(principal, result)
+			e.rememberCase(ctx, principal, result)
 		}
 		writeActionToolResult(w, http.StatusOK, result)
 	})

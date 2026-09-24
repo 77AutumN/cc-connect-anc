@@ -103,7 +103,12 @@ type CaseSelection struct {
 	Principal ActionPrincipal `json:"principal"`
 }
 
-func (e *Engine) rememberCase(p ActionPrincipal, result map[string]any) {
+func (e *Engine) rememberCase(ctx context.Context, p ActionPrincipal, result map[string]any) {
+	binding, ok := TrustedCaseContext(ctx)
+	if !ok || binding.WorkID == "" {
+		result["session_binding"] = "unavailable"
+		return
+	}
 	data, _ := json.Marshal(result["case"])
 	var record struct {
 		Name string `json:"name"`
@@ -114,7 +119,20 @@ func (e *Engine) rememberCase(p ActionPrincipal, result map[string]any) {
 	sm := e.sessions
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	s := sm.sessions[sm.activeSession[p.SessionKey]]
+	// Locate the original saved turn, never the active-session cursor after RPC.
+	// Switching work while the host replies must not bind the new conversation.
+	var s *Session
+	for _, candidate := range sm.sessions {
+		for _, turn := range candidate.fileTurns() {
+			if turn.WorkID == binding.WorkID && turn.Principal == p && turn.Status != "stopped" {
+				if s != nil && s != candidate {
+					result["session_binding"] = "conflict"
+					return
+				}
+				s = candidate
+			}
+		}
+	}
 	if s == nil || sm.loadErr != nil || sm.storePath == "" {
 		result["session_binding"] = "unavailable"
 		return

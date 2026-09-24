@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,8 +83,14 @@ func TestCaseSelectionPersistsAndIsPinnedAtArrivalForOnlyThisEmployee(t *testing
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	e.sessions = NewSessionManager(path)
 	p := state.currentPrincipal
-	e.sessions.GetOrCreateActive(p.SessionKey)
-	e.rememberCase(p, map[string]any{"case": map[string]any{"name": "林陈婚宴"}})
+	s := e.sessions.GetOrCreateActive(p.SessionKey)
+	turn := fixtureFileTurn(p.MessageID)
+	turn.Principal = p
+	if err := e.sessions.addFileTurn(s, turn, 3); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.WithValue(context.Background(), caseContextKey{}, CaseContext{WorkID: turn.WorkID})
+	e.rememberCase(ctx, p, map[string]any{"case": map[string]any{"name": "林陈婚宴"}})
 	e.sessions = NewSessionManager(path)
 	e.SetSharedCasesEnabled(true)
 	msg := Message{ControlledFileWork: true, Platform: p.Platform, UserID: p.UserID, ChannelID: p.ChatID, SessionKey: p.SessionKey, MessageID: "supplement", Content: "桌数改为23桌"}
@@ -92,7 +99,7 @@ func TestCaseSelectionPersistsAndIsPinnedAtArrivalForOnlyThisEmployee(t *testing
 		t.Fatal(msg.caseSources)
 	}
 	e.sessions.NewSession(p.SessionKey, "another work")
-	e.rememberCase(p, map[string]any{"case": map[string]any{"name": "周许婚宴"}})
+	e.rememberCase(ctx, p, map[string]any{"case": map[string]any{"name": "周许婚宴"}})
 	if msg.caseSources[0].SelectedCase != "林陈婚宴" {
 		t.Fatal("queued selection changed with active work")
 	}
@@ -100,6 +107,61 @@ func TestCaseSelectionPersistsAndIsPinnedAtArrivalForOnlyThisEmployee(t *testing
 	e.captureCaseSource(&msg)
 	if msg.caseSources[0].SelectedCase != "" {
 		t.Fatal("inherited another employee's association")
+	}
+}
+
+type blockedCaseHost struct {
+	*actionToolHostStub
+	started chan struct{}
+	release chan struct{}
+}
+
+func (h *blockedCaseHost) Tool(context.Context, string, json.RawMessage, ActionPrincipal, string, Language) (map[string]any, *ActionHostResult, error) {
+	close(h.started)
+	<-h.release
+	return map[string]any{"status": "found", "case": map[string]any{"name": "林陈婚宴"}}, nil, nil
+}
+
+func TestCaseLateHostReplyCannotBindNewSession(t *testing.T) {
+	for _, stopped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "switch", true: "stop"}[stopped], func(t *testing.T) {
+			e, h, _, state := actionToolFixture(t)
+			t.Cleanup(e.cancel)
+			e.SetSharedCasesEnabled(true)
+			e.sessions = NewSessionManager(filepath.Join(t.TempDir(), "sessions.json"))
+			p := state.currentPrincipal
+			s := e.sessions.GetOrCreateActive(p.SessionKey)
+			turn := fixtureFileTurn(p.MessageID)
+			turn.Principal = p
+			if err := e.sessions.addFileTurn(s, turn, 3); err != nil {
+				t.Fatal(err)
+			}
+			state.fileWorkID = turn.WorkID
+			state.caseSources = []CaseSource{{MessageID: p.MessageID, Text: "林陈婚宴", ShareAllowed: true}}
+			host := &blockedCaseHost{h, make(chan struct{}), make(chan struct{})}
+			e.SetActionHost(host)
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				done <- actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, `{"command":"case-read","input":{"case_name":"林陈婚宴"}}`)
+			}()
+			<-host.started
+			next := e.sessions.NewSession(p.SessionKey, "another work")
+			if stopped {
+				if err := e.sessions.setFileTurnStatus(s, p.MessageID, "stopped"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			close(host.release)
+			if w := <-done; w.Code != 200 {
+				t.Fatal(w.Body.String())
+			}
+			if next.CaseSelection != nil || (stopped && s.CaseSelection != nil) {
+				t.Fatal("late response bound a new or stopped conversation")
+			}
+			if !stopped && (s.CaseSelection == nil || s.CaseSelection.Name != "林陈婚宴") {
+				t.Fatal("original work lost its association")
+			}
+		})
 	}
 }
 
