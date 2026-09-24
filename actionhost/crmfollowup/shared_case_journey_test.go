@@ -1,0 +1,179 @@
+package crmfollowup
+
+// Real Engine/token/adapter/CRM CLI/SQLite; scripted model and transport.
+// File ownership/snapshot import run separately in files' Linux CUJ tests.
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/chenhg5/cc-connect/core"
+)
+
+type caseJourneyAgent struct{ toolJourneyAgent }
+
+func (a *caseJourneyAgent) ForFileWork(string) (core.Agent, error) {
+	return &caseJourneyAgent{toolJourneyAgent: toolJourneyAgent{url: a.url, client: a.client, steps: a.steps, results: a.results, events: make(chan core.Event, 16)}}, nil
+}
+
+type caseJourneyPlatform struct{ toolJourneyPlatform }
+
+func (*caseJourneyPlatform) SetFileWorkEnabled(bool, func(core.Message, string) error) error {
+	return nil
+}
+func (*caseJourneyPlatform) SetFileWorkReplyObserver(func(core.Message, string) error) {}
+func (*caseJourneyPlatform) FileWorkReplyContext(json.RawMessage) (any, error)         { return "fixture", nil }
+func (*caseJourneyPlatform) FileReplyRoute(any) (json.RawMessage, error) {
+	return json.RawMessage(`{"fixture":true}`), nil
+}
+func (*caseJourneyPlatform) SendFileWithReceipt(context.Context, json.RawMessage, core.FileAttachment, string) (string, error) {
+	return "fixture", nil
+}
+
+type caseJourneyFiles struct{}
+
+func (*caseJourneyFiles) Bind(_ context.Context, b core.FileWorkBinding) (core.FileWorkContext, error) {
+	return core.FileWorkContext{Enabled: true, WorkID: b.Principal.UserID + ":" + b.SessionID, WorkRoot: b.WorkRoot}, nil
+}
+func (*caseJourneyFiles) FindByMessage(context.Context, core.ActionPrincipal, string) (core.FileWorkRef, error) {
+	return core.FileWorkRef{}, core.ErrFileWorkNotFound
+}
+func (*caseJourneyFiles) RecordReply(context.Context, core.ActionPrincipal, string) error { return nil }
+func (*caseJourneyFiles) ActivateInputs(context.Context, core.ActionPrincipal, string) (core.FileWorkContext, error) {
+	return core.FileWorkContext{}, nil
+}
+func (*caseJourneyFiles) Tool(context.Context, string, json.RawMessage, core.ActionPrincipal, string) (map[string]any, error) {
+	return nil, fmt.Errorf("unexpected file operation")
+}
+
+func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
+	root := os.Getenv("MYANC_SPIKE_CRM_ROOT")
+	if root == "" {
+		t.Skip("set MYANC_SPIKE_CRM_ROOT for the paired offline journey")
+	}
+	pythonName := "python3"
+	if runtime.GOOS == "windows" {
+		pythonName = "python"
+	}
+	python, err := exec.LookPath(pythonName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	if err := os.Chmod(scratch, 0700); err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newActor := func(actor, chat string) func(string, string, map[string]any) map[string]any {
+		a := &Adapter{hostSecret: "offline-gateway-host-secret-00000000000001", toolsEnabled: true}
+		if err := a.SetWorkDir(t.TempDir(), account.Username); err != nil {
+			t.Fatal(err)
+		}
+		a.run = func(ctx context.Context, _ string, subcommand string, input []byte, env []string) ([]byte, error) {
+			cmd := exec.CommandContext(ctx, python, "-B", filepath.Join(root, "spikes", "host_tool_fixture.py"), subcommand)
+			cmd.Env = append(env, "MYANC_SPIKE_DIR="+scratch, "MYANC_SPIKE_SEED=shared-cases")
+			cmd.Stdin = bytes.NewReader(input)
+			result, err := cmd.Output()
+			if exit, ok := err.(*exec.ExitError); ok {
+				return nil, fmt.Errorf("offline helper: %s", exit.Stderr)
+			}
+			return result, err
+		}
+		p := &caseJourneyPlatform{toolJourneyPlatform: toolJourneyPlatform{cards: map[string]*core.Card{}}}
+		agent := &caseJourneyAgent{toolJourneyAgent: toolJourneyAgent{client: &http.Client{Timeout: 10 * time.Second}, steps: make(chan toolJourneyStep, 1), results: make(chan toolJourneyReply, 1), events: make(chan core.Event, 16)}}
+		e := core.NewEngine("test", agent, []core.Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), core.LangEnglish)
+		e.SetActionHost(a)
+		e.SetSharedCasesEnabled(true)
+		base := t.TempDir()
+		if err := e.SetFileWorkHost(&caseJourneyFiles{}, func(id string) (string, int, error) { return filepath.Join(base, id), 0, nil }); err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewServer(e.ActionToolHandler())
+		agent.url = server.URL
+		t.Cleanup(server.Close)
+		if err := e.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = e.Stop() })
+		n := 0
+		return func(content, command string, input map[string]any) map[string]any {
+			t.Helper()
+			n++
+			agent.steps <- toolJourneyStep{number: n, command: command, input: input, plain: content}
+			key := "mock:" + chat + ":" + actor
+			e.ReceiveMessage(p, &core.Message{Platform: "mock", SessionKey: key, UserID: actor, ChannelID: chat, MessageID: fmt.Sprintf("%s-%s-%d", actor, chat, n), Content: content, ReplyCtx: "fixture", ControlledFileWork: true, FileWorkPrivate: chat != "group-1"})
+			var reply toolJourneyReply
+			select {
+			case reply = <-agent.results:
+			case <-time.After(15 * time.Second):
+				t.Fatal("scripted turn timed out", p.transcript())
+			}
+			if reply.err != nil {
+				t.Fatal(reply.err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				busy := false
+				for _, s := range e.GetSessions().ListSessions(key) {
+					busy = busy || s.Busy()
+				}
+				if !busy {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("turn did not finish")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			return reply.data
+		}
+	}
+	sales, operations, private := newActor("sender-1", "group-1"), newActor("sender-2", "group-1"), newActor("sender-1", "private-1")
+	update := func(tables string, revision int) map[string]any {
+		return map[string]any{"case_name": "林陈婚宴", "expected_revision": revision, "changes": []any{map[string]any{"field": "桌数", "value": tables, "state": "proposed", "quote": "林陈婚宴桌数改为" + tables, "replaces": true}}}
+	}
+	expect := func(result map[string]any, status string) {
+		t.Helper()
+		if result["status"] != status {
+			t.Fatalf("want %s: %v", status, result)
+		}
+		if (status == "found" || status == "recorded") && result["session_binding"] != nil {
+			t.Fatalf("ordinary turn failed to retain its case: %v", result)
+		}
+	}
+	expect(sales("林陈婚宴桌数改为22桌", "case-update", update("22桌", 0)), "recorded")
+	expect(sales("继续核对当前婚宴", "case-read", map[string]any{}), "found")
+	read := operations("林陈婚宴准备执行", "case-read", map[string]any{"case_name": "林陈婚宴"})
+	expect(read, "found")
+	expect(operations("继续核对执行准备", "case-read", map[string]any{}), "found")
+	if read["case"].(map[string]any)["revision"] != float64(1) {
+		t.Fatal(read)
+	}
+	expect(sales("林陈婚宴桌数改为23桌", "case-update", update("23桌", 1)), "recorded")
+	expect(private("林陈婚宴桌数改为24桌，先讨论", "case-update", update("24桌", 2)), "blocked")
+	read = operations("林陈婚宴新工作读取进展", "case-read", map[string]any{"case_name": "林陈婚宴"})
+	if read["case"].(map[string]any)["revision"] != float64(2) {
+		t.Fatal("private discussion leaked", read)
+	}
+	expect(private("请同步给执行：林陈婚宴桌数改为24桌", "case-update", update("24桌", 2)), "recorded")
+	read = operations("林陈婚宴最新条件", "case-read", map[string]any{"case_name": "林陈婚宴"})
+	if read["case"].(map[string]any)["revision"] != float64(3) {
+		t.Fatal(read)
+	}
+	if _, err := os.Stat(filepath.Join(scratch, "formal-never-opened.sqlite3")); !os.IsNotExist(err) {
+		t.Fatal("formal ledger opened")
+	}
+}

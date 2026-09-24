@@ -460,13 +460,14 @@ type Engine struct {
 	observeCancel     context.CancelFunc
 
 	// Interactive agent session management
-	interactiveMu     sync.Mutex
-	interactiveStates map[string]*interactiveState // key = sessionKey
-	actionHost        ActionHost
-	fileWorkHost      FileWorkHost
-	fileWorkPrepare   func(string) (string, int, error)
-	fileWorkMu        sync.Mutex
-	actionMu          sync.RWMutex
+	interactiveMu      sync.Mutex
+	interactiveStates  map[string]*interactiveState // key = sessionKey
+	actionHost         ActionHost
+	fileWorkHost       FileWorkHost
+	sharedCasesEnabled bool
+	fileWorkPrepare    func(string) (string, int, error)
+	fileWorkMu         sync.Mutex
+	actionMu           sync.RWMutex
 
 	platformLifecycleMu sync.Mutex
 	platformReady       map[Platform]bool
@@ -523,6 +524,7 @@ type queuedMessage struct {
 	channelKey        string // platform-provided channel identifier (preferred over sessionKey extraction)
 	userMessageTimeMs int64  // Feishu create_time ms (optional); see Message.UserMessageTimeMs
 	principal         ActionPrincipal
+	caseSources       []CaseSource
 }
 
 // interactiveState tracks a running interactive agent session and its permission state.
@@ -577,10 +579,12 @@ type interactiveState struct {
 	// injected into the agent environment, but never accepted back as argv.
 	actionToken      string
 	currentPrincipal ActionPrincipal
+	caseSources      []CaseSource
 	// Pinned at the first transport message; a shared process cannot adopt a
 	// different sender's tool authority when currentPrincipal changes.
 	actionPrincipal ActionPrincipal
 	fileWorkID      string
+	fileSession     *Session
 }
 
 // latestUserMessageWatermarkLocked returns the highest UserMessageTimeMs among
@@ -2941,6 +2945,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	// Resolve aliases on user text BEFORE merging ExtraContent, so reply
 	// quotes and platform context survive alias resolution (PR #420 fix).
+	e.captureCaseSource(msg)
 	content = e.resolveAlias(content)
 	e.userRolesMu.RLock()
 	conversationOnly := e.conversationOnly
@@ -3307,6 +3312,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		channelKey:        msg.ChannelKey,
 		userMessageTimeMs: msg.UserMessageTimeMs,
 		principal:         e.actionPrincipalForMessage(msg),
+		caseSources:       append([]CaseSource(nil), msg.caseSources...),
 	})
 	runMessageAccepted(msg)
 	queueDepth := len(state.pendingMessages)
@@ -3876,6 +3882,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.currentMessageID = msg.MessageID
 	state.currentTurnUserMessageTimeMs = msg.UserMessageTimeMs
 	state.currentPrincipal = e.actionPrincipalForMessage(msg)
+	state.caseSources = append([]CaseSource(nil), msg.caseSources...)
 	if state.actionPrincipal.UserID == "" {
 		state.actionPrincipal = state.currentPrincipal
 	}
@@ -4369,6 +4376,7 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	newState := &interactiveState{
 		agentSession:     agentSession,
 		fileWorkID:       fileWorkID,
+		fileSession:      session,
 		platform:         p,
 		replyCtx:         replyCtx,
 		agent:            agent,
@@ -6223,6 +6231,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				state.fromVoice = queued.fromVoice
 				state.currentTurnUserMessageTimeMs = queued.userMessageTimeMs
 				state.currentPrincipal = queued.principal
+				state.caseSources = append([]CaseSource(nil), queued.caseSources...)
 				state.mu.Unlock()
 				if !e.beginQueuedFileTurn(state, session, queued) {
 					return
@@ -6581,6 +6590,7 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 		state.fromVoice = queued.fromVoice
 		state.currentTurnUserMessageTimeMs = queued.userMessageTimeMs
 		state.currentPrincipal = queued.principal
+		state.caseSources = append([]CaseSource(nil), queued.caseSources...)
 		state.mu.Unlock()
 		if !e.beginQueuedFileTurn(state, session, queued) {
 			return false
