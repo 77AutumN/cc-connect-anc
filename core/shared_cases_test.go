@@ -52,7 +52,7 @@ func TestCaseToolsFailClosedOnDisabledStaleOrForgedSource(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	e.SetSharedCasesEnabled(true)
-	for _, command := range []string{"case-artifact", "host-case-import"} {
+	for _, command := range []string{"case-artifact", "case-access", "host-case-import"} {
 		body := `{"command":"` + command + `","input":{}}`
 		if w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, body); w.Code != 400 {
 			t.Fatal("host-only command exposed", command)

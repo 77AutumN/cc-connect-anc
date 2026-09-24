@@ -17,10 +17,10 @@ func (h *Host) importCaseArtifact(ctx context.Context, p core.ActionPrincipal, w
 		if err != nil {
 			return err
 		}
-		if w.GroupRealm == "" || w.GroupRealm != h.groupRealm || !w.Messages[p.MessageID] {
+		if !w.Messages[p.MessageID] || (h.projectAccess == nil && (w.GroupRealm == "" || w.GroupRealm != h.groupRealm)) {
 			return ErrScope
 		}
-		source, artifact, err := h.sharedArtifact(st, p, receipt)
+		source, artifact, err := h.sharedArtifact(ctx, st, p, receipt, workID, true)
 		if err != nil {
 			return err
 		}

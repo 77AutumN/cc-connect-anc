@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 )
 
 // This host-only call is never accepted by decodeActionToolRequest. It shares
@@ -199,7 +200,41 @@ func TrustedCaseContext(ctx context.Context) (CaseContext, bool) {
 }
 
 func isCaseCommand(command string) bool {
-	return command == "case-list" || command == "case-read" || command == "case-update"
+	return command == "case-list" || command == "case-read" || command == "case-update" || command == "case-member-add"
+}
+
+// AuthorizeProjectFile is a host-only read. File intake has no model token yet;
+// the adapter authenticates this call with its existing protected host secret.
+// The file host supplies the transport principal and destination work, never a
+// model path, claimed role or arbitrary recipient. Empty chat means legacy mode.
+func (e *Engine) AuthorizeProjectFile(ctx context.Context, p ActionPrincipal, workID, receipt string, requireBinding bool) (string, error) {
+	e.actionMu.RLock()
+	host := actionHostForCommand(e.actionHost, "case-read")
+	enabled := e.sharedCasesEnabled
+	e.actionMu.RUnlock()
+	tools, ok := host.(ActionToolHost)
+	if !enabled || !ok || (requireBinding && workID == "") {
+		return "", errors.New("project file authorization unavailable")
+	}
+	if workID == "" {
+		workID = "host-reference-check"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, caseContextKey{}, CaseContext{WorkID: workID})
+	input, _ := json.Marshal(map[string]any{"receipt": receipt, "require_binding": requireBinding})
+	result, card, err := tools.Tool(ctx, "case-access", input, p, "host-file-access", e.i18n.CurrentLang())
+	if err != nil || card != nil {
+		return "", errors.New("project file authorization unavailable")
+	}
+	if result["status"] == "legacy" {
+		return "", nil
+	}
+	chat, _ := result["source_chat_id"].(string)
+	if result["status"] != "authorized" || chat == "" {
+		return "", errors.New("project file access denied")
+	}
+	return chat, nil
 }
 
 func (e *Engine) SetSharedCasesEnabled(enabled bool) {

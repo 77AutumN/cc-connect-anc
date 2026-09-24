@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -102,6 +103,16 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 			return nil, noop, errInvalid
 		}
 	}
+	if cfg.SharedCases {
+		host.SetProjectAccess(func(ctx context.Context, p core.ActionPrincipal, workID, receipt string, bound bool) (string, string, error) {
+			chat, err := engine.AuthorizeProjectFile(ctx, p, workID, receipt, bound)
+			if err != nil || chat == "" {
+				return "", "", err
+			}
+			realm, err := fileGroupRealmForChat(project, chat)
+			return chat, realm, err
+		})
+	}
 	if err := engine.SetFileWorkHost(host, func(sessionID string) (string, int, error) {
 		root, err := files.PrepareWork(cfg.WorkBaseDir, sessionID, uid)
 		return root, uid, err
@@ -128,12 +139,19 @@ func configureFileWork(project config.ProjectConfig, engine *core.Engine, platfo
 }
 
 func fileGroupRealm(project config.ProjectConfig) (string, error) {
+	if len(project.Platforms) != 1 {
+		return "", files.ErrInvalid
+	}
+	chat, _ := project.Platforms[0].Options["allow_chat"].(string)
+	return fileGroupRealmForChat(project, chat)
+}
+
+func fileGroupRealmForChat(project config.ProjectConfig, chat string) (string, error) {
 	if project.FileWork.Runtime != "native" || len(project.Platforms) != 1 || project.Platforms[0].Type != "feishu" {
 		return "", files.ErrInvalid
 	}
 	opts := project.Platforms[0].Options
 	app, _ := opts["app_id"].(string)
-	chat, _ := opts["allow_chat"].(string)
 	if app == "" || chat == "" || strings.ContainsAny(chat, "*, \t\r\n") {
 		return "", files.ErrInvalid
 	}
