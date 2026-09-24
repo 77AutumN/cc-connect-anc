@@ -230,13 +230,29 @@ func newCUJEnv(t *testing.T) *cujEnv {
 	agent := &cujAgent{}
 	storePath := dir + "/sessions.json"
 	e := NewEngine("test", agent, []Platform{plat}, storePath, LangEnglish)
-	return &cujEnv{
+	env := &cujEnv{
 		t:       t,
 		engine:  e,
 		plat:    plat,
 		agent:   agent,
 		tempDir: dir,
 	}
+	t.Cleanup(func() {
+		_ = e.Stop()
+		// Wait for the asynchronous turn's final save/unlock before TempDir
+		// removes its session store. Seeing an agent start is not completion.
+		env.waitFor("turns stopped before removing session store", 5*time.Second, func() bool {
+			e.sessions.mu.RLock()
+			defer e.sessions.mu.RUnlock()
+			for _, session := range e.sessions.sessions {
+				if session.Busy() {
+					return false
+				}
+			}
+			return true
+		})
+	})
+	return env
 }
 
 // userSends drives the engine through ReceiveMessage, exactly as a real
@@ -1439,10 +1455,8 @@ func TestCUJ_A4_VoiceMessageWithoutSTTSurfacesClearMessage(t *testing.T) {
 
 // CUJ-A5 · User uploads file → engine routes it to the agent.
 func TestCUJ_A5_FileReachesAgent(t *testing.T) {
-	plat := &stubPlatformEngine{n: "test"}
-	agent := &cujAgent{}
-	dir := t.TempDir()
-	e := NewEngine("test", agent, []Platform{plat}, dir+"/sessions.json", LangEnglish)
+	env := newCUJEnv(t)
+	plat, agent, e := env.plat, env.agent, env.engine
 
 	msg := &Message{
 		SessionKey: "test:file", Platform: "test", MessageID: "f1",
