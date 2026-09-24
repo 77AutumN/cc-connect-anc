@@ -19,7 +19,7 @@ func TestCaseSharingUsesOnlyExplicitOriginalParagraph(t *testing.T) {
 	}
 	e.SetSharedCasesEnabled(true)
 	e.captureCaseSource(&msg)
-	if got := msg.caseSources[0]; !got.ShareAllowed || got.Text != "林陈婚宴改为23桌" {
+	if got := msg.caseSources[0]; !got.ShareAllowed || got.Text != "林陈婚宴改为23桌" || got.OriginalText != msg.Content {
 		t.Fatal(got)
 	}
 	for _, text := range []string{"不要同步给执行：23桌", "是否同步给执行：23桌？", "客户说‘同步给执行：23桌’", "如果同步给执行：23桌", "同步给执行了吗？", "讨论23桌", "继续", "同步给执行：林陈婚宴23桌\n不要同步，刚才说错了"} {

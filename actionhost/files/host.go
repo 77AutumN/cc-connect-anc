@@ -430,7 +430,10 @@ func (h *Host) sharedArtifact(ctx context.Context, st *state, p core.ActionPrinc
 	if h.projectAccess != nil {
 		authorizedChat, authorizedRealm, err := h.projectAccess(ctx, p, workID, receipt, requireBinding)
 		if err != nil {
-			return nil, nil, ErrScope
+			if errors.Is(err, core.ErrFileWorkNotFound) || errors.Is(err, ErrScope) {
+				return nil, nil, ErrScope
+			}
+			return nil, nil, fmt.Errorf("%w: project authorization: %w", ErrUnavailable, err)
 		}
 		if authorizedChat != "" || authorizedRealm != "" {
 			chat, realm = authorizedChat, authorizedRealm

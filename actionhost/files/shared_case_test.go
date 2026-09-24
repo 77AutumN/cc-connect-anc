@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -134,7 +135,11 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 		t.Fatal("private import enabled without project authorization")
 	}
 	granted := false
+	var unavailable error
 	f.host.SetProjectAccess(func(_ context.Context, p core.ActionPrincipal, id, receipt string, requireBinding bool) (string, string, error) {
+		if unavailable != nil {
+			return "", "", unavailable
+		}
 		if !granted || p != target.Principal || id != work.WorkID || receipt != "receipt-fictional" || !requireBinding {
 			return "", "", ErrScope
 		}
@@ -148,6 +153,11 @@ func TestProjectArtifactPrivateImportAndExplicitReferenceUseSameGuard(t *testing
 	if _, err := f.host.FindByMessage(ctx, sameGroup, "receipt-fictional"); err == nil {
 		t.Fatal("explicit receipt bypassed project guard")
 	}
+	unavailable = context.DeadlineExceeded
+	if _, err := f.host.Tool(ctx, "host-case-import", input, target.Principal, work.WorkID); !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("host outage lost its category or cause", err)
+	}
+	unavailable = nil
 	granted = true
 	result, err := f.host.Tool(ctx, "host-case-import", input, target.Principal, work.WorkID)
 	if err != nil {

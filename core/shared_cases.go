@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -87,6 +89,7 @@ func (e *Engine) prepareCaseDelivery(ctx context.Context, host FileWorkHost, tok
 type CaseSource struct {
 	MessageID     string `json:"message_id"`
 	Text          string `json:"source_text"`
+	OriginalText  string `json:"original_text,omitempty"`
 	ShareAllowed  bool   `json:"share_allowed"`
 	SourceReceipt string `json:"source_receipt,omitempty"`
 	SelectedCase  string `json:"selected_case,omitempty"`
@@ -95,6 +98,7 @@ type CaseSource struct {
 type CaseContext struct {
 	WorkID        string            `json:"work_id"`
 	SourceText    string            `json:"source_text"`
+	OriginalText  string            `json:"original_text,omitempty"`
 	ShareAllowed  bool              `json:"share_allowed"`
 	SourceReceipt string            `json:"source_receipt,omitempty"`
 	SelectedCase  string            `json:"selected_case,omitempty"`
@@ -226,7 +230,11 @@ func (e *Engine) AuthorizeProjectFile(ctx context.Context, p ActionPrincipal, wo
 	// The CLI requires a 32-character context marker even for read-only host
 	// calls. This is not a model session token; host-secret authentication remains.
 	result, card, err := tools.Tool(ctx, "case-access", input, p, "host-project-file-access-not-a-model-token", e.i18n.CurrentLang())
-	if err != nil || card != nil {
+	if err != nil {
+		slog.Warn("project file authorization host call failed", "error_type", fmt.Sprintf("%T", err))
+		return "", fmt.Errorf("project file authorization host: %w", err)
+	}
+	if card != nil {
 		return "", errors.New("project file authorization unavailable")
 	}
 	if result["status"] == "legacy" {
@@ -234,7 +242,10 @@ func (e *Engine) AuthorizeProjectFile(ctx context.Context, p ActionPrincipal, wo
 	}
 	chat, _ := result["source_chat_id"].(string)
 	if result["status"] != "authorized" || chat == "" {
-		return "", errors.New("project file access denied")
+		if result["status"] == "blocked" || result["status"] == "disabled" {
+			return "", ErrFileWorkNotFound
+		}
+		return "", errors.New("project file authorization unavailable")
 	}
 	return chat, nil
 }
@@ -257,7 +268,7 @@ func (e *Engine) captureCaseSource(msg *Message) {
 	if len([]rune(text)) > 16000 || msg.MessageID == "" {
 		return
 	}
-	source := CaseSource{MessageID: msg.MessageID, Text: text, ShareAllowed: !msg.FileWorkPrivate}
+	source := CaseSource{MessageID: msg.MessageID, Text: text, OriginalText: text, ShareAllowed: !msg.FileWorkPrivate}
 	if msg.ParentMessageID == "" && fileConversationIntent(text) != "new" {
 		if s := e.sessions.FindByID(e.sessions.ActiveSessionID(msg.SessionKey)); s != nil {
 			s.mu.Lock()
@@ -322,7 +333,7 @@ func (e *Engine) caseToolContext(ctx context.Context, token string, p ActionPrin
 		if state.actionToken == token && state.currentPrincipal == p && !state.stopped && state.fileWorkID != "" {
 			for _, source := range state.caseSources {
 				if source.MessageID == request.SourceMessageID {
-					binding := CaseContext{WorkID: state.fileWorkID, SourceText: source.Text, ShareAllowed: source.ShareAllowed, SourceReceipt: source.SourceReceipt, SelectedCase: source.SelectedCase, session: state.fileSession, state: state}
+					binding := CaseContext{WorkID: state.fileWorkID, SourceText: source.Text, OriginalText: source.OriginalText, ShareAllowed: source.ShareAllowed, SourceReceipt: source.SourceReceipt, SelectedCase: source.SelectedCase, session: state.fileSession, state: state}
 					p.MessageID = source.MessageID
 					state.mu.Unlock()
 					return context.WithValue(ctx, caseContextKey{}, binding), p, nil
