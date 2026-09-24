@@ -125,6 +125,12 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			writeActionToolResult(w, http.StatusServiceUnavailable, unavailable)
 			return
 		}
+		if command == "case-read" && result["status"] == "found" {
+			e.importCaseArtifacts(ctx, token, principal, result)
+		}
+		if isCaseCommand(command) && (result["status"] == "found" || result["status"] == "recorded") {
+			e.rememberCase(principal, result)
+		}
 		writeActionToolResult(w, http.StatusOK, result)
 	})
 }

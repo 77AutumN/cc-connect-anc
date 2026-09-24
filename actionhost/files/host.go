@@ -284,7 +284,19 @@ func (h *Host) ActivateInputs(ctx context.Context, p core.ActionPrincipal, workI
 		}
 		for _, input := range w.PendingInputs[p.MessageID] {
 			name := filepath.Base(input.Path)
-			f, err := h.snapshots.Open("input_" + name)
+			snapshot := "input_" + name
+			if input.Source != nil {
+				source := st.Works[input.Source.WorkID]
+				if source == nil {
+					return ErrScope
+				}
+				delivery := source.Deliveries[input.Source.DeliveryID]
+				if delivery == nil || delivery.Status != "accepted" || delivery.SHA256 != input.SHA256 || delivery.MessageReceipt != input.Source.MessageReceipt || delivery.Version != input.Source.Version {
+					return ErrScope
+				}
+				snapshot = delivery.Snapshot
+			}
+			f, err := h.snapshots.Open(snapshot)
 			if err != nil {
 				return err
 			}
@@ -292,6 +304,11 @@ func (h *Host) ActivateInputs(ctx context.Context, p core.ActionPrincipal, workI
 			_ = f.Close()
 			if err != nil || len(data) > MaxFileBytes || hash(data) != input.SHA256 {
 				return ErrInvalid
+			}
+			if input.Source != nil {
+				if err := h.validateFile(ctx, input.Name, data); err != nil {
+					return err
+				}
 			}
 			if info, statErr := inputs.Lstat(name); statErr == nil {
 				// A crash may occur after the durable copy but before the ledger
@@ -357,6 +374,14 @@ func (h *Host) FindByMessage(ctx context.Context, p core.ActionPrincipal, messag
 // Only a confirmed file receipt in the configured Bot/group can cross actor
 // boundaries. Original requests and text replies do not identify one artifact.
 func (h *Host) groupArtifact(st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
+	w, d, err := h.sharedArtifact(st, p, receipt)
+	if err == nil && scope(w.Principal) == scope(p) {
+		return nil, nil, ErrScope
+	}
+	return w, d, err
+}
+
+func (h *Host) sharedArtifact(st *state, p core.ActionPrincipal, receipt string) (*work, *delivery, error) {
 	var selected *work
 	for _, w := range st.Works {
 		if w.Messages[receipt] {
@@ -369,7 +394,7 @@ func (h *Host) groupArtifact(st *state, p core.ActionPrincipal, receipt string) 
 	if selected == nil {
 		return nil, nil, core.ErrFileWorkNotFound
 	}
-	if h.groupRealm == "" || selected.GroupRealm != h.groupRealm || selected.Principal.Platform != p.Platform || selected.Principal.ChatID != p.ChatID || scope(selected.Principal) == scope(p) {
+	if h.groupRealm == "" || selected.GroupRealm != h.groupRealm || selected.Principal.Platform != p.Platform || selected.Principal.ChatID != p.ChatID {
 		return nil, nil, ErrScope
 	}
 	var result *delivery
@@ -469,6 +494,15 @@ func strictInput(raw json.RawMessage, target any) error {
 func (h *Host) Tool(ctx context.Context, command string, input json.RawMessage, principal core.ActionPrincipal, workID string) (map[string]any, error) {
 	if !validPrincipal(principal) || workID == "" {
 		return fileRefusal(ErrScope)
+	}
+	if command == "host-case-import" {
+		var request struct {
+			Receipt string `json:"receipt"`
+		}
+		if strictInput(input, &request) != nil || request.Receipt == "" {
+			return fileRefusal(ErrInvalid)
+		}
+		return h.importCaseArtifact(ctx, principal, workID, request.Receipt)
 	}
 	if command == "file-deliver" {
 		var request deliverRequest

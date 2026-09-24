@@ -69,7 +69,7 @@ func validateFileTurns(sessions map[string]*Session) error {
 				return errFileTurnStorage
 			}
 			for _, source := range turn.CaseSources {
-				if source.MessageID != p.MessageID || len([]rune(source.Text)) > 16000 {
+				if source.MessageID != p.MessageID || len([]rune(source.Text)) > 16000 || len([]rune(source.SelectedCase)) > 120 || len(source.SourceReceipt) > 256 {
 					return errFileTurnStorage
 				}
 			}

@@ -270,6 +270,11 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		return fail(MsgFileWorkUnavailable)
 	}
 	// Originals are durable in the host before acknowledging a supplement.
+	if sourceReceipt != "" {
+		for i := range msg.caseSources {
+			msg.caseSources[i].SourceReceipt = sourceReceipt
+		}
+	}
 	msg.fileSession = session
 	msg.fileTurn = &FileTurn{Principal: principal, WorkID: work.WorkID, Content: msg.Content, Route: route, Status: "queued", CaseSources: append([]CaseSource(nil), msg.caseSources...)}
 	inputCount := len(msg.Files)
@@ -398,6 +403,15 @@ func (e *Engine) serveFileWorkTool(w http.ResponseWriter, r *http.Request, token
 	defer cancel()
 	stop := context.AfterFunc(e.ctx, cancel)
 	defer stop()
+	caseKey := ""
+	if command == "file-deliver" {
+		var err error
+		caseKey, err = e.prepareCaseDelivery(ctx, host, token, principal, workID, input)
+		if err != nil {
+			writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "code": "case_delivery_prepare_failed"})
+			return
+		}
+	}
 	result, err := host.Tool(ctx, command, input, principal, workID)
 	if result != nil && result["status"] == "blocked" {
 		writeActionToolResult(w, http.StatusBadRequest, result)
@@ -408,6 +422,13 @@ func (e *Engine) serveFileWorkTool(w http.ResponseWriter, r *http.Request, token
 		// recipient saw nothing or invite resubmission under another filename.
 		writeActionToolResult(w, http.StatusServiceUnavailable, map[string]any{"status": "unavailable", "code": "file_outcome_unconfirmed"})
 		return
+	}
+	if caseKey != "" && result["status"] == "accepted" {
+		registration, registrationErr := e.caseArtifactCall(ctx, token, principal, map[string]any{"phase": "finish", "request_key": caseKey, "artifact": result})
+		if registrationErr != nil || registration == nil {
+			registration = map[string]any{"status": "unavailable", "code": "case_registration_unconfirmed_do_not_resend"}
+		}
+		result["case_registration"] = registration
 	}
 	writeActionToolResult(w, http.StatusOK, result)
 }

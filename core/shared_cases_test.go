@@ -21,7 +21,7 @@ func TestCaseSharingUsesOnlyExplicitOriginalParagraph(t *testing.T) {
 	if got := msg.caseSources[0]; !got.ShareAllowed || got.Text != "林陈婚宴改为23桌" {
 		t.Fatal(got)
 	}
-	for _, text := range []string{"不要同步给执行：23桌", "是否同步给执行：23桌？", "客户说‘同步给执行：23桌’", "如果同步给执行：23桌", "同步给执行了吗？", "讨论23桌", "继续"} {
+	for _, text := range []string{"不要同步给执行：23桌", "是否同步给执行：23桌？", "客户说‘同步给执行：23桌’", "如果同步给执行：23桌", "同步给执行了吗？", "讨论23桌", "继续", "同步给执行：林陈婚宴23桌\n不要同步，刚才说错了"} {
 		msg.Content = text
 		e.captureCaseSource(&msg)
 		if got := msg.caseSources[0]; got.ShareAllowed || got.Text != text {
@@ -33,6 +33,11 @@ func TestCaseSharingUsesOnlyExplicitOriginalParagraph(t *testing.T) {
 	e.captureCaseSource(&msg)
 	if got := msg.caseSources[0]; !got.ShareAllowed || got.Text != msg.Content {
 		t.Fatal(got)
+	}
+	msg.Content = "林陈婚宴23桌，先不要记入"
+	e.captureCaseSource(&msg)
+	if msg.caseSources[0].ShareAllowed {
+		t.Fatal("group denial ignored")
 	}
 }
 
@@ -46,6 +51,12 @@ func TestCaseToolsFailClosedOnDisabledStaleOrForgedSource(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 	e.SetSharedCasesEnabled(true)
+	for _, command := range []string{"case-artifact", "host-case-import"} {
+		body := `{"command":"` + command + `","input":{}}`
+		if w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, body); w.Code != 400 {
+			t.Fatal("host-only command exposed", command)
+		}
+	}
 	p := state.currentPrincipal
 	ctx, got, err := e.caseToolContext(context.Background(), state.actionToken, p, json.RawMessage(`{}`))
 	binding, ok := TrustedCaseContext(ctx)
@@ -62,6 +73,33 @@ func TestCaseToolsFailClosedOnDisabledStaleOrForgedSource(t *testing.T) {
 	state.currentPrincipal = p
 	if w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, body); w.Code != 200 || h.toolCalls != 1 {
 		t.Fatal(w.Body.String())
+	}
+}
+
+func TestCaseSelectionPersistsAndIsPinnedAtArrivalForOnlyThisEmployee(t *testing.T) {
+	e, _, _, state := actionToolFixture(t)
+	t.Cleanup(e.cancel)
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	e.sessions = NewSessionManager(path)
+	p := state.currentPrincipal
+	e.sessions.GetOrCreateActive(p.SessionKey)
+	e.rememberCase(p, map[string]any{"case": map[string]any{"name": "林陈婚宴"}})
+	e.sessions = NewSessionManager(path)
+	e.SetSharedCasesEnabled(true)
+	msg := Message{ControlledFileWork: true, Platform: p.Platform, UserID: p.UserID, ChannelID: p.ChatID, SessionKey: p.SessionKey, MessageID: "supplement", Content: "桌数改为23桌"}
+	e.captureCaseSource(&msg)
+	if len(msg.caseSources) != 1 || msg.caseSources[0].SelectedCase != "林陈婚宴" {
+		t.Fatal(msg.caseSources)
+	}
+	e.sessions.NewSession(p.SessionKey, "another work")
+	e.rememberCase(p, map[string]any{"case": map[string]any{"name": "周许婚宴"}})
+	if msg.caseSources[0].SelectedCase != "林陈婚宴" {
+		t.Fatal("queued selection changed with active work")
+	}
+	msg.UserID = "other-employee"
+	e.captureCaseSource(&msg)
+	if msg.caseSources[0].SelectedCase != "" {
+		t.Fatal("inherited another employee's association")
 	}
 }
 

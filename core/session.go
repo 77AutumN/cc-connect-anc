@@ -38,8 +38,9 @@ type Session struct {
 	// unsolicited agent output), this field is only updated when the engine
 	// processes an actual incoming user message. It is used by reset_on_idle_mins
 	// so that automated activity cannot prevent idle session rotation.
-	LastUserActivity     time.Time  `json:"last_user_activity,omitempty"`
-	FileTurns            []FileTurn `json:"file_turns,omitempty"`
+	LastUserActivity     time.Time      `json:"last_user_activity,omitempty"`
+	FileTurns            []FileTurn     `json:"file_turns,omitempty"`
+	CaseSelection        *CaseSelection `json:"case_selection,omitempty"`
 	fileRecoveryNotified bool
 
 	mu   sync.Mutex `json:"-"`
@@ -663,6 +664,7 @@ func (sm *SessionManager) saveLockedError() error {
 			ActiveProvider:      s.ActiveProvider,
 			LastUserActivity:    s.LastUserActivity,
 			FileTurns:           cloneFileTurns(s.FileTurns),
+			CaseSelection:       s.CaseSelection,
 		}
 		s.mu.Unlock()
 	}
