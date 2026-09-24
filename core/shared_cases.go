@@ -223,7 +223,9 @@ func (e *Engine) AuthorizeProjectFile(ctx context.Context, p ActionPrincipal, wo
 	defer cancel()
 	ctx = context.WithValue(ctx, caseContextKey{}, CaseContext{WorkID: workID})
 	input, _ := json.Marshal(map[string]any{"receipt": receipt, "require_binding": requireBinding})
-	result, card, err := tools.Tool(ctx, "case-access", input, p, "host-file-access", e.i18n.CurrentLang())
+	// The CLI requires a 32-character context marker even for read-only host
+	// calls. This is not a model session token; host-secret authentication remains.
+	result, card, err := tools.Tool(ctx, "case-access", input, p, "host-project-file-access-not-a-model-token", e.i18n.CurrentLang())
 	if err != nil || card != nil {
 		return "", errors.New("project file authorization unavailable")
 	}
