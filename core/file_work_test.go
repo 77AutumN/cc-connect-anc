@@ -427,7 +427,7 @@ func (a *fileWorkCUJAgent) ForFileWork(string) (Agent, error) { return a, nil }
 
 func TestFileOldReplyRefreshesProjectWithoutChangingPrivateSource(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		for _, mode := range []string{"new", "reply", "selected-upload"} {
+		for _, mode := range []string{"new", "reply", "selected-upload", "recovery"} {
 			t.Run(fmt.Sprintf("enabled=%v/%s", enabled, mode), func(t *testing.T) {
 				p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
 				a := &fileWorkCUJAgent{}
@@ -449,8 +449,18 @@ func TestFileOldReplyRefreshesProjectWithoutChangingPrivateSource(t *testing.T) 
 				}
 				original := "这份加一桌，仅改私人草稿，别同步。"
 				msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "revision", Content: original, ControlledFileWork: true, FileWorkPrivate: true}
-				if mode != "new" {
+				if mode == "reply" || mode == "selected-upload" {
 					msg.ParentMessageID = "old-receipt"
+				}
+				if mode == "recovery" {
+					original, msg.Content = "continue", "continue"
+					active := e.sessions.GetOrCreateActive(msg.SessionKey)
+					turn := fixtureFileTurn("before-restart")
+					turn.Principal.Project, turn.WorkID, turn.Status = e.name, "fixture-work", "started"
+					if err := e.sessions.addFileTurn(active, turn, 3); err != nil {
+						t.Fatal(err)
+					}
+					e.sessions = NewSessionManager(e.sessions.storePath)
 				}
 				if mode == "selected-upload" {
 					msg.FileWorkNewInput = true
@@ -478,6 +488,12 @@ func TestFileOldReplyRefreshesProjectWithoutChangingPrivateSource(t *testing.T) 
 				a.mu.Unlock()
 				if len(sessions) != 1 || len(sessions[0].getSentPrompts()) != 1 || strings.Contains(sessions[0].getSentPrompts()[0], "call case-read again") != (enabled && mode == "reply") {
 					t.Fatal("actual model prompt did not preserve the scoped reminder")
+				}
+				if !strings.Contains(sessions[0].getSentPrompts()[0], "reread the current installed file and domain Skills") {
+					t.Fatal("this model turn lacks current Skill guidance")
+				}
+				if mode == "recovery" && (!strings.Contains(msg.Content, "Host recovery:") || msg.fileSession.hasUnfinishedFileTurns()) {
+					t.Fatal("Skill guidance blocked explicit recovery")
 				}
 				if enabled && (len(msg.fileTurn.CaseSources) != 1 || msg.fileTurn.CaseSources[0].OriginalText != original || msg.fileTurn.CaseSources[0].Text != original || msg.fileTurn.CaseSources[0].ShareAllowed) {
 					t.Fatalf("host reminder changed source or privacy: %+v", msg.fileTurn.CaseSources)

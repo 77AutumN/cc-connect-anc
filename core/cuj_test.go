@@ -1484,6 +1484,58 @@ func TestCUJ_A5_FileReachesAgent(t *testing.T) {
 	}
 }
 
+func TestCUJ_A5_FileGuidanceReachesLiveFollowupAndQueuedSupplement(t *testing.T) {
+	for _, fileWork := range []bool{false, true} {
+		t.Run(fmt.Sprint(fileWork), func(t *testing.T) {
+			p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+			a := &fileWorkCUJAgent{}
+			e := NewEngine("project", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+			t.Cleanup(func() { _ = e.Stop() })
+			env := &cujEnv{t: t}
+			key := "fixture:chat:user"
+			session := e.sessions.GetOrCreateActive(key)
+			if fileWork {
+				h := &selectedInputHost{find: func(_ ActionPrincipal, id string) (FileWorkRef, error) {
+					if id == "supplement" {
+						return FileWorkRef{WorkID: "fixture-work", SessionID: fileNativeSessionID(session)}, nil
+					}
+					return FileWorkRef{}, ErrFileWorkNotFound
+				}}
+				root := t.TempDir()
+				if err := e.SetFileWorkHost(h, func(string) (string, int, error) { return root, 0, nil }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			send := func(id, content string) {
+				e.ReceiveMessage(p, &Message{Platform: "fixture", SessionKey: key, UserID: "user", ChannelID: "chat", MessageID: id, Content: content, ControlledFileWork: fileWork, FileWorkPrivate: true})
+			}
+			send("first", "Prepare a private draft")
+			env.waitFor("first reply", 3*time.Second, func() bool { return len(p.getSent()) > 0 && !session.Busy() })
+			a.mu.Lock()
+			as := a.sessions[0]
+			a.mu.Unlock()
+			as.mu.Lock()
+			as.delayMs = 200
+			as.mu.Unlock()
+			send("revision", "Revise that draft")
+			env.waitFor("live followup started", 3*time.Second, func() bool { return len(as.getSentPrompts()) == 2 })
+			send("supplement", "Also include the new note")
+			env.waitFor("supplement reply", 3*time.Second, func() bool { return len(as.getSentPrompts()) == 3 && !session.Busy() })
+			if strings.Count(strings.Join(p.getSent(), "\n"), "ok") != 3 {
+				t.Fatalf("user lost a reply: %v", p.getSent())
+			}
+			for _, prompt := range as.getSentPrompts() {
+				if strings.Contains(prompt, "reread the current installed file and domain Skills") != fileWork {
+					t.Fatal("file guidance missing from a turn or leaked into ordinary chat")
+				}
+			}
+			if fileWork && (len(session.fileTurns()) != 1 || session.fileTurns()[0].Status != "completed") {
+				t.Fatal("supplement was not durably queued and completed")
+			}
+		})
+	}
+}
+
 // CUJ-A6 / A7 are intentionally covered at the platform layer
 // (mention-strip + group_only) — they require platform-specific @ syntax
 // and are not portable across all platforms with the stub. Marking as
