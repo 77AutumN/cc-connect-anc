@@ -679,6 +679,7 @@ const (
 	MsgFileWorkUnavailable                MsgKey = "file_work_unavailable"
 	MsgFileWorkAssociationRequired        MsgKey = "file_work_association_required"
 	MsgFileSupplementQueued               MsgKey = "file_supplement_queued"
+	MsgFileNewWorkBusy                    MsgKey = "file_new_work_busy"
 	MsgFileSupplementSaveFailed           MsgKey = "file_supplement_save_failed"
 	MsgFileUnfinished                     MsgKey = "file_unfinished"
 	MsgFileRecoveryUnknown                MsgKey = "file_recovery_unknown"
@@ -4501,6 +4502,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "補充要求已儲存，目前這輪結束後會在下一版處理。",
 		LangJapanese:           "追加の要望を保存しました。現在の処理が終わった後、次の版に反映します。",
 		LangSpanish:            "Requisito adicional guardado. Lo incorporaré en la siguiente versión al terminar este turno.",
+	},
+	MsgFileNewWorkBusy: {
+		LangEnglish:            "The current task is still running. This new task has not started. Ask again after it finishes, or say ‘stop’ first.",
+		LangChinese:            "当前工作还在处理中，这件新工作尚未开始。等当前工作结束后再交代，或先说“先停下”。",
+		LangTraditionalChinese: "目前工作仍在處理中，這件新工作尚未開始。等目前工作結束後再交代，或先說「先停下」。",
+		LangJapanese:           "現在の作業は処理中です。この新しい作業はまだ始まっていません。完了後にもう一度依頼するか、先に「stop」と伝えてください。",
+		LangSpanish:            "La tarea actual sigue en curso. Esta nueva tarea no ha empezado. Pídala de nuevo cuando termine la actual, o diga «stop» primero.",
 	},
 	MsgFileSupplementSaveFailed: {
 		LangEnglish:            "I could not confirm that the supplement was saved. Keep this message until storage is checked before continuing it.",

@@ -407,6 +407,9 @@ func TestFilePrivateConversationContinuesUntilExplicitNewWork(t *testing.T) {
 	if len(h.bindings) != 3 || len(e.sessions.ListSessions(msg.SessionKey)) != 2 {
 		t.Fatal("busy topic change was bound or queued as a supplement")
 	}
+	if sent := p.getSent(); len(sent) == 0 || !strings.Contains(sent[len(sent)-1], "This new task has not started") || strings.Contains(sent[len(sent)-1], "/ps") {
+		t.Fatalf("busy topic change needs natural, accurate feedback: %v", sent)
+	}
 	msg.FileWorkPrivate = false
 	msg.Content = "Revise this"
 	for _, id := range []string{"group-one", "group-two"} {
@@ -415,6 +418,72 @@ func TestFilePrivateConversationContinuesUntilExplicitNewWork(t *testing.T) {
 	}
 	if h.bindings[3].SessionID == h.bindings[4].SessionID {
 		t.Fatal("unlinked group messages inferred a recent work")
+	}
+}
+
+type fileWorkCUJAgent struct{ cujAgent }
+
+func (a *fileWorkCUJAgent) ForFileWork(string) (Agent, error) { return a, nil }
+
+func TestFileOldReplyRefreshesProjectWithoutChangingPrivateSource(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, mode := range []string{"new", "reply", "selected-upload"} {
+			t.Run(fmt.Sprintf("enabled=%v/%s", enabled, mode), func(t *testing.T) {
+				p := &filePlatformStub{stubPlatformEngine: stubPlatformEngine{n: "fixture"}}
+				a := &fileWorkCUJAgent{}
+				e := NewEngine("fixture-project", a, []Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), LangEnglish)
+				env := &cujEnv{t: t}
+				t.Cleanup(func() { _ = e.Stop() })
+				e.SetSharedCasesEnabled(enabled)
+				old := e.sessions.NewSession("fixture:chat:user", "old work")
+				e.sessions.NewSession("fixture:chat:user", "another work")
+				h := &selectedInputHost{find: func(_ ActionPrincipal, id string) (FileWorkRef, error) {
+					if id == "old-receipt" {
+						return FileWorkRef{SessionID: fileNativeSessionID(old)}, nil
+					}
+					return FileWorkRef{}, ErrFileWorkNotFound
+				}}
+				root := t.TempDir()
+				if err := e.SetFileWorkHost(h, func(id string) (string, int, error) { return filepath.Join(root, id), 0, nil }); err != nil {
+					t.Fatal(err)
+				}
+				original := "这份加一桌，仅改私人草稿，别同步。"
+				msg := Message{Platform: "fixture", SessionKey: "fixture:chat:user", UserID: "user", ChannelID: "chat", MessageID: "revision", Content: original, ControlledFileWork: true, FileWorkPrivate: true}
+				if mode != "new" {
+					msg.ParentMessageID = "old-receipt"
+				}
+				if mode == "selected-upload" {
+					msg.FileWorkNewInput = true
+					msg.FileWorkPrivate = false
+					msg.Files = []FileAttachment{{FileName: "fictional.pdf", Data: []byte("fixture"), RequireSave: true}}
+				}
+				e.ReceiveMessage(p, &msg)
+				if msg.fileSession == nil {
+					t.Fatal("fixture did not select a work")
+				}
+				env.waitFor("actual model dispatch and completion", 3*time.Second, func() bool {
+					return len(p.getSent()) > 0 && !msg.fileSession.Busy()
+				})
+				if len(h.bindings) != 1 || msg.fileTurn == nil {
+					t.Fatal("expected a bound revision")
+				}
+				if mode == "reply" && h.bindings[0].SessionID != fileNativeSessionID(old) {
+					t.Fatal("reference changed the selected work")
+				}
+				if strings.Contains(msg.Content, "call case-read again") != (enabled && mode == "reply") || msg.fileTurn.Content != msg.Content {
+					t.Fatalf("fresh-read reminder or durable content mismatch: %q", msg.Content)
+				}
+				a.mu.Lock()
+				sessions := append([]*cujAgentSession(nil), a.sessions...)
+				a.mu.Unlock()
+				if len(sessions) != 1 || len(sessions[0].getSentPrompts()) != 1 || strings.Contains(sessions[0].getSentPrompts()[0], "call case-read again") != (enabled && mode == "reply") {
+					t.Fatal("actual model prompt did not preserve the scoped reminder")
+				}
+				if enabled && (len(msg.fileTurn.CaseSources) != 1 || msg.fileTurn.CaseSources[0].OriginalText != original || msg.fileTurn.CaseSources[0].Text != original || msg.fileTurn.CaseSources[0].ShareAllowed) {
+					t.Fatalf("host reminder changed source or privacy: %+v", msg.fileTurn.CaseSources)
+				}
+			})
+		}
 	}
 }
 
