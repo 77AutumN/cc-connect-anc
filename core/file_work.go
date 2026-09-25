@@ -202,6 +202,9 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 		}
 	}
 	if busy != nil && msg.ParentMessageID == "" && (!msg.FileWorkPrivate || intent == "new") {
+		if intent == "new" {
+			return fail(MsgFileNewWorkBusy)
+		}
 		return fail(MsgPreviousProcessing)
 	}
 	lookup := msg.ParentMessageID
@@ -268,6 +271,9 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 	}
 	if !work.Enabled || work.WorkID == "" || work.WorkRoot != root {
 		return fail(MsgFileWorkUnavailable)
+	}
+	if len(msg.caseSources) > 0 && msg.ParentMessageID != "" && !msg.FileWorkNewInput {
+		msg.Content += "\n[Host: this reply resumes its referenced work. For a project revision, call case-read again before answering; earlier conversation results may be outdated. Keep the original artifact and its source version, use the current record for the requested revision, and preserve private scope. A reply is not permission to share.]"
 	}
 	// Originals are durable in the host before acknowledging a supplement.
 	if sourceReceipt != "" {
