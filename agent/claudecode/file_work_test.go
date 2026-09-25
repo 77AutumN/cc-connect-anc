@@ -1,13 +1,61 @@
 package claudecode
 
 import (
+	"context"
+	"os"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+func TestFileWorkSpawnRefreshesSkillsForNewAndResumedWork(t *testing.T) {
+	for _, tc := range []struct {
+		name, session string
+		env           []string
+		fileWork      bool
+	}{
+		{"native-new", "", []string{"CC_FILE_ACTION_TOKEN=fixture", "CC_FILE_TRANSPORT=native"}, true},
+		{"native-resume", "fixture-session", []string{"CC_FILE_ACTION_TOKEN=fixture", "CC_FILE_TRANSPORT=native"}, true},
+		{"isolated-resume", "fixture-session", []string{"CC_FILE_ACTION_TOKEN=fixture"}, true},
+		{"ordinary-resume", "fixture-session", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// The existing test binary accepts -- then ignores Claude arguments;
+			// this exercises real spawn assembly without running a model.
+			cs, err := newClaudeSession(ctx, t.TempDir(), os.Args[0], []string{"-test.run=^$", "--"}, "", "", "", tc.session, "default", "", "", nil, nil, nil, tc.env, "", false, core.SpawnOptions{}, 0, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := cs.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			var prompt, resumed string
+			for i := 0; i+1 < len(cs.cmd.Args); i++ {
+				switch cs.cmd.Args[i] {
+				case "--append-system-prompt":
+					prompt = cs.cmd.Args[i+1]
+				case "--resume":
+					resumed = cs.cmd.Args[i+1]
+				}
+			}
+			if resumed != tc.session {
+				t.Fatal("native session association changed")
+			}
+			refresh := strings.Contains(prompt, "Before each artifact creation or revision, reread the current installed file and domain Skills")
+			if refresh != tc.fileWork {
+				t.Fatalf("current Skill refresh = %v, file work = %v", refresh, tc.fileWork)
+			}
+		})
+	}
+}
 
 func TestNativeFileWorkPreservesEmployeeRuntimeAndDoesNotCopySession(t *testing.T) {
 	a := &Agent{fileWorkNative: true, cmd: "/opt/runtime/claude", workDir: "/home/fixture/work",
