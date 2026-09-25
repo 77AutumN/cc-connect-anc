@@ -567,6 +567,7 @@ type FileWorkConfig struct {
 	ToolsSocket       string `toml:"tools_socket"`
 	GroupReferences   bool   `toml:"group_references"`   // opt-in: explicit replies to delivered group files
 	SharedCases       bool   `toml:"shared_cases"`       // opt-in: scoped mock collaboration through CRM host
+	CaseConfirmations bool   `toml:"case_confirmations"` // opt-in: host-bound business clarification in existing sessions
 	DocumentValidator string `toml:"document_validator"` // empty: original DOCX/XLSX limits; protected PDF validator enables new formats
 }
 

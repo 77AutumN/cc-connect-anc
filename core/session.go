@@ -41,6 +41,8 @@ type Session struct {
 	LastUserActivity     time.Time      `json:"last_user_activity,omitempty"`
 	FileTurns            []FileTurn     `json:"file_turns,omitempty"`
 	CaseSelection        *CaseSelection `json:"case_selection,omitempty"`
+	CaseQuestion         *CaseQuestion  `json:"case_question,omitempty"`
+	CaseAnswerIDs        []string       `json:"case_answer_ids,omitempty"`
 	fileRecoveryNotified bool
 
 	mu   sync.Mutex `json:"-"`
@@ -665,6 +667,8 @@ func (sm *SessionManager) saveLockedError() error {
 			LastUserActivity:    s.LastUserActivity,
 			FileTurns:           cloneFileTurns(s.FileTurns),
 			CaseSelection:       s.CaseSelection,
+			CaseQuestion:        s.CaseQuestion,
+			CaseAnswerIDs:       append([]string(nil), s.CaseAnswerIDs...),
 		}
 		s.mu.Unlock()
 	}
@@ -726,6 +730,11 @@ func (sm *SessionManager) load() {
 		return
 	}
 	sm.sessions = snap.Sessions
+	for _, session := range sm.sessions {
+		if session.CaseQuestion != nil {
+			session.CaseQuestion.recovered = true
+		}
+	}
 	sm.activeSession = snap.ActiveSession
 	sm.userSessions = snap.UserSessions
 	sm.sessionNames = snap.SessionNames

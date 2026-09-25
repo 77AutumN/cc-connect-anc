@@ -48,7 +48,18 @@ func (e *Engine) beginQueuedFileTurn(state *interactiveState, session *Session, 
 }
 
 func (e *Engine) stopFileTurns(key string) error {
+	e.caseConfirmationMu.Lock()
+	defer e.caseConfirmationMu.Unlock()
 	session := e.sessions.FindByID(e.sessions.ActiveSessionID(key))
+	if session != nil {
+		if current := session.caseQuestion(); current != nil && (current.Status == "awaiting" || current.Status == "preparing") {
+			stopped := *current
+			stopped.Status = "cancelled"
+			if err := e.sessions.saveCaseQuestion(session, &stopped); err != nil {
+				return err
+			}
+		}
+	}
 	if session == nil || !session.hasUnfinishedFileTurns() {
 		return nil
 	}

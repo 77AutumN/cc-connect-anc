@@ -669,6 +669,10 @@ const (
 	MsgHostedActionUnknownBody            MsgKey = "hosted_action_unknown_body"
 	MsgHostedActionDisplayFailedFmt       MsgKey = "hosted_action_display_failed_fmt"
 	MsgFileInputTooLarge                  MsgKey = "file_input_too_large"
+	MsgCaseQuestionRetry                  MsgKey = "case_question_retry"
+	MsgCaseQuestionUnknown                MsgKey = "case_question_unknown"
+	MsgCaseQuestionDone                   MsgKey = "case_question_done"
+	MsgCaseQuestionConfirm                MsgKey = "case_question_confirm"
 	MsgFileInputUnavailable               MsgKey = "file_input_unavailable"
 	MsgFileInputSaveFailed                MsgKey = "file_input_save_failed"
 	MsgFileInputFormatUnsupported         MsgKey = "file_input_format_unsupported"
@@ -817,6 +821,10 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgCaseQuestionConfirm:  {LangEnglish: "Confirm", LangChinese: "确认", LangTraditionalChinese: "確認", LangJapanese: "確認", LangSpanish: "Confirmar"},
+	MsgCaseQuestionRetry:    {LangEnglish: "The project or question has changed. Read the latest record and confirm the updated details before continuing.", LangChinese: "项目或问题已变化。请先读取最新记录，核对具体内容后再继续。", LangTraditionalChinese: "項目或問題已變化。請先讀取最新記錄，核對具體內容後再繼續。", LangJapanese: "案件または質問が変わりました。最新の記録と具体的な内容を確認してから続けてください。", LangSpanish: "El proyecto o la pregunta cambió. Consulte el registro actual y confirme los detalles antes de continuar."},
+	MsgCaseQuestionUnknown:  {LangEnglish: "The operation or question delivery is unconfirmed. It will not be repeated automatically; its actual result must be checked first.", LangChinese: "本次操作或问题送达结果尚未确认。不会自动重做，需要先核对实际结果。", LangTraditionalChinese: "本次操作或問題送達結果尚未確認。不會自動重做，需要先核對實際結果。", LangJapanese: "操作または質問の配信結果は未確認です。自動では繰り返さず、実際の結果を確認します。", LangSpanish: "No se ha confirmado el resultado de la operación o entrega. No se repetirá automáticamente; primero debe comprobarse."},
+	MsgCaseQuestionDone:     {LangEnglish: "The confirmed project operation is complete. Existing files have not been revised by this operation.", LangChinese: "刚才确认的项目操作已完成；原有文件还没有因此修订。", LangTraditionalChinese: "剛才確認的項目操作已完成；原有檔案還沒有因此修訂。", LangJapanese: "確認した案件操作は完了しました。既存のファイルはまだ変更されていません。", LangSpanish: "La operación confirmada se completó. Esto no ha modificado los archivos existentes."},
 	MsgCRMPlanUnverified:    {LangEnglish: "The linked plan could not be verified. Confirm the CRM plan again before arranging a reminder.", LangChinese: "关联计划无法核实，请重新确认 CRM 计划后再安排提醒。", LangTraditionalChinese: "關聯計畫無法核實，請重新確認 CRM 計畫後再安排提醒。", LangJapanese: "関連する計画を確認できません。CRM計画を再確認してからリマインダーを設定してください。", LangSpanish: "No se pudo verificar el plan asociado. Confirme de nuevo el plan CRM antes de programar un aviso."},
 	MsgCRMReminderContent:   {LangEnglish: "%s — %s", LangChinese: "%s：%s", LangTraditionalChinese: "%s：%s", LangJapanese: "%s：%s", LangSpanish: "%s — %s"},
 	MsgCRMPlanNotify:        {LangEnglish: "At %s, privately remind %s. Approval replaces this customer's previous CRM-linked notification, including another colleague's. Other personal reminders are unchanged.", LangChinese: "于 %s 私聊提醒 %s。本次批准将替换该客户旧计划的 CRM 关联通知，包括其他同事的旧通知；普通个人提醒不受影响。", LangTraditionalChinese: "於 %s 私聊提醒 %s。本次批准將替換該客戶舊計畫的 CRM 關聯通知，包括其他同事的舊通知；普通個人提醒不受影響。", LangJapanese: "%s に %s へ個別通知します。承認すると他の担当者分を含むこの顧客の以前のCRM通知を置き換えます。通常の個人リマインダーは変更しません。", LangSpanish: "A las %s, avisar en privado a %s. La aprobación reemplaza la notificación CRM anterior de este cliente, incluso la de otro compañero. Los recordatorios personales no cambian."},

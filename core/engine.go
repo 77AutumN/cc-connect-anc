@@ -460,14 +460,16 @@ type Engine struct {
 	observeCancel     context.CancelFunc
 
 	// Interactive agent session management
-	interactiveMu      sync.Mutex
-	interactiveStates  map[string]*interactiveState // key = sessionKey
-	actionHost         ActionHost
-	fileWorkHost       FileWorkHost
-	sharedCasesEnabled bool
-	fileWorkPrepare    func(string) (string, int, error)
-	fileWorkMu         sync.Mutex
-	actionMu           sync.RWMutex
+	interactiveMu            sync.Mutex
+	interactiveStates        map[string]*interactiveState // key = sessionKey
+	actionHost               ActionHost
+	fileWorkHost             FileWorkHost
+	sharedCasesEnabled       bool
+	caseConfirmationsEnabled bool
+	caseConfirmationMu       sync.Mutex
+	fileWorkPrepare          func(string) (string, int, error)
+	fileWorkMu               sync.Mutex
+	actionMu                 sync.RWMutex
 
 	platformLifecycleMu sync.Mutex
 	platformReady       map[Platform]bool
@@ -585,6 +587,7 @@ type interactiveState struct {
 	actionPrincipal ActionPrincipal
 	fileWorkID      string
 	fileSession     *Session
+	filePrivate     bool
 }
 
 // latestUserMessageWatermarkLocked returns the highest UserMessageTimeMs among
@@ -3058,6 +3061,12 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		interactiveKey = resolvedWorkspace + ":" + msg.SessionKey
 	}
 
+	if e.handleCaseAnswer(p, msg, content) {
+		return
+	}
+	if msg.caseAnswerContinuation {
+		content = msg.Content
+	}
 	if len(msg.Images) == 0 && strings.HasPrefix(content, "/") {
 		if e.handleCommand(p, msg, content) {
 			return
@@ -3067,7 +3076,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 
 	// Permission responses bypass the session lock.
 	// Must be after workspace resolution so interactiveKey is correct.
-	if e.handlePendingPermission(p, msg, content, interactiveKey) {
+	if !msg.caseAnswerContinuation && e.handlePendingPermission(p, msg, content, interactiveKey) {
 		return
 	}
 
@@ -3882,6 +3891,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	state.currentMessageID = msg.MessageID
 	state.currentTurnUserMessageTimeMs = msg.UserMessageTimeMs
 	state.currentPrincipal = e.actionPrincipalForMessage(msg)
+	state.filePrivate = msg.FileWorkPrivate
 	state.caseSources = append([]CaseSource(nil), msg.caseSources...)
 	if state.actionPrincipal.UserID == "" {
 		state.actionPrincipal = state.currentPrincipal
@@ -5782,10 +5792,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				Questions:    event.Questions,
 				Resolved:     make(chan struct{}),
 			}
+			e.caseConfirmationMu.Lock()
 			state.mu.Lock()
 			pending.Interaction = CardInteraction{RequestID: interactionID, Principal: state.currentPrincipal}
 			state.pending = pending
 			state.mu.Unlock()
+			e.caseConfirmationMu.Unlock()
 
 			if isAskQuestion {
 				e.sendAskQuestionPrompt(p, replyCtx, event.Questions, 0, pending.Interaction)
