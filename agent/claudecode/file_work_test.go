@@ -32,7 +32,11 @@ func TestFileWorkSpawnRefreshesSkillsForNewAndResumedWork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer cs.Close()
+			defer func() {
+				if err := cs.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			var prompt, resumed string
 			for i := 0; i+1 < len(cs.cmd.Args); i++ {
 				switch cs.cmd.Args[i] {
