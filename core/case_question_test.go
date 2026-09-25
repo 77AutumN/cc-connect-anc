@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func caseQuestionFixture(t *testing.T) (*Engine, *actionToolHostStub, *hostedCardPlatform, *interactiveState, *Session) {
@@ -37,12 +38,22 @@ func askFixtureCaseQuestion(t *testing.T, e *Engine, state *interactiveState, s 
 	if q == nil || q.Status != "awaiting" || q.Receipt == "" {
 		t.Fatal(q)
 	}
+	p := state.platform.(*hostedCardPlatform)
+	for _, element := range p.refreshes[len(p.refreshes)-1].Elements {
+		if actions, ok := element.(CardActions); ok {
+			for _, button := range actions.Buttons {
+				if button.Extra["askq_label"] != button.Text || button.Extra["askq_question"] != q.Question {
+					t.Fatal("business answer card would show internal callback text")
+				}
+			}
+		}
+	}
 	return q
 }
 
 func answerFixture(q *CaseQuestion, text string, callback bool) *Message {
 	m := &Message{Platform: q.Principal.Platform, UserID: q.Principal.UserID, ChannelID: q.Principal.ChatID, SessionKey: q.Principal.SessionKey,
-		MessageID: "answer-message", Content: text, ControlledFileWork: true, FileWorkPrivate: true}
+		MessageID: "answer-message", Content: text, ControlledFileWork: true, FileWorkPrivate: true, UserMessageTimeMs: time.Now().UnixMilli() + 1}
 	if callback {
 		m.InteractionRequestID = q.ID + ":0"
 		m.MessageID = ""
@@ -54,10 +65,13 @@ func TestCaseQuestionJourneyPersistsExecutesAndRejectsRepeatedAnswer(t *testing.
 	e, h, p, state, s := caseQuestionFixture(t)
 	q := askFixtureCaseQuestion(t, e, state, s)
 	loaded := NewSessionManager(e.sessions.storePath).FindByID(s.ID).caseQuestion()
+	if loaded == nil {
+		t.Fatal("question not saved")
+	}
 	var savedInput, input any
 	_ = json.Unmarshal(loaded.Input, &savedInput)
 	_ = json.Unmarshal(q.Input, &input)
-	if loaded == nil || !loaded.recovered || loaded.Context.ShareAllowed || !reflect.DeepEqual(savedInput, input) {
+	if !loaded.recovered || loaded.Context.ShareAllowed || !reflect.DeepEqual(savedInput, input) {
 		t.Fatal(loaded)
 	}
 	h.toolResult = map[string]any{"status": "recorded", "case": map[string]any{"name": "林陈婚宴", "revision": 2}}
@@ -80,6 +94,54 @@ func TestCaseQuestionJourneyPersistsExecutesAndRejectsRepeatedAnswer(t *testing.
 	}
 	if w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, `{"command":"case-result","input":{}}`); w.Code != 400 {
 		t.Fatal("reconciliation exposed to model")
+	}
+}
+
+func TestCaseQuestionLateAnswerAndAnotherQuestionCannotGrant(t *testing.T) {
+	for _, reason := range []string{"late", "missing-time", "other-question"} {
+		t.Run(reason, func(t *testing.T) {
+			e, h, p, state, s := caseQuestionFixture(t)
+			q := askFixtureCaseQuestion(t, e, state, s)
+			h.toolResult = map[string]any{"status": "recorded"}
+			m := answerFixture(q, "嗯", false)
+			switch reason {
+			case "late":
+				m.UserMessageTimeMs = time.Now().Add(-time.Minute).UnixMilli()
+			case "missing-time":
+				m.UserMessageTimeMs = 0
+			case "other-question":
+				state.pending = &pendingPermission{RequestID: "other", Questions: []UserQuestion{{Question: "用暖色系吗？"}}}
+			}
+			e.handleCaseAnswer(p, m, m.Content)
+			if h.toolCalls != 1 || s.caseQuestion().Status == "done" {
+				t.Fatal("ambiguous/old answer granted operation", h.toolCalls, s.caseQuestion())
+			}
+			if reason == "other-question" && s.caseQuestion().Status != "cancelled" {
+				t.Fatal("old question survived a competing question")
+			}
+		})
+	}
+}
+
+func TestCaseQuestionRecoveredCancellationNeverRepublishes(t *testing.T) {
+	for _, status := range []string{"awaiting", "executing"} {
+		t.Run(status, func(t *testing.T) {
+			e, h, p, state, s := caseQuestionFixture(t)
+			q := *askFixtureCaseQuestion(t, e, state, s)
+			q.Status = status
+			if err := e.sessions.saveCaseQuestion(s, &q); err != nil {
+				t.Fatal(err)
+			}
+			e.sessions = NewSessionManager(e.sessions.storePath)
+			s = e.sessions.FindByID(s.ID)
+			h.toolResult = map[string]any{"status": "not_executed", "current_revision": 1}
+			if !e.handleCaseAnswer(p, answerFixture(&q, "取消", false), "取消") || s.caseQuestion().Status != "cancelled" || len(p.placeholders) != 1 {
+				t.Fatal("cancelled question republished", s.caseQuestion())
+			}
+			if status == "executing" && h.toolCommand != "case-result" {
+				t.Fatal("unknown result was not checked")
+			}
+		})
 	}
 }
 

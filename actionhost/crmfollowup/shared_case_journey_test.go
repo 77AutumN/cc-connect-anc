@@ -149,7 +149,7 @@ func runCaseJourney(t *testing.T, seed string, confirmations bool) {
 			n++
 			agent.steps <- toolJourneyStep{number: n, command: command, input: input, plain: content}
 			key := "mock:" + chat + ":" + actor
-			e.ReceiveMessage(p, &core.Message{Platform: "mock", SessionKey: key, UserID: actor, ChannelID: chat, MessageID: fmt.Sprintf("%s-%s-%d", actor, chat, n), Content: content, ReplyCtx: "fixture", ControlledFileWork: true, FileWorkPrivate: chat != "group-1"})
+			e.ReceiveMessage(p, &core.Message{Platform: "mock", SessionKey: key, UserID: actor, ChannelID: chat, MessageID: fmt.Sprintf("%s-%s-%d", actor, chat, n), Content: content, ReplyCtx: "fixture", ControlledFileWork: true, FileWorkPrivate: chat != "group-1", UserMessageTimeMs: time.Now().UnixMilli() + 1})
 			var reply toolJourneyReply
 			select {
 			case reply = <-agent.results:

@@ -5792,10 +5792,12 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 				Questions:    event.Questions,
 				Resolved:     make(chan struct{}),
 			}
+			e.caseConfirmationMu.Lock()
 			state.mu.Lock()
 			pending.Interaction = CardInteraction{RequestID: interactionID, Principal: state.currentPrincipal}
 			state.pending = pending
 			state.mu.Unlock()
+			e.caseConfirmationMu.Unlock()
 
 			if isAskQuestion {
 				e.sendAskQuestionPrompt(p, replyCtx, event.Questions, 0, pending.Interaction)

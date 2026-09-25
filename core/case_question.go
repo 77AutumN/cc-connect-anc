@@ -23,6 +23,7 @@ type CaseQuestion struct {
 	Status    string          `json:"status"`
 	Receipt   string          `json:"receipt,omitempty"`
 	AnswerID  string          `json:"answer_id,omitempty"`
+	AskedAtMs int64           `json:"asked_at_ms"`
 	Expires   time.Time       `json:"expires"`
 	Private   bool            `json:"private"`
 	recovered bool
@@ -50,6 +51,7 @@ func (sm *SessionManager) saveCaseQuestion(s *Session, q *CaseQuestion) error {
 	s.mu.Lock()
 	previous := s.CaseQuestion
 	previousAnswers := s.CaseAnswerIDs
+	previousSelection := s.CaseSelection
 	if q.Status == "executing" && !slices.Contains(s.CaseAnswerIDs, q.AnswerID) {
 		s.CaseAnswerIDs = append(append([]string(nil), s.CaseAnswerIDs...), q.AnswerID)
 		if len(s.CaseAnswerIDs) > retainedFileTurns {
@@ -57,11 +59,20 @@ func (sm *SessionManager) saveCaseQuestion(s *Session, q *CaseQuestion) error {
 		}
 	}
 	s.CaseQuestion = q
+	if q.Status == "done" {
+		var request struct {
+			CaseName string `json:"case_name"`
+		}
+		if json.Unmarshal(q.Input, &request) == nil && request.CaseName != "" {
+			s.CaseSelection = &CaseSelection{Name: request.CaseName, Principal: q.Principal}
+		}
+	}
 	s.mu.Unlock()
 	if err := sm.saveLockedError(); err != nil {
 		s.mu.Lock()
 		s.CaseQuestion = previous
 		s.CaseAnswerIDs = previousAnswers
+		s.CaseSelection = previousSelection
 		s.mu.Unlock()
 		return err
 	}
@@ -135,6 +146,7 @@ func (e *Engine) publishCaseQuestion(ctx context.Context, p Platform, reply any,
 	if err := e.waitOutgoing(p); err != nil {
 		return err
 	}
+	q.AskedAtMs = time.Now().UnixMilli()
 	receipt, err := publisher.ReplyHostedActionPlaceholder(ctx, reply, placeholder)
 	if err != nil || receipt == "" {
 		return errors.New("business question delivery unconfirmed")
@@ -143,8 +155,11 @@ func (e *Engine) publishCaseQuestion(ctx context.Context, p Platform, reply any,
 	if err := e.sessions.saveCaseQuestion(s, &q); err != nil {
 		return err
 	}
-	card := NewCard().Title(e.i18n.T(MsgAskQuestionTitle), "blue").PlainText(q.Question).
-		Buttons(PrimaryBtn(e.i18n.T(MsgDeleteModeConfirmButton), "askq:0:1"), DefaultBtn(e.i18n.T(MsgCRMCancelButton), "askq:0:2")).Build()
+	buttons := []CardButton{PrimaryBtn(e.i18n.T(MsgDeleteModeConfirmButton), "askq:0:1"), DefaultBtn(e.i18n.T(MsgCRMCancelButton), "askq:0:2")}
+	for i := range buttons {
+		buttons[i].Extra = map[string]string{"askq_label": buttons[i].Text, "askq_question": q.Question}
+	}
+	card := NewCard().Title(e.i18n.T(MsgAskQuestionTitle), "blue").PlainText(q.Question).Buttons(buttons...).Build()
 	card.Interaction = &CardInteraction{RequestID: q.ID + ":0", Principal: q.Principal}
 	if err := refresher.RefreshCardMessage(ctx, receipt, q.Principal.SessionKey, card); err != nil {
 		q.Status = "delivery_unknown"
@@ -234,6 +249,35 @@ func (e *Engine) handleCaseAnswer(p Platform, msg *Message, content string) bool
 	if callback && msg.InteractionRequestID != q.ID+":0" {
 		return true
 	}
+	if q.Status != "awaiting" && q.Status != "executing" {
+		return callback
+	}
+	// An unquoted text answer must be newer than this concrete question.
+	// A transport without a timestamp can still bind an explicit reply/card.
+	if !callback && msg.ParentMessageID != q.Receipt && (q.AskedAtMs == 0 || msg.UserMessageTimeMs <= q.AskedAtMs) {
+		if caseAnswerValue(content, false) != 0 {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionRetry))
+			return true
+		}
+		return false
+	}
+	key := e.interactiveKeyForSessionKey(msg.SessionKey)
+	e.interactiveMu.Lock()
+	state := e.interactiveStates[key]
+	e.interactiveMu.Unlock()
+	if state != nil && q.Status == "awaiting" {
+		state.mu.Lock()
+		competing := state.pending != nil
+		state.mu.Unlock()
+		if competing {
+			q.Status = "cancelled"
+			if e.sessions.saveCaseQuestion(s, &q) != nil {
+				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+				return true
+			}
+			return callback
+		}
+	}
 	intent := fileConversationIntent(content)
 	if intent != "" || strings.HasPrefix(content, "/") || (msg.ParentMessageID != "" && msg.ParentMessageID != q.Receipt) {
 		if q.Status == "awaiting" || q.Status == "preparing" {
@@ -272,6 +316,15 @@ func (e *Engine) handleCaseAnswer(p Platform, msg *Message, content string) bool
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
 	defer cancel()
+	if answer < 0 && q.Status != "executing" {
+		q.Status = "cancelled"
+		if e.sessions.saveCaseQuestion(s, &q) != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
+			return true
+		}
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSessionCancelled))
+		return true
+	}
 	if q.recovered || q.Status == "executing" {
 		result, err := e.callCaseQuestion(ctx, &q, true)
 		if err != nil || result == nil {
@@ -279,16 +332,19 @@ func (e *Engine) handleCaseAnswer(p Platform, msg *Message, content string) bool
 			return true
 		}
 		if result["status"] == "recorded" || result["status"] == "found" {
-			q.Status = "done"
+			return e.finishCaseQuestion(p, msg, content, s, &q, answer > 0)
+		}
+		if result["status"] != "not_executed" {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionRetry))
+			return true
+		}
+		if answer < 0 {
+			q.Status = "cancelled"
 			if e.sessions.saveCaseQuestion(s, &q) != nil {
 				e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionUnknown))
 				return true
 			}
-			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionDone))
-			return true
-		}
-		if result["status"] != "not_executed" {
-			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionRetry))
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSessionCancelled))
 			return true
 		}
 		// A restart invalidates the old question even if its button was clicked.
@@ -307,15 +363,6 @@ func (e *Engine) handleCaseAnswer(p Platform, msg *Message, content string) bool
 		if e.sessions.saveCaseQuestion(s, &q) != nil || e.publishCaseQuestion(ctx, p, msg.ReplyCtx, s, &q) != nil {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionUnknown))
 		}
-		return true
-	}
-	if answer < 0 {
-		q.Status = "cancelled"
-		if e.sessions.saveCaseQuestion(s, &q) != nil {
-			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgFileSupplementSaveFailed))
-			return true
-		}
-		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgSessionCancelled))
 		return true
 	}
 	q.AnswerID = msg.MessageID
@@ -344,30 +391,34 @@ func (e *Engine) handleCaseAnswer(p Platform, msg *Message, content string) bool
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionRetry))
 		return true
 	}
+	return e.finishCaseQuestion(p, msg, content, s, &q, true)
+}
+
+func (e *Engine) finishCaseQuestion(p Platform, msg *Message, content string, s *Session, q *CaseQuestion, resume bool) bool {
 	q.Status = "done"
-	if e.sessions.saveCaseQuestion(s, &q) != nil {
+	if e.sessions.saveCaseQuestion(s, q) != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionUnknown))
 		return true
 	}
 	// No model assertion creates this selection; the host operation just checked
 	// membership, work binding and the frozen revision again.
-	var record struct {
-		Name string `json:"name"`
-	}
-	raw, _ := json.Marshal(result["case"])
-	if json.Unmarshal(raw, &record) == nil && record.Name != "" {
-		s.mu.Lock()
-		s.CaseSelection = &CaseSelection{Name: record.Name, Principal: q.Principal}
-		s.mu.Unlock()
-		e.sessions.Save()
-	}
 	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgCaseQuestionDone))
+	if !resume {
+		return true
+	}
+	var request struct {
+		CaseName string `json:"case_name"`
+	}
+	_ = json.Unmarshal(q.Input, &request)
 	msg.MessageID = q.AnswerID
+	if msg.MessageID == "" {
+		msg.MessageID = q.ID
+	}
 	msg.ControlledFileWork, msg.FileWorkPrivate, msg.ChannelID = true, q.Private, q.Principal.ChatID
 	msg.InteractionRequestID, msg.IsPermissionResponse = "", false
 	msg.ParentMessageID = q.Principal.MessageID
 	msg.Content = fmt.Sprintf("[Host-confirmed business result; not a new authorization]\n%s\n%s", q.Question, e.i18n.T(MsgCaseQuestionDone))
-	msg.caseSources = []CaseSource{{MessageID: msg.MessageID, Text: content, OriginalText: content, SelectedCase: record.Name}}
+	msg.caseSources = []CaseSource{{MessageID: msg.MessageID, Text: content, OriginalText: content, SelectedCase: request.CaseName}}
 	msg.caseAnswerContinuation = true
 	return false
 }
