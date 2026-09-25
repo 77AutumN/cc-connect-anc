@@ -28,6 +28,34 @@ func caseQuestionFixture(t *testing.T) (*Engine, *actionToolHostStub, *hostedCar
 
 const questionToolRequest = `{"command":"case-update","input":{"case_name":"林陈婚宴","expected_revision":1,"changes":[{"field":"桌数","value":"23桌","state":"proposed","quote":"再加一桌","replaces":true}]}}`
 
+type slowCaseQuestionPlatform struct {
+	*hostedCardPlatform
+	inTransitAnswer int64
+}
+
+func (p *slowCaseQuestionPlatform) RefreshCardMessage(ctx context.Context, receipt, key string, card *Card) error {
+	p.inTransitAnswer = time.Now().UnixMilli()
+	time.Sleep(5 * time.Millisecond)
+	return p.hostedCardPlatform.RefreshCardMessage(ctx, receipt, key, card)
+}
+
+func TestCaseQuestionTextDuringPublicationCannotConfirm(t *testing.T) {
+	e, h, p, state, s := caseQuestionFixture(t)
+	slow := &slowCaseQuestionPlatform{hostedCardPlatform: p}
+	state.platform = slow
+	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, questionToolRequest)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	q := s.caseQuestion()
+	m := answerFixture(q, "嗯", false)
+	m.UserMessageTimeMs = slow.inTransitAnswer
+	e.handleCaseAnswer(p, m, m.Content)
+	if h.toolCalls != 1 || q.AskedAtMs <= m.UserMessageTimeMs {
+		t.Fatal("in-transit answer could confirm the question")
+	}
+}
+
 func askFixtureCaseQuestion(t *testing.T, e *Engine, state *interactiveState, s *Session) *CaseQuestion {
 	t.Helper()
 	w := actionToolRequest(e.ActionToolHandler(), "POST", "/tool", state.actionToken, questionToolRequest)

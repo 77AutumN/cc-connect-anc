@@ -146,12 +146,11 @@ func (e *Engine) publishCaseQuestion(ctx context.Context, p Platform, reply any,
 	if err := e.waitOutgoing(p); err != nil {
 		return err
 	}
-	q.AskedAtMs = time.Now().UnixMilli()
 	receipt, err := publisher.ReplyHostedActionPlaceholder(ctx, reply, placeholder)
 	if err != nil || receipt == "" {
 		return errors.New("business question delivery unconfirmed")
 	}
-	q.Receipt, q.Status, q.recovered = receipt, "awaiting", false
+	q.Receipt, q.Status, q.recovered = receipt, "preparing", false
 	if err := e.sessions.saveCaseQuestion(s, &q); err != nil {
 		return err
 	}
@@ -166,7 +165,10 @@ func (e *Engine) publishCaseQuestion(ctx context.Context, p Platform, reply any,
 		_ = e.sessions.saveCaseQuestion(s, &q)
 		return errors.New("business question delivery unconfirmed")
 	}
-	return nil
+	// Exclude text created while the question was still in transit. Replies
+	// quoting the receipt and authenticated buttons carry their own binding.
+	q.AskedAtMs, q.Status = time.Now().UnixMilli(), "awaiting"
+	return e.sessions.saveCaseQuestion(s, &q)
 }
 
 func caseAnswerValue(text string, callback bool) int {
