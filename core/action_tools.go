@@ -97,6 +97,9 @@ func ActionToolsHandler(engines ...*Engine) http.Handler {
 			}
 		}
 		result, approval, err := tools.Tool(ctx, command, input, principal, token, e.i18n.CurrentLang())
+		if err == nil && result != nil && result["status"] == "needs_confirmation" && isCaseCommand(command) {
+			result, err = e.askCaseQuestion(ctx, command, input, principal, platform, replyCtx, result)
+		}
 		if err == nil && approval != nil {
 			// A linked reminder edit stages a CRM approval through its existing host.
 			if approval.Kind != "" && approval.Kind != host.Kind() {

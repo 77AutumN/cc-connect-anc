@@ -414,8 +414,9 @@ type Message struct {
 	// "allow"/"deny" string reach the agent prompt stream. Plain text
 	// "allow"/"deny" typed by a real user must NOT set this flag — they
 	// continue to flow through the regular message handler.
-	IsPermissionResponse bool
-	InteractionRequestID string // Trusted transport binding, not callback payload.
+	IsPermissionResponse   bool
+	InteractionRequestID   string // Trusted transport binding, not callback payload.
+	caseAnswerContinuation bool
 	// UserMessageTimeMs is the platform message creation time in Unix milliseconds
 	// when known (e.g. Feishu im.message.message_received create_time). Used to
 	// drop late redeliveries that reuse a new message_id but an older create_time

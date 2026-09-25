@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,12 +41,26 @@ func (*caseJourneyPlatform) SendFileWithReceipt(context.Context, json.RawMessage
 	return "fixture", nil
 }
 
-type caseJourneyFiles struct{}
+type caseJourneyFiles struct {
+	mu   sync.Mutex
+	refs map[string]core.FileWorkRef
+}
 
-func (*caseJourneyFiles) Bind(_ context.Context, b core.FileWorkBinding) (core.FileWorkContext, error) {
+func (f *caseJourneyFiles) Bind(_ context.Context, b core.FileWorkBinding) (core.FileWorkContext, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refs == nil {
+		f.refs = map[string]core.FileWorkRef{}
+	}
+	f.refs[b.Principal.UserID+":"+b.Principal.ChatID+":"+b.Principal.MessageID] = core.FileWorkRef{WorkID: b.Principal.UserID + ":" + b.SessionID, SessionID: b.SessionID}
 	return core.FileWorkContext{Enabled: true, WorkID: b.Principal.UserID + ":" + b.SessionID, WorkRoot: b.WorkRoot}, nil
 }
-func (*caseJourneyFiles) FindByMessage(context.Context, core.ActionPrincipal, string) (core.FileWorkRef, error) {
+func (f *caseJourneyFiles) FindByMessage(_ context.Context, p core.ActionPrincipal, message string) (core.FileWorkRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ref, ok := f.refs[p.UserID+":"+p.ChatID+":"+message]; ok {
+		return ref, nil
+	}
 	return core.FileWorkRef{}, core.ErrFileWorkNotFound
 }
 func (*caseJourneyFiles) RecordReply(context.Context, core.ActionPrincipal, string) error { return nil }
@@ -57,14 +72,18 @@ func (*caseJourneyFiles) Tool(context.Context, string, json.RawMessage, core.Act
 }
 
 func TestCUJ_CASEIPC_SharedProgressPrivateGrantAndRevision(t *testing.T) {
-	runCaseJourney(t, "shared-cases")
+	runCaseJourney(t, "shared-cases", false)
 }
 
 func TestCUJ_CASEIPC_ProjectMembershipAcrossPrivateEntries(t *testing.T) {
-	runCaseJourney(t, "project-context")
+	runCaseJourney(t, "project-context", false)
 }
 
-func runCaseJourney(t *testing.T, seed string) {
+func TestCUJ_CASEIPC_NaturalClarificationAndConfirmedContinuation(t *testing.T) {
+	runCaseJourney(t, "project-context", true)
+}
+
+func runCaseJourney(t *testing.T, seed string, confirmations bool) {
 	root := os.Getenv("MYANC_SPIKE_CRM_ROOT")
 	if root == "" {
 		t.Skip("set MYANC_SPIKE_CRM_ROOT for the paired offline journey")
@@ -105,6 +124,7 @@ func runCaseJourney(t *testing.T, seed string) {
 		e := core.NewEngine("test", agent, []core.Platform{p}, filepath.Join(t.TempDir(), "sessions.json"), core.LangEnglish)
 		e.SetActionHost(a)
 		e.SetSharedCasesEnabled(true)
+		e.SetCaseConfirmationsEnabled(confirmations)
 		// Exercise the real host-only bridge too: the CLI validates its context
 		// marker, host secret and registered transport principal before policy.
 		principal := core.ActionPrincipal{Platform: "mock", UserID: actor, ChatID: chat, Project: "test", SessionKey: "fixture-session", MessageID: "fixture-intake"}
@@ -155,6 +175,38 @@ func runCaseJourney(t *testing.T, seed string) {
 			}
 			return reply.data
 		}
+	}
+	if confirmations {
+		owner, partner := newActor("sender-1", "private-1"), newActor("sender-2", "private-2")
+		expect := func(result map[string]any, status string) {
+			t.Helper()
+			if result["status"] != status {
+				t.Fatalf("want %s, got %v", status, result)
+			}
+		}
+		read := map[string]any{"case_name": "周许婚宴"}
+		create := map[string]any{"case_name": "周许婚宴", "expected_revision": 0, "changes": []any{map[string]any{"field": "桌数", "value": "22桌", "state": "proposed", "quote": "周许婚宴桌数改为22桌"}}}
+		expect(owner("请同步给执行：周许婚宴桌数改为22桌", "case-update", create), "recorded")
+		expect(partner("查看周许婚宴", "case-read", read), "not_found")
+		invite := map[string]any{"case_name": "周许婚宴", "expected_revision": 1, "member_name": "Fixture sender-2", "responsibility": "运营执行"}
+		expect(owner("周许婚宴，麻烦叫Fixture sender-2来一起做运营吧", "case-member-add", invite), "awaiting_confirmation")
+		result := owner("嗯", "case-read", read)
+		expect(result, "found")
+		if result["case"].(map[string]any)["revision"] != float64(2) {
+			t.Fatal(result)
+		}
+		expect(partner("查看周许婚宴", "case-read", read), "found")
+		change := map[string]any{"case_name": "周许婚宴", "expected_revision": 2, "changes": []any{map[string]any{"field": "桌数", "value": "23桌", "state": "proposed", "quote": "再加一桌", "replaces": true}}}
+		expect(owner("桌数再加一桌，只同步这个变更", "case-update", change), "awaiting_confirmation")
+		expect(owner("好", "case-read", read), "found")
+		result = partner("继续", "case-read", read)
+		if result["case"].(map[string]any)["facts"].(map[string]any)["桌数"].(map[string]any)["value"] != "23桌" {
+			t.Fatal(result)
+		}
+		if _, err := os.Stat(filepath.Join(scratch, "formal-never-opened.sqlite3")); !os.IsNotExist(err) {
+			t.Fatal("formal ledger opened")
+		}
+		return
 	}
 	sales, operations, private := newActor("sender-1", "group-1"), newActor("sender-2", "group-1"), newActor("sender-1", "private-1")
 	update := func(tables string, revision int) map[string]any {

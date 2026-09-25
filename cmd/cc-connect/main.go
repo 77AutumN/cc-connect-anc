@@ -1102,6 +1102,7 @@ func main() {
 			os.Exit(1)
 		}
 		engine.SetSharedCasesEnabled(proj.FileWork.SharedCases)
+		engine.SetCaseConfirmationsEnabled(proj.FileWork.CaseConfirmations)
 		if fileServer != nil {
 			go func() { crmToolErrors <- fileServer.Serve() }()
 		}

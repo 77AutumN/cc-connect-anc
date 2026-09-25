@@ -96,14 +96,16 @@ type CaseSource struct {
 }
 
 type CaseContext struct {
-	WorkID        string            `json:"work_id"`
-	SourceText    string            `json:"source_text"`
-	OriginalText  string            `json:"original_text,omitempty"`
-	ShareAllowed  bool              `json:"share_allowed"`
-	SourceReceipt string            `json:"source_receipt,omitempty"`
-	SelectedCase  string            `json:"selected_case,omitempty"`
-	session       *Session          `json:"-"`
-	state         *interactiveState `json:"-"`
+	WorkID            string            `json:"work_id"`
+	SourceText        string            `json:"source_text"`
+	OriginalText      string            `json:"original_text,omitempty"`
+	ShareAllowed      bool              `json:"share_allowed"`
+	SourceReceipt     string            `json:"source_receipt,omitempty"`
+	SelectedCase      string            `json:"selected_case,omitempty"`
+	OfferConfirmation bool              `json:"offer_confirmation,omitempty"`
+	Confirmation      *CaseAnswer       `json:"confirmation,omitempty"`
+	session           *Session          `json:"-"`
+	state             *interactiveState `json:"-"`
 }
 
 type CaseSelection struct {
@@ -313,6 +315,7 @@ func (e *Engine) captureCaseSource(msg *Message) {
 func (e *Engine) caseToolContext(ctx context.Context, token string, p ActionPrincipal, input json.RawMessage) (context.Context, ActionPrincipal, error) {
 	e.actionMu.RLock()
 	enabled := e.sharedCasesEnabled
+	confirmations := e.caseConfirmationsEnabled
 	e.actionMu.RUnlock()
 	if !enabled {
 		return ctx, p, errors.New("shared cases disabled")
@@ -334,6 +337,7 @@ func (e *Engine) caseToolContext(ctx context.Context, token string, p ActionPrin
 			for _, source := range state.caseSources {
 				if source.MessageID == request.SourceMessageID {
 					binding := CaseContext{WorkID: state.fileWorkID, SourceText: source.Text, OriginalText: source.OriginalText, ShareAllowed: source.ShareAllowed, SourceReceipt: source.SourceReceipt, SelectedCase: source.SelectedCase, session: state.fileSession, state: state}
+					binding.OfferConfirmation = confirmations
 					p.MessageID = source.MessageID
 					state.mu.Unlock()
 					return context.WithValue(ctx, caseContextKey{}, binding), p, nil
