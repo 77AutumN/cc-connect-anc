@@ -361,7 +361,7 @@ func fileConversationIntent(content string) string {
 	})
 	if len(clause) > 0 {
 		switch strings.TrimSpace(clause[0]) {
-		case "换个事", "换一件事", "另开一件事", "另外做一件事", "新任务", "开始一项新工作", "new task", "New task":
+		case "换个事", "换一件事", "先换个事", "先换一件事", "另开一件事", "另外做一件事", "新任务", "开始一项新工作", "new task", "New task":
 			return "new"
 		}
 	}
