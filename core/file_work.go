@@ -304,6 +304,10 @@ func (e *Engine) handleFileWorkMessage(p Platform, msg *Message) bool {
 			return true
 		}
 	}
+	// Add after recovery intent parsing; live followups and queued turns also
+	// need current guidance, without changing the original source/authorization.
+	msg.Content += "\n[Host: for any file creation or revision this turn, first reread the current installed file and domain Skills relevant to this task, including their required references. Earlier turns may contain superseded guidance. Before delivery, reopen the actual saved file, check all sheets/pages as required by those Skills, and fix detected issues.]"
+	msg.fileTurn.Content = msg.Content
 	agent, err := e.agent.(FileWorkAgent).ForFileWork(root)
 	if err != nil {
 		return fail(MsgFileWorkUnavailable)
