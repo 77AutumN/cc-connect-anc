@@ -69,6 +69,9 @@ func askFixtureCaseQuestion(t *testing.T, e *Engine, state *interactiveState, s 
 	p := state.platform.(*hostedCardPlatform)
 	for _, element := range p.refreshes[len(p.refreshes)-1].Elements {
 		if actions, ok := element.(CardActions); ok {
+			if actions.Buttons[0].Text != "Confirm" {
+				t.Fatal("wrong business confirmation label", actions.Buttons[0].Text)
+			}
 			for _, button := range actions.Buttons {
 				if button.Extra["askq_label"] != button.Text || button.Extra["askq_question"] != q.Question {
 					t.Fatal("business answer card would show internal callback text")
@@ -77,6 +80,12 @@ func askFixtureCaseQuestion(t *testing.T, e *Engine, state *interactiveState, s 
 		}
 	}
 	return q
+}
+
+func TestCaseQuestionConfirmationLabelIsBusinessLanguage(t *testing.T) {
+	if got := NewI18n(LangChinese).T(MsgCaseQuestionConfirm); got != "确认" {
+		t.Fatal(got)
+	}
 }
 
 func answerFixture(q *CaseQuestion, text string, callback bool) *Message {

@@ -672,6 +672,7 @@ const (
 	MsgCaseQuestionRetry                  MsgKey = "case_question_retry"
 	MsgCaseQuestionUnknown                MsgKey = "case_question_unknown"
 	MsgCaseQuestionDone                   MsgKey = "case_question_done"
+	MsgCaseQuestionConfirm                MsgKey = "case_question_confirm"
 	MsgFileInputUnavailable               MsgKey = "file_input_unavailable"
 	MsgFileInputSaveFailed                MsgKey = "file_input_save_failed"
 	MsgFileInputFormatUnsupported         MsgKey = "file_input_format_unsupported"
@@ -820,6 +821,7 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgCaseQuestionConfirm:  {LangEnglish: "Confirm", LangChinese: "确认", LangTraditionalChinese: "確認", LangJapanese: "確認", LangSpanish: "Confirmar"},
 	MsgCaseQuestionRetry:    {LangEnglish: "The project or question has changed. Read the latest record and confirm the updated details before continuing.", LangChinese: "项目或问题已变化。请先读取最新记录，核对具体内容后再继续。", LangTraditionalChinese: "項目或問題已變化。請先讀取最新記錄，核對具體內容後再繼續。", LangJapanese: "案件または質問が変わりました。最新の記録と具体的な内容を確認してから続けてください。", LangSpanish: "El proyecto o la pregunta cambió. Consulte el registro actual y confirme los detalles antes de continuar."},
 	MsgCaseQuestionUnknown:  {LangEnglish: "The operation or question delivery is unconfirmed. It will not be repeated automatically; its actual result must be checked first.", LangChinese: "本次操作或问题送达结果尚未确认。不会自动重做，需要先核对实际结果。", LangTraditionalChinese: "本次操作或問題送達結果尚未確認。不會自動重做，需要先核對實際結果。", LangJapanese: "操作または質問の配信結果は未確認です。自動では繰り返さず、実際の結果を確認します。", LangSpanish: "No se ha confirmado el resultado de la operación o entrega. No se repetirá automáticamente; primero debe comprobarse."},
 	MsgCaseQuestionDone:     {LangEnglish: "The confirmed project operation is complete. Existing files have not been revised by this operation.", LangChinese: "刚才确认的项目操作已完成；原有文件还没有因此修订。", LangTraditionalChinese: "剛才確認的項目操作已完成；原有檔案還沒有因此修訂。", LangJapanese: "確認した案件操作は完了しました。既存のファイルはまだ変更されていません。", LangSpanish: "La operación confirmada se completó. Esto no ha modificado los archivos existentes."},

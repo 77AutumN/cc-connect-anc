@@ -154,7 +154,7 @@ func (e *Engine) publishCaseQuestion(ctx context.Context, p Platform, reply any,
 	if err := e.sessions.saveCaseQuestion(s, &q); err != nil {
 		return err
 	}
-	buttons := []CardButton{PrimaryBtn(e.i18n.T(MsgDeleteModeConfirmButton), "askq:0:1"), DefaultBtn(e.i18n.T(MsgCRMCancelButton), "askq:0:2")}
+	buttons := []CardButton{PrimaryBtn(e.i18n.T(MsgCaseQuestionConfirm), "askq:0:1"), DefaultBtn(e.i18n.T(MsgCRMCancelButton), "askq:0:2")}
 	for i := range buttons {
 		buttons[i].Extra = map[string]string{"askq_label": buttons[i].Text, "askq_question": q.Question}
 	}
