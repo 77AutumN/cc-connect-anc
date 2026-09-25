@@ -144,12 +144,20 @@ func (p *interactivePlatform) RefreshCardMessage(ctx context.Context, msgID, ses
 			return nil
 		})
 	}
+	var err error
 	if card != nil && card.SharedUpdate {
 		// Hosted feedback owns ordering and retry budgets. A lost PATCH response
 		// must not schedule another intermediate update behind a final receipt.
-		return patch()
+		err = patch()
+	} else {
+		err = p.withTransientRetry(ctx, "refresh card", patch)
 	}
-	return p.withTransientRetry(ctx, "refresh card", patch)
+	if err == nil && card != nil && card.Interaction != nil {
+		// A placeholder gains its buttons through PATCH, not ReplyCard. Bind
+		// this exact published receipt just as for a newly sent question.
+		err = p.bindInteraction(msgID, replyContext{chatID: card.Interaction.Principal.ChatID, sessionKey: sessionKey}, card)
+	}
+	return err
 }
 
 // renderCardMap converts a core.Card into the Feishu Interactive Card map
