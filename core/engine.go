@@ -4813,6 +4813,12 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 			default:
 			}
 
+			// Session metadata can arrive between turns without any business
+			// output. Foreground readers still consume its session ID.
+			if event.Type == EventText && event.Content == "" {
+				continue
+			}
+
 			// Mark workspace active on first event.
 			if !turnActive {
 				turnActive = true
@@ -4823,7 +4829,8 @@ func (e *Engine) runUnsolicitedReader(ctx context.Context, cancel context.Cancel
 					}
 				}
 				slog.Info("unsolicited events detected, relaying to platform",
-					"session", sessionKey)
+					"session", sessionKey, "event_type", event.Type,
+					"has_content", event.Content != "")
 			}
 
 			state.mu.Lock()
